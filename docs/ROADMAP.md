@@ -114,3 +114,14 @@ Supabase auth, projects/assets sync, Vercel deploy. Architecture is already clou
 - 3D object manipulation node (mentioned in briefing, parked).
 - Public sharing of recipes.
 - Mobile / touch UI.
+
+---
+
+## Polish backlog _(small UI/UX tweaks deferred so we can keep moving)_
+
+Things noticed but explicitly parked so M0a engineering doesn't stall. Triage these between milestones, not mid-stream.
+
+- **Icon positions across corners** — once we have more chrome (Run, node selection actions, etc.), redistribute the floating pills so all four corners are used and no corner feels crowded.
+- **Theme toggle inside Settings** — move out of the bottom-right `CanvasControls` cluster so the canvas chrome is even leaner. Settings modal lands in M0d.
+- **Add Node single icon** — consider collapsing the "+ Add node" pill into a single icon (no label) to match the rest of the floating chrome language.
+- **Project menu trigger affordance** — the chevron next to the logo is small; revisit when we have user data on whether people discover the menu.
