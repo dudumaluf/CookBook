@@ -127,8 +127,9 @@ Supabase auth, projects/assets sync, Vercel deploy. Architecture is already clou
 
 Things noticed but explicitly parked so M0a engineering doesn't stall. Triage these between milestones, not mid-stream.
 
-- **Icon positions across corners** — once we have more chrome (Run, node selection actions, etc.), redistribute the floating pills so all four corners are used and no corner feels crowded. _Partial: AddNode moved to top-right (mirrors ProjectMenu top-left) in Slice 1 polish._
-- **Theme toggle inside Settings** — move out of the bottom-right `CanvasControls` cluster so the canvas chrome is even leaner. Settings modal lands in M0d.
+- **Icon positions across corners** — _Done in Slice 1 polish v2:_ top-left ProjectMenu, top-right Gallery + AddNode, bottom-left Controls (zoom/fit/theme), bottom-right MiniMap. Revisit once new chrome (Run, node actions) is added so no corner over-fills.
+- **Theme toggle inside Settings** — also _Done in Slice 1 polish v2:_ theme moved from a standalone pill into the Controls cluster as a 4th `<ControlButton>`. If we ever build a Settings modal (M0d) we can additionally surface it there for discoverability.
 - **Add Node single icon** — consider collapsing the "+ Add node" pill into a single icon (no label) to match the rest of the floating chrome language. (Particularly useful if the AddNode popover ever needs to stay open while inspecting the queue.)
 - **Project menu trigger affordance** — the chevron next to the logo is small; revisit when we have user data on whether people discover the menu.
-- **MiniMap visibility breakpoint** — currently `hidden xl:block`. Once we know how dense real workflows get, decide if it deserves a smaller breakpoint or a toggle in the project menu.
+- **Controls in light mode** — the bottom-left Controls cluster uses hardcoded dark tokens so the cluster blends with the chrome in dark mode. In light mode it stays a deliberate dark island. Acceptable for now (we ship dark-first), but revisit if we ever go light-first or want a "fully native" light theme — switch the `--xy-controls-button-*` vars to use `var(--popover)` / `var(--muted-foreground)` etc.
+- **Small-viewport prompt bar density** — at viewports `<lg` the prompt bar form fills almost the entire content area (`max-w-[640px]` ≈ content width). We currently lift the Controls above it via CSS so they stay reachable. If we ever ship the assistant DSL chat sheet in this same band, we may want to make the form narrower or hide the Controls and rely on scroll-zoom only.

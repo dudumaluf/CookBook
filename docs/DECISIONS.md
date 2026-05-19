@@ -130,6 +130,24 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0016 — Four-corner canvas chrome (Slice 1 polish v2)
+
+- **Date**: 2026-05-19
+- **Context**: ADR-0015 left two cosmetic problems: the lifted Controls had an ugly empty gap below them on wide viewports, and the bottom-right `CanvasControls` cluster (Gallery + Theme toggle) felt like a leftover pile when we could use the four corners more deliberately. The user proposed: MiniMap → bottom-right; Gallery → top-right with Add Node; Theme → drop it, or integrate it with the zoom buttons.
+- **Decision**: Adopt the proposal as the canonical four-corner layout:
+  - **top-left**: ProjectMenu (logo pill).
+  - **top-center**: EditableTitle.
+  - **top-right**: GalleryButton + AddNodeButton paired (`gap-1.5`).
+  - **bottom-left**: React Flow Controls — zoom in / out / fit + theme toggle as a 4th `<ControlButton>` child. Same dark pill styling for all four.
+  - **bottom-right**: React Flow MiniMap (`lg:` and up, 180×120, compact).
+  - PromptBar stays bottom-center.
+- **`CanvasControls.tsx` + `ThemeToggle.tsx` deleted**. Gallery is extracted into `gallery-button.tsx`. Theme lives in `canvas-flow.tsx` as `ThemeControlButton` (an inline `<ControlButton>` reading `useTheme()`).
+- **Responsive controls position**: at lg+ the Controls sit at `bottom: 0.75rem` (no gap); at `<lg` a media query in `globals.css` lifts them to `bottom: 5.25rem` so the wide prompt bar form doesn't visually cover the lower buttons via its backdrop-blur. The user's primary viewport (≥lg) gets the corner placement they asked for; the small-viewport bump up only kicks in where it's actually necessary.
+- **Trade-offs**:
+  - Two stacked pills at top-right (Gallery + AddNode) take a bit more horizontal space than a single one. Acceptable — the corner has the room and it reads as a "tools" cluster.
+  - Theme toggle living inside Controls means it doesn't theme its own styling (it stays dark to match the rest of the cluster). In dark mode the cluster blends with the chrome; in light mode it's a deliberate dark island. The user has confirmed dark is the primary theme; revisit if we ever go light-first.
+  - MiniMap hidden at `<lg` — small viewports get no minimap. Acceptable since scroll-zoom + pan still work and we don't want it fighting the prompt bar.
+
 ## ADR-0015 — Canvas feel: kill global transform transitions for React Flow
 
 - **Date**: 2026-05-19

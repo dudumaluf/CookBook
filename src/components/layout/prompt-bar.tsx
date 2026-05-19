@@ -62,7 +62,7 @@ export function PromptBar() {
           e.preventDefault();
           // wired in M0a
         }}
-        className="pointer-events-auto flex w-full max-w-[640px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-xl"
+        className="pointer-events-auto mx-auto flex w-full max-w-[640px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-xl"
       >
         {/* Chevron handle to toggle chat history */}
         <Tooltip>

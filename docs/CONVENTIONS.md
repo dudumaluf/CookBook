@@ -45,7 +45,7 @@ cookbook/
 
 ## Naming
 
-- Components: `PascalCase` (file and export match: `theme-toggle.tsx` exports `ThemeToggle`).
+- Components: `PascalCase` (file and export match: `gallery-button.tsx` exports `GalleryButton`).
 - Hooks: `useFoo` in `kebab-case` filename (`use-layout-shortcuts.ts`).
 - Stores: `useFooStore` in `kebab-case` filename (`layout-store.ts`).
 - Constants: `SCREAMING_SNAKE_CASE` for true compile-time constants, `camelCase` otherwise.

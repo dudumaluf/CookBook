@@ -207,6 +207,21 @@
   -webkit-backdrop-filter: blur(8px);
 }
 
+/*
+ * At narrower viewports the prompt bar form (max-w-[640px]) fills the entire
+ * content area, so the vertical Controls stack at bottom-left would end up
+ * sitting underneath the form's left-side icon and get covered by its
+ * backdrop-blur. Lift the controls above the prompt bar in that range.
+ *
+ * At lg+ (1024px+) the prompt bar centers with clearance and the controls
+ * stay tucked in the corner (no gap to apologise for).
+ */
+@media (max-width: 1023px) {
+  .react-flow__controls {
+    bottom: 5.25rem !important;
+  }
+}
+
 /* MiniMap — same language. */
 .react-flow__minimap {
   border-radius: 0.75rem;

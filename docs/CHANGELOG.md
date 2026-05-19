@@ -2,6 +2,19 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — Slice 1 polish v2: four-corner layout, theme into Controls, MiniMap in the wild
+
+User feedback after the first polish pass: lifting the zoom controls to clear the prompt bar left an ugly gap below them on wide viewports, the canvas already has a MiniMap that could live bottom-right, the theme/gallery buttons could group with Add Node top-right (or theme could disappear into the zoom cluster).
+
+- **Top-right pair** (`shell.tsx` + new `gallery-button.tsx`): GalleryButton (circular icon pill) sits next to AddNodeButton with `gap-1.5`, mirrors top-left ProjectMenu, deliberate four-corner symmetry. Both share the same pill language (`border-border/80 bg-popover/95 backdrop-blur-md shadow-lg/30`).
+- **Theme toggle moved into Controls** (`canvas-flow.tsx`): replaces the standalone canvas pill. Implemented as a `<ControlButton>` child of React Flow's `<Controls>` so it inherits the same dark pill styling as zoom/fit. 4th button in the stack.
+- **`CanvasControls` + `ThemeToggle` deleted**: both responsibilities moved (Gallery → top-right pair, Theme → Controls). One fewer floating widget on the canvas.
+- **MiniMap bottom-right** (`canvas-flow.tsx`): always visible at `lg:` (1024px+), compact 180×120, anchored at `right: 0.75rem; bottom: 0.75rem`. At narrower viewports it stays hidden so it doesn't fight the wide prompt bar.
+- **Controls position is responsive** (`globals.css`): at lg+, controls live in the bottom-left corner (`bottom: 0.75rem` — no gap). At `<lg` the prompt bar form fills the content area and would sit on top of (and visually cover via backdrop-blur) the bottom-left corner; a media query lifts the controls to `bottom: 5.25rem` only in that range. So there's no perpetual gap on wide viewports, and the controls remain reachable on narrow ones.
+- **PromptBar form gets `mx-auto`** (`prompt-bar.tsx`): defensive centering so `items-center` on the parent isn't needed for the form to honour `max-w-[640px]`.
+
+Verified: lint clean, 28/28 tests, docs:check OK. MCP smoke: navigated → fit-view (e32) clickable and zooms both nodes → theme toggle (e33) clickable and flips dark → light → click again → back to dark, with the rest of the layout unchanged.
+
 ## 2026-05-19 — Slice 1 polish: smooth canvas + dark Controls + Add Node top-right
 
 Post-Slice 1 user feedback was: "moving the canvas, nodes, and zooming feels sluggish," "the zoom toolbar is white and out of place," and "move Add Node out of bottom-left and put it top-right for now." All addressed.

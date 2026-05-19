@@ -6,8 +6,8 @@ import { CanvasArea } from "./canvas-area";
 import { LibraryPanel } from "./library-panel";
 import { QueuePanel } from "./queue-panel";
 import { PromptBar } from "./prompt-bar";
-import { CanvasControls } from "./canvas-controls";
 import { AddNodeButton } from "./add-node-button";
+import { GalleryButton } from "./gallery-button";
 import { CommandPalette } from "./command-palette";
 import { LogsPanel } from "./logs-panel";
 import { GalleryDrawer } from "./gallery-drawer";
@@ -19,19 +19,20 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 /**
- * AppShell — refactor v3 (ADR-0013)
+ * AppShell — refactor v3 (ADR-0013) + v4 (ADR-0015 polish)
  *
  * The top bar is gone. The canvas is full-bleed and every UI primitive
  * floats over it as an independent overlay:
  *
  *   top-left      ProjectMenu  (logo + chevron, opens DropdownMenu)
  *   top-center    EditableTitle pill
- *   top-right     AddNodeButton (also via right-click + ⌘.)
+ *   top-right     GalleryButton + AddNodeButton (paired pills, also ⌘. /
+ *                 right-click for add-node)
  *   side-left     LibraryPanel (vertically centered, ⌘1)
  *   side-right    QueuePanel   (vertically centered, ⌘2)
- *   bottom-left   React Flow Controls (zoom / fit, owned by CanvasFlow)
+ *   bottom-left   React Flow Controls (zoom / fit / theme, owned by CanvasFlow)
  *   bottom-center PromptBar + ChatSheet (⌘J)
- *   bottom-right  CanvasControls (gallery ⌘G, theme)
+ *   bottom-right  React Flow MiniMap (md+ viewports, owned by CanvasFlow)
  *   overlays      LogsPanel (⌘⇧L), CommandPalette (⌘K), GalleryDrawer
  *
  * Same visual language everywhere: rounded-full pills + rounded-2xl cards,
@@ -63,19 +64,18 @@ export function AppShell() {
         </div>
       </div>
 
-      {/* Top-right: add node pill (mirrors top-left ProjectMenu). The Queue
-       *  panel below it is vertically centered and doesn't collide; the popover
-       *  is z-50 so it renders over the queue when both are open. */}
-      <div className="pointer-events-none absolute right-3 top-3 z-30">
+      {/* Top-right: gallery + add node (paired pills). Mirrors top-left so
+       *  the four corners feel deliberate. Queue panel below is vertically
+       *  centered → no collision; the add-node popover (z-50) overlays the
+       *  queue when both are open. */}
+      <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1.5">
+        <GalleryButton />
         <AddNodeButton />
       </div>
 
       {/* Side floating panels (vertically centered) */}
       <LibraryPanel />
       <QueuePanel />
-
-      {/* Bottom-right: canvas controls cluster (gallery, theme) */}
-      <CanvasControls />
 
       {/* Bottom-center: prompt bar + chat sheet */}
       <PromptBar />

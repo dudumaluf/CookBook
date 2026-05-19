@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
@@ -15,6 +16,8 @@ import {
   type NodeProps,
   type NodeTypes,
 } from "@xyflow/react";
+import { Moon, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
 
 import "@/lib/engine/all-nodes";
 import { nodeRegistry } from "@/lib/engine/registry";
@@ -77,6 +80,45 @@ function GenericNode({ id, data, selected }: NodeProps<FlowNode>) {
 const NODE_TYPES: NodeTypes = {
   cookbook: GenericNode,
 };
+
+/**
+ * Theme toggle rendered as a React Flow ControlButton so it adopts the same
+ * dark pill styling as zoom + fit. Keeps the canvas chrome unified instead of
+ * floating yet another separate pill.
+ */
+function ThemeControlButton() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // Hydration boundary: server doesn't know the theme; once mounted we render
+    // the correct icon.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
+
+  const isDark = resolvedTheme === "dark";
+  const label = mounted
+    ? `Switch to ${isDark ? "light" : "dark"} theme`
+    : "Toggle theme";
+
+  return (
+    <ControlButton
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      title={label}
+      aria-label={label}
+    >
+      {mounted ? (
+        isDark ? (
+          <Sun />
+        ) : (
+          <Moon />
+        )
+      ) : (
+        <Sun style={{ opacity: 0 }} aria-hidden />
+      )}
+    </ControlButton>
+  );
+}
 
 function toFlowNode(n: NodeInstance): FlowNode {
   return {
@@ -225,10 +267,12 @@ export function CanvasFlow() {
         pannable
         zoomable
         position="bottom-right"
-        className="hidden xl:block"
+        className="hidden lg:block"
         style={{
-          right: "calc(320px + 4rem)",
-          bottom: "4.5rem",
+          right: "0.75rem",
+          bottom: "0.75rem",
+          width: 180,
+          height: 120,
         }}
         maskColor="oklch(0.135 0 0 / 50%)"
         nodeColor="oklch(0.4 0.06 73)"
@@ -236,8 +280,10 @@ export function CanvasFlow() {
       <Controls
         position="bottom-left"
         showInteractive={false}
-        style={{ bottom: "5rem", left: "0.75rem" }}
-      />
+        style={{ bottom: "0.75rem", left: "0.75rem" }}
+      >
+        <ThemeControlButton />
+      </Controls>
     </ReactFlow>
   );
 }
