@@ -14,7 +14,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
  * - commandPaletteOpen: Cmd+K palette. Ephemeral.
  * - logsPanelOpen: Cmd+Shift+L dev overlay. Ephemeral.
  * - galleryOpen: bottom-drawer overlay for browsing results. Ephemeral.
- * - addNodePopoverOpen: + add node popover (bottom-left). Ephemeral.
+ * - addNodePopoverOpen: + add node popover (top-right, slides left to clear queue). Ephemeral.
  * - approvalGateOn: persistent user preference.
  */
 

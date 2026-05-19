@@ -127,7 +127,8 @@ Supabase auth, projects/assets sync, Vercel deploy. Architecture is already clou
 
 Things noticed but explicitly parked so M0a engineering doesn't stall. Triage these between milestones, not mid-stream.
 
-- **Icon positions across corners** — once we have more chrome (Run, node selection actions, etc.), redistribute the floating pills so all four corners are used and no corner feels crowded.
+- **Icon positions across corners** — once we have more chrome (Run, node selection actions, etc.), redistribute the floating pills so all four corners are used and no corner feels crowded. _Partial: AddNode moved to top-right (mirrors ProjectMenu top-left) in Slice 1 polish._
 - **Theme toggle inside Settings** — move out of the bottom-right `CanvasControls` cluster so the canvas chrome is even leaner. Settings modal lands in M0d.
-- **Add Node single icon** — consider collapsing the "+ Add node" pill into a single icon (no label) to match the rest of the floating chrome language.
+- **Add Node single icon** — consider collapsing the "+ Add node" pill into a single icon (no label) to match the rest of the floating chrome language. (Particularly useful if the AddNode popover ever needs to stay open while inspecting the queue.)
 - **Project menu trigger affordance** — the chevron next to the logo is small; revisit when we have user data on whether people discover the menu.
+- **MiniMap visibility breakpoint** — currently `hidden xl:block`. Once we know how dense real workflows get, decide if it deserves a smaller breakpoint or a toggle in the project menu.

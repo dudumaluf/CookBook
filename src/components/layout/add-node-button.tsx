@@ -91,8 +91,8 @@ export function AddNodeButton() {
       </PopoverTrigger>
 
       <PopoverContent
-        side="top"
-        align="start"
+        side="bottom"
+        align="end"
         sideOffset={8}
         className="w-[320px] p-0"
       >

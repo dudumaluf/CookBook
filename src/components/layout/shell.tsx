@@ -26,9 +26,10 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
  *
  *   top-left      ProjectMenu  (logo + chevron, opens DropdownMenu)
  *   top-center    EditableTitle pill
+ *   top-right     AddNodeButton (also via right-click + ⌘.)
  *   side-left     LibraryPanel (vertically centered, ⌘1)
  *   side-right    QueuePanel   (vertically centered, ⌘2)
- *   bottom-left   AddNodeButton (also via right-click + ⌘.)
+ *   bottom-left   React Flow Controls (zoom / fit, owned by CanvasFlow)
  *   bottom-center PromptBar + ChatSheet (⌘J)
  *   bottom-right  CanvasControls (gallery ⌘G, theme)
  *   overlays      LogsPanel (⌘⇧L), CommandPalette (⌘K), GalleryDrawer
@@ -38,7 +39,6 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
  */
 export function AppShell() {
   useLayoutShortcuts();
-  const libraryOpen = useLayoutStore((s) => s.libraryOpen);
 
   // Rehydrate persisted stores after mount so SSR HTML == client first render.
   useEffect(() => {
@@ -46,8 +46,6 @@ export function AppShell() {
     useProjectStore.persist.rehydrate();
     useWorkflowStore.persist.rehydrate();
   }, []);
-
-  const addNodeLeft = libraryOpen ? "calc(280px + 1.5rem)" : "0.75rem";
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">
@@ -65,17 +63,16 @@ export function AppShell() {
         </div>
       </div>
 
+      {/* Top-right: add node pill (mirrors top-left ProjectMenu). The Queue
+       *  panel below it is vertically centered and doesn't collide; the popover
+       *  is z-50 so it renders over the queue when both are open. */}
+      <div className="pointer-events-none absolute right-3 top-3 z-30">
+        <AddNodeButton />
+      </div>
+
       {/* Side floating panels (vertically centered) */}
       <LibraryPanel />
       <QueuePanel />
-
-      {/* Bottom-left: add node pill, slides right to clear the library */}
-      <div
-        className="pointer-events-none absolute bottom-3 z-20 transition-[left] duration-200"
-        style={{ left: addNodeLeft }}
-      >
-        <AddNodeButton />
-      </div>
 
       {/* Bottom-right: canvas controls cluster (gallery, theme) */}
       <CanvasControls />

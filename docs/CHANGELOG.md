@@ -2,6 +2,19 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — Slice 1 polish: smooth canvas + dark Controls + Add Node top-right
+
+Post-Slice 1 user feedback was: "moving the canvas, nodes, and zooming feels sluggish," "the zoom toolbar is white and out of place," and "move Add Node out of bottom-left and put it top-right for now." All addressed.
+
+- **Smooth canvas** (`globals.css`): the global `* { transition: ... transform ...; }` was animating every React Flow viewport pan, every node drag, and every zoom over 150ms. Added a `.react-flow__viewport / __node / __edge / __edge-path / __connection-path / __handle / __nodesselection / __minimap-node { transition: none !important; }` block to opt those out. Our BaseNode card chrome still inherits the global hover transitions because it lives inside the React Flow node wrapper, not on it.
+- **Dark Controls + MiniMap** (`globals.css`): instead of overriding every descendant rule, scope `--xy-controls-button-*` CSS vars on `.react-flow` to repaint via React Flow's own theming hooks (this also keeps RF's `display: flex; flex-direction: column` intact, which a previous specificity-fighting attempt accidentally broke and rendered only the top button). Container picks up `border-radius`, border, and backdrop blur to match the Cookbook pill language.
+- **Controls position** (`canvas-flow.tsx`): bottom-left, lifted to `bottom: 5rem` so the cluster sits clearly above the prompt bar instead of fighting it for hit area.
+- **AddNodeButton at top-right** (`shell.tsx`): mirrors the top-left ProjectMenu — fixed `right-3 top-3`, no dynamic shift. Queue panel is vertically centered so it doesn't collide; popover (z-50) renders over the queue when both are open. Popover side flipped to `bottom` + `align="end"` so it opens down-and-left from the trigger.
+- **WelcomeState hint** (`canvas-area.tsx`): arrow now points up-right (`ArrowUpRight`) instead of down to match the new Add Node corner.
+- **Docs**: ADR-0015 logged (transitions + control theming), polish backlog updated, glossary unchanged.
+
+Verified: lint clean, 28/28 tests, MCP smoke (open page, fit-view zooms both nodes, Cmd+. opens popover anchored top-right with all categories, queue open + popover open both visible).
+
 ## 2026-05-19 — M0a Slice 1: schema engine + canvas + Text/Image nodes (ADR-0014)
 
 The first vertical slice of M0a. The canvas is no longer cosmetic — it spawns, persists, edits, deletes real nodes.

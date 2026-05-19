@@ -130,6 +130,40 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0015 — Canvas feel: kill global transform transitions for React Flow
+
+- **Date**: 2026-05-19
+- **Context**: Right after Slice 1 shipped, the user reported that "moving the canvas, the nodes, and zooming feels sluggish / with friction" and that the zoom toolbar "is white and out of place." The two are linked: the same global stylesheet that polishes button hovers was also dragging React Flow's pan/zoom/drag.
+- **Root cause**:
+  - `globals.css` had `*, *::before, *::after { transition-property: ... transform; transition-duration: 150ms; }`. React Flow translates the viewport on pan and each node on drag via `transform`. With that selector, every frame React Flow set a new `transform`, the browser animated it over 150ms instead of applying it instantly. Result: input lag.
+  - The default Controls stylesheet uses light backgrounds (`--xy-controls-button-background-color-default: #fefefe`) which look pasted-on against Cookbook's dark canvas.
+- **Options considered**:
+  - (a) Drop `transform` from the global transition-property — fine for React Flow, but kills nice hover-scale/transform animations elsewhere if we ever add them.
+  - (b) Override transition with `!important` on the React Flow element classes — narrow, scoped to React Flow, no global change.
+  - (c) Move React Flow into its own subtree with a `:not(.react-flow *) { transition: ...; }` selector — works but specificity gets ugly.
+- **Decision**: (b). One block in `globals.css` opts the React Flow internals out of every transition:
+  ```css
+  .react-flow__viewport,
+  .react-flow__node,
+  .react-flow__edge,
+  .react-flow__edge-path,
+  .react-flow__connection-path,
+  .react-flow__handle,
+  .react-flow__nodesselection,
+  .react-flow__minimap-node {
+    transition: none !important;
+  }
+  ```
+  Our `BaseNode` card chrome (hover/select transitions) is a child of `.react-flow__node`, not the node wrapper itself, so it keeps the global hover transitions.
+- **Controls theming**: instead of overriding every descendant rule, scope React Flow's own `--xy-controls-button-*` CSS vars on `.react-flow`. RF's stylesheet already reads these for backgrounds, hovers, borders, shadows — repainting via the var hook is much less brittle than overriding `.react-flow__controls-button` selectors (which is what an earlier attempt did and, due to specificity + `overflow: hidden`, accidentally collapsed the three buttons into one visible row).
+- **Positioning**: Controls move to `bottom: 5rem` (above the prompt bar) and AddNode moves to top-right (`right-3 top-3`) per user direction. Top-left has the ProjectMenu logo, top-right now has AddNode — symmetric. Queue panel below it is vertically centered so they don't collide; the popover (z-50) renders over the queue when both are open.
+- **Consequences**:
+  - Touches only `globals.css`, `canvas-flow.tsx`, `shell.tsx`, `canvas-area.tsx` (welcome hint arrow direction).
+  - No JS perf changes needed.
+  - Future React Flow upgrades: if RF renames the var names or adds new transform-using classnames, we revisit these two blocks.
+- **Trade-offs accepted**:
+  - The Add Node popover may overlap the Queue panel when both are open at the same time. Z-order makes it functional; if it becomes a friction point, M0b can swap the trigger for an icon-only pill or coordinate-anchor the popover.
+
 ## ADR-0014 — Schema-driven node engine (M0a Slice 1)
 
 - **Date**: 2026-05-19

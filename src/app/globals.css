@@ -157,3 +157,69 @@
     color: var(--accent-foreground);
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* React Flow overrides                                                       */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/*
+ * Our global `* { transition: ... transform ...; }` would otherwise animate
+ * every node drag, every pan, and every zoom over 150ms — which is exactly
+ * the "sluggish / with friction" feeling. Kill the transition on the React
+ * Flow internals that actually transform: the viewport (pan/zoom), each node
+ * (drag), edges, handles. Our own card chrome (color/border-color hover) is
+ * inside the node wrapper and keeps its transitions because the rule below
+ * only targets React Flow's own classnames.
+ */
+.react-flow__viewport,
+.react-flow__node,
+.react-flow__edge,
+.react-flow__edge-path,
+.react-flow__connection-path,
+.react-flow__handle,
+.react-flow__nodesselection,
+.react-flow__minimap-node {
+  transition: none !important;
+}
+
+/*
+ * Controls (zoom + fit) — Cookbook pill / dark theme. We re-paint everything
+ * React Flow's default stylesheet sets via its `--xy-controls-*-default` CSS
+ * vars so we don't have to fight specificity inside the descendant rules.
+ * Keeping React Flow's own `display: flex; flex-direction: column;` ensures
+ * the three buttons stack properly.
+ */
+.react-flow {
+  --xy-controls-button-background-color: oklch(0.2 0 0 / 0.92);
+  --xy-controls-button-background-color-hover: oklch(0.26 0 0);
+  --xy-controls-button-color: oklch(0.85 0 0);
+  --xy-controls-button-color-hover: oklch(0.98 0 0);
+  --xy-controls-button-border-color: oklch(1 0 0 / 0.08);
+  --xy-controls-box-shadow:
+    0 10px 30px -10px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(0 0 0 / 0.25);
+}
+
+.react-flow__controls {
+  border-radius: 0.625rem;
+  overflow: hidden;
+  border: 1px solid var(--xy-controls-button-border-color);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* MiniMap — same language. */
+.react-flow__minimap {
+  border-radius: 0.75rem;
+  border: 1px solid oklch(1 0 0 / 0.08);
+  background: oklch(0.18 0 0 / 0.95);
+  box-shadow: 0 10px 30px -10px oklch(0 0 0 / 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+/* Default attribution rectangle styling — we already hide it via
+   `proOptions={{ hideAttribution: true }}` but keep this as defense. */
+.react-flow__attribution {
+  display: none;
+}

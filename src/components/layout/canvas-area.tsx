@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, Image as ImageIcon, Wand2, Film, Plus } from "lucide-react";
+import { ArrowUpRight, Image as ImageIcon, Wand2, Film, Plus } from "lucide-react";
 import { type ComponentType } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -106,7 +106,7 @@ function WelcomeState() {
           </Button>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             Or use ⌘. / right-click to add a node
-            <ArrowDown className="h-3 w-3" aria-hidden />
+            <ArrowUpRight className="h-3 w-3" aria-hidden />
           </div>
         </div>
       </div>

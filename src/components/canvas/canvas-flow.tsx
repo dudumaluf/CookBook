@@ -225,7 +225,7 @@ export function CanvasFlow() {
         pannable
         zoomable
         position="bottom-right"
-        className="!hidden xl:!block !rounded-xl !border !border-border/70 !bg-popover/95 !backdrop-blur-md !shadow-lg !shadow-black/30"
+        className="hidden xl:block"
         style={{
           right: "calc(320px + 4rem)",
           bottom: "4.5rem",
@@ -236,8 +236,7 @@ export function CanvasFlow() {
       <Controls
         position="bottom-left"
         showInteractive={false}
-        className="!rounded-xl !border !border-border/70 !bg-popover/95 !backdrop-blur-md !shadow-lg !shadow-black/30 !overflow-hidden"
-        style={{ bottom: "4.5rem", left: "0.75rem" }}
+        style={{ bottom: "5rem", left: "0.75rem" }}
       />
     </ReactFlow>
   );
