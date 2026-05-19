@@ -4,7 +4,11 @@ import { ArrowUp, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ChatSheet } from "./chat-sheet";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
@@ -20,7 +24,13 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
 export function PromptBar() {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const { chatSheetOpen, toggleChatSheet } = useLayoutStore();
+  const { chatSheetOpen, toggleChatSheet, libraryOpen, queueOpen } =
+    useLayoutStore();
+
+  // Reserve breathing space for floating panels so the prompt bar centers
+  // between them rather than under them.
+  const padLeft = libraryOpen ? "calc(280px + 1.5rem)" : "1.5rem";
+  const padRight = queueOpen ? "calc(320px + 1.5rem)" : "1.5rem";
 
   // Global "/" focuses the prompt bar unless the user is already typing.
   useEffect(() => {
@@ -42,7 +52,8 @@ export function PromptBar() {
     <div
       role="search"
       aria-label="Assistant prompt"
-      className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-2 px-6"
+      className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-2 transition-[padding] duration-200"
+      style={{ paddingLeft: padLeft, paddingRight: padRight }}
     >
       {chatSheetOpen && <ChatSheet />}
 
@@ -71,7 +82,7 @@ export function PromptBar() {
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {chatSheetOpen ? "Hide conversation (\u2318 J)" : "Show conversation (\u2318 J)"}
+            {chatSheetOpen ? "Hide conversation (⌘J)" : "Show conversation (⌘J)"}
           </TooltipContent>
         </Tooltip>
 

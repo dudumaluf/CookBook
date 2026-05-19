@@ -4,39 +4,54 @@ import { ArrowDown, Image as ImageIcon, Wand2, Film, Plus } from "lucide-react";
 import { type ComponentType } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useLayoutStore } from "@/lib/stores/layout-store";
+import { CanvasContextMenu } from "./canvas-context-menu";
 
 /**
  * CanvasArea
  *
  * Renders the dotted background + welcome state. Once nodes exist (M0a), the
  * welcome will swap for the React Flow canvas.
+ *
+ * Wrapped in `CanvasContextMenu` so right-clicking anywhere on the canvas
+ * (background or future nodes) opens the canvas action menu.
  */
 export function CanvasArea() {
   return (
-    <main
-      role="main"
-      aria-label="Canvas"
-      className="relative flex flex-1 overflow-hidden bg-background"
-    >
-      {/* Dotted background pattern */}
-      <div
-        aria-hidden
-        className="absolute inset-0 opacity-[0.18]"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle, var(--color-muted-foreground) 1px, transparent 1px)",
-          backgroundSize: "24px 24px",
-        }}
-      />
-
-      <WelcomeState />
-    </main>
+    <CanvasContextMenu>
+      <main
+        role="main"
+        aria-label="Canvas"
+        className="relative flex flex-1 overflow-hidden bg-background"
+      >
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-[0.18]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle, var(--color-muted-foreground) 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
+          }}
+        />
+        <WelcomeState />
+      </main>
+    </CanvasContextMenu>
   );
 }
 
 function WelcomeState() {
+  const libraryOpen = useLayoutStore((s) => s.libraryOpen);
+  const queueOpen = useLayoutStore((s) => s.queueOpen);
+  // Reserve breathing space for floating panels so the centered welcome
+  // content stays visible between them rather than disappearing behind.
+  const padLeft = libraryOpen ? "calc(280px + 2rem)" : "1.5rem";
+  const padRight = queueOpen ? "calc(320px + 2rem)" : "1.5rem";
+
   return (
-    <div className="@container/welcome relative z-10 flex w-full items-start justify-center overflow-y-auto px-6 pb-32 pt-16">
+    <div
+      className="@container/welcome relative z-10 flex w-full items-start justify-center overflow-y-auto pb-32 pt-16 transition-[padding] duration-200"
+      style={{ paddingLeft: padLeft, paddingRight: padRight }}
+    >
       <div className="flex w-full max-w-[720px] flex-col items-center gap-8 @md/welcome:gap-10">
         <header className="flex flex-col items-center gap-3 text-center">
           <span className="rounded-full border border-border/80 bg-card px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">

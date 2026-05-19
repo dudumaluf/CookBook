@@ -4,82 +4,91 @@ import { persist, createJSONStorage } from "zustand/middleware";
 /**
  * Layout store
  *
- * Owns the persistent chrome state around the canvas. Two fixed panels (Library
- * left, Properties right). Everything else is an on-demand overlay or sheet so
- * the canvas stays the visual priority.
+ * Owns the chrome state around the canvas. The new layout (ADR-0012) drops
+ * fixed edge-to-edge panels in favor of floating panels with breathing room.
  *
- * - leftPanelOpen / rightPanelOpen: fixed panels, persist across sessions
- * - chatSheetOpen: slide-up sheet above the prompt bar; ephemeral, persisted only
- *   to honor user preference when re-opening the app mid-conversation
- * - queueSheetOpen: panel anchored under the top-bar queue pill; NOT persisted
- *   (it's auto-managed by activity)
- * - commandPaletteOpen: cmd+k palette; NOT persisted
- * - logsPanelOpen: dev-tool overlay; NOT persisted
- * - approvalGateOn: persistent user preference
+ * - libraryOpen: floating left panel (collapsed = circular pill). Persisted.
+ * - queueOpen: floating right panel, always visible by default. Persisted.
+ * - chatSheetOpen: slide-up overlay above the prompt bar. Persisted (so it
+ *   stays open if the user closed the app mid-conversation).
+ * - commandPaletteOpen: Cmd+K palette. Ephemeral.
+ * - logsPanelOpen: Cmd+Shift+L dev overlay. Ephemeral.
+ * - galleryOpen: bottom-drawer overlay for browsing results. Ephemeral.
+ * - addNodePopoverOpen: + add node popover (bottom-left). Ephemeral.
+ * - approvalGateOn: persistent user preference.
  */
 
 interface LayoutState {
-  leftPanelOpen: boolean;
-  rightPanelOpen: boolean;
+  libraryOpen: boolean;
+  queueOpen: boolean;
   chatSheetOpen: boolean;
-  queueSheetOpen: boolean;
   commandPaletteOpen: boolean;
   logsPanelOpen: boolean;
+  galleryOpen: boolean;
+  addNodePopoverOpen: boolean;
   approvalGateOn: boolean;
 
-  toggleLeftPanel: () => void;
-  toggleRightPanel: () => void;
+  toggleLibrary: () => void;
+  toggleQueue: () => void;
   toggleChatSheet: () => void;
   setChatSheetOpen: (open: boolean) => void;
-  toggleQueueSheet: () => void;
-  setQueueSheetOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleLogsPanel: () => void;
   setLogsPanelOpen: (open: boolean) => void;
+  toggleGallery: () => void;
+  setGalleryOpen: (open: boolean) => void;
+  toggleAddNodePopover: () => void;
+  setAddNodePopoverOpen: (open: boolean) => void;
   setApprovalGate: (on: boolean) => void;
 
-  /** Close every overlay/sheet (Esc handler). Returns true if anything closed. */
+  /** Esc handler — close every ephemeral overlay. Returns true if anything closed. */
   closeAllOverlays: () => boolean;
 }
 
 export const useLayoutStore = create<LayoutState>()(
   persist(
     (set, get) => ({
-      leftPanelOpen: true,
-      rightPanelOpen: true,
+      libraryOpen: true,
+      queueOpen: true,
       chatSheetOpen: false,
-      queueSheetOpen: false,
       commandPaletteOpen: false,
       logsPanelOpen: false,
+      galleryOpen: false,
+      addNodePopoverOpen: false,
       approvalGateOn: true,
 
-      toggleLeftPanel: () => set((s) => ({ leftPanelOpen: !s.leftPanelOpen })),
-      toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+      toggleLibrary: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
+      toggleQueue: () => set((s) => ({ queueOpen: !s.queueOpen })),
       toggleChatSheet: () => set((s) => ({ chatSheetOpen: !s.chatSheetOpen })),
       setChatSheetOpen: (open) => set({ chatSheetOpen: open }),
-      toggleQueueSheet: () => set((s) => ({ queueSheetOpen: !s.queueSheetOpen })),
-      setQueueSheetOpen: (open) => set({ queueSheetOpen: open }),
       toggleCommandPalette: () =>
         set((s) => ({ commandPaletteOpen: !s.commandPaletteOpen })),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       toggleLogsPanel: () => set((s) => ({ logsPanelOpen: !s.logsPanelOpen })),
       setLogsPanelOpen: (open) => set({ logsPanelOpen: open }),
+      toggleGallery: () => set((s) => ({ galleryOpen: !s.galleryOpen })),
+      setGalleryOpen: (open) => set({ galleryOpen: open }),
+      toggleAddNodePopover: () =>
+        set((s) => ({ addNodePopoverOpen: !s.addNodePopoverOpen })),
+      setAddNodePopoverOpen: (open) => set({ addNodePopoverOpen: open }),
       setApprovalGate: (on) => set({ approvalGateOn: on }),
 
       closeAllOverlays: () => {
         const s = get();
         const anyOpen =
           s.chatSheetOpen ||
-          s.queueSheetOpen ||
           s.commandPaletteOpen ||
-          s.logsPanelOpen;
+          s.logsPanelOpen ||
+          s.galleryOpen ||
+          s.addNodePopoverOpen;
         if (!anyOpen) return false;
         set({
           chatSheetOpen: false,
-          queueSheetOpen: false,
           commandPaletteOpen: false,
           logsPanelOpen: false,
+          galleryOpen: false,
+          addNodePopoverOpen: false,
         });
         return true;
       },
@@ -87,24 +96,40 @@ export const useLayoutStore = create<LayoutState>()(
     {
       name: "cookbook.layout",
       storage: createJSONStorage(() => localStorage),
-      version: 2,
-      // Don't persist ephemeral overlays
+      version: 3,
+      // SSR-safe: don't auto-rehydrate on first render. Instead the shell
+      // triggers .persist.rehydrate() inside a useEffect. This guarantees the
+      // server-rendered HTML matches the client's initial render (= defaults).
+      skipHydration: true,
       partialize: (state) => ({
-        leftPanelOpen: state.leftPanelOpen,
-        rightPanelOpen: state.rightPanelOpen,
+        libraryOpen: state.libraryOpen,
+        queueOpen: state.queueOpen,
         chatSheetOpen: state.chatSheetOpen,
         approvalGateOn: state.approvalGateOn,
       }),
       migrate: (persisted, version) => {
-        // v1 had: leftPanelTab, rightPanelTab, bottomDrawerOpen, bottomDrawerTab.
-        // We drop those and keep only what we still have.
-        if (version < 2 && persisted && typeof persisted === "object") {
-          const p = persisted as Record<string, unknown>;
+        // v1: leftPanelTab/rightPanelTab/bottomDrawer fields
+        // v2: leftPanelOpen/rightPanelOpen/chatSheetOpen/approvalGateOn
+        // v3 (current): libraryOpen/queueOpen/chatSheetOpen/approvalGateOn
+        if (!persisted || typeof persisted !== "object")
           return {
-            leftPanelOpen: typeof p.leftPanelOpen === "boolean" ? p.leftPanelOpen : true,
-            rightPanelOpen:
-              typeof p.rightPanelOpen === "boolean" ? p.rightPanelOpen : true,
+            libraryOpen: true,
+            queueOpen: true,
             chatSheetOpen: false,
+            approvalGateOn: true,
+          } as Partial<LayoutState>;
+        const p = persisted as Record<string, unknown>;
+        if (version < 3) {
+          return {
+            libraryOpen:
+              typeof p.leftPanelOpen === "boolean"
+                ? p.leftPanelOpen
+                : typeof p.libraryOpen === "boolean"
+                  ? p.libraryOpen
+                  : true,
+            queueOpen: true,
+            chatSheetOpen:
+              typeof p.chatSheetOpen === "boolean" ? p.chatSheetOpen : false,
             approvalGateOn:
               typeof p.approvalGateOn === "boolean" ? p.approvalGateOn : true,
           } as Partial<LayoutState>;

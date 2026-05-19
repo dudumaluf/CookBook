@@ -2,7 +2,7 @@
 
 Each milestone has an explicit **acceptance criterion** — what the user must be able to do for the milestone to be considered "shipped". Engineering work that doesn't move us toward an acceptance criterion is suspect.
 
-## Day 1 — Foundation _(shipped, refined)_
+## Day 1 — Foundation _(shipped, refined twice)_
 
 Scaffold the project, lock the design language, and prove the testing rhythm.
 
@@ -11,18 +11,23 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 - Next.js + React + TS + Tailwind v4 + shadcn (base-ui) scaffold.
 - Test stack (Vitest + Testing Library + happy-dom + MSW) with 3 passing sample tests.
 - Premium dark theme with warm amber accent, Geist Sans, smooth 150ms transitions.
-- Layout shell — see [ADR-0011](./DECISIONS.md):
-  - Two fixed panels: Library left (280px), Properties right (320px).
-  - Floating prompt bar + slide-up ChatSheet (Cmd+J).
-  - Top-bar Queue pill + QueueSheet anchored top-right.
+- Layout shell — see [ADR-0012](./DECISIONS.md) (canonical) and [ADR-0011](./DECISIONS.md) (superseded for history):
+  - **Floating** Library panel (left) and Queue panel (right) with 12px breathing margin, rounded-2xl, soft shadow, backdrop blur. Both collapse to circular corner pills.
+  - **No Properties panel** — returns as a node-anchored popover in M0a.
+  - Minimal top bar: company logo + chevron menu (DropdownMenu) · centered editable project title (Notion-style, persisted in project-store) · Reset + Approval + Run cluster.
+  - Add Node pill bottom-left + searchable categorized popover (Inputs/Iterators/AI Vision/AI Generation/AI Video/Compose/Output). Same catalog from canvas right-click context menu and Cmd+N.
+  - Canvas controls cluster bottom-right (Gallery, Theme).
+  - GalleryDrawer (Cmd+G) — bottom-drawer overlay (~65vh) with backdrop, density + search skeleton, "celebrate the work" copy.
+  - PromptBar reserves CSS padding equal to floating-panel widths so it stays centered between them.
+  - Slide-up ChatSheet above the PromptBar (Cmd+J).
   - Cmd+K command palette (stub).
   - Cmd+Shift+L logs panel (stub).
   - Welcome state on empty canvas with 3 recipe cards (Soul Image Burst, Reference Edit, Photo → Video) gated as "Available in M0a/b/c".
-- Shortcuts: `⌘1`, `⌘2`, `⌘J`, `⌘K`, `⌘⇧L`, `/`, `Esc`.
+- Shortcuts: `⌘1` (Library), `⌘2` (Queue), `⌘G` (Gallery), `⌘J` (Chat), `⌘K` (Palette), `⌘.` (Add node — `⌘N` is system-reserved), `⌘⇧L` (Logs), `/` (focus prompt), `Esc` (close overlays).
 - `docs/` folder seeded with all 9 docs + `scripts/docs-check.ts`.
-- First commit + layout-refactor commit on `main`.
+- First commit + two layout-refactor commits on `main`.
 
-**Acceptance**: User can open `localhost:3001` (port 3000 taken by Prism dev server), see the empty premium shell with welcome state + 3 disabled recipe cards, toggle panels + open all overlays with shortcuts, switch theme, and approve "this feels right". `npm test`, `npm run build`, `npm run lint`, `npm run docs:check` all green.
+**Acceptance**: User opens `localhost:3001` (3000 is Prism), sees a clean canvas with floating Library/Queue cards, can rename the project inline, opens the project menu / add-node popover / right-click context menu / gallery drawer, toggles every panel via shortcut, and approves "this feels right". `npm test`, `npm run build`, `npm run lint`, `npm run docs:check` all green.
 
 ---
 

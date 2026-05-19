@@ -22,18 +22,22 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon"
-      aria-label={mounted ? `Switch to ${isDark ? "light" : "dark"} theme` : "Toggle theme"}
+      aria-label={
+        mounted
+          ? `Switch to ${isDark ? "light" : "dark"} theme`
+          : "Toggle theme"
+      }
       onClick={() => setTheme(isDark ? "light" : "dark")}
-      className="h-8 w-8"
+      className="h-7 w-7 rounded-full text-muted-foreground hover:bg-muted/50"
     >
       {mounted ? (
         isDark ? (
-          <Sun className="h-4 w-4" />
+          <Sun className="h-3.5 w-3.5" />
         ) : (
-          <Moon className="h-4 w-4" />
+          <Moon className="h-3.5 w-3.5" />
         )
       ) : (
-        <Sun className="h-4 w-4 opacity-0" aria-hidden />
+        <Sun className="h-3.5 w-3.5 opacity-0" aria-hidden />
       )}
     </Button>
   );

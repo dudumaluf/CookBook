@@ -44,7 +44,7 @@ export function LogsPanel() {
 
       <ScrollArea className="flex-1">
         <pre className="px-3 py-4 font-mono text-[11px] leading-relaxed text-muted-foreground">
-          {"// Engine + service logs will stream here.\n// Toggle with \u2318\u21E7L."}
+          {"// Engine + service logs will stream here.\n// Toggle with ⌘⇧L."}
         </pre>
       </ScrollArea>
     </aside>

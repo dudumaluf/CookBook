@@ -103,3 +103,29 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - WelcomeState uses container queries (`@container/welcome`) so it adapts to canvas width regardless of which panels are open — robust to any configuration.
   - Layout store bumped to v2 with migration that preserves user preferences.
 - **Trade-offs accepted**: Slightly more chrome states to learn (5 shortcuts vs 3), but each is discoverable via tooltip + welcome state copy + command palette.
+
+## ADR-0012 — Floating panels with breathing room (supersedes ADR-0011 panel chrome)
+
+- **Date**: 2026-05-19
+- **Context**: Walking through ADR-0011 with the user, three problems surfaced:
+  - The Properties panel is empty 99% of the time (nothing selected) and a permanently empty panel feels like wasted real estate.
+  - Edge-to-edge panels feel like banner chrome wrapping the canvas; the user wants the canvas to feel like the hero of the workspace, with surfaces floating _on top of it_ instead of carving it up.
+  - The top-bar Queue pill + Queue sheet split forced the user to click to see what's running; the user wants the queue persistently visible (it's where the work _is_).
+- **Options**: (a) fix tabs/empty states inside the same 2-panel layout, (b) collapse Properties into a node-anchored popover and convert remaining panels to floating cards with breathing room, (c) move everything into a single right rail with stacked sections.
+- **Decision**: (b). New chrome rules:
+  - **Properties → gone as a panel**. In M0a it returns as a small floating popover anchored to the selected node (or its handle) — only shown when something is selected, never empty.
+  - **Library** and **Queue** become floating panels with 12px breathing margin from every edge they touch, rounded corners, soft shadow, backdrop blur. Both can collapse to a small circular pill in their corner.
+  - **Queue is always visible by default** (the work deserves real estate), no top-bar pill required.
+  - **Top bar** becomes minimal: logo + chevron (project menu DropdownMenu) on the left · clickable editable title in the center (Notion-style inline edit, lives in `project-store`) · Reset + Approval + Run cluster on the right.
+  - **Theme toggle** migrates to a small bottom-right canvas-controls cluster, alongside a Gallery button (Cmd+G, opens a bottom-drawer overlay).
+  - **AddNodeButton** is a floating pill bottom-left (with a categorized + searchable popover). The same catalog is reachable via canvas right-click context menu (Day 1 stub menu; M0a positions the full picker at click coords) and via Cmd+N.
+  - **Gallery** is a bottom-drawer overlay (~65vh) with a dimmed backdrop — designed to "celebrate the work" with rich thumbnails, hover-to-play, multi-select, density slider. Day 1 ships the skeleton; M0a wires content.
+- **Consequences**:
+  - Canvas reclaims full bleed; panels feel layered like a designer's deck rather than a code editor's chrome.
+  - Properties never feels empty (it only exists when relevant).
+  - Adds: `library-panel`, `queue-panel`, `add-node-button`, `canvas-controls`, `gallery-drawer`, `canvas-context-menu`, `editable-title`, `project-menu`, plus `project-store`. Removes: `left-panel`, `right-panel`, `queue-indicator`, `queue-sheet`.
+  - Layout store bumped to v3 with migration: previous `leftPanelOpen` → `libraryOpen`; queue/properties states reset to defaults.
+  - Keyboard shortcuts: ⌘1 Library · ⌘2 Queue · ⌘G Gallery · ⌘J Chat · ⌘K Palette · ⌘. Add node (⌘N is system-reserved) · ⌘⇧L Logs · Esc closes overlays.
+- **Trade-offs accepted**:
+  - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
+  - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.

@@ -7,22 +7,27 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
 /**
  * Global keyboard shortcuts for shell chrome.
  *
- * - ⌘1: toggle Library panel
- * - ⌘2: toggle Properties panel
- * - ⌘J: toggle chat history sheet
- * - ⌘K: open command palette
- * - ⌘⇧L: toggle logs panel
- * - Esc: close any open overlay (sheet/palette/logs)
+ * - ⌘1   toggle Library panel
+ * - ⌘2   toggle Queue panel
+ * - ⌘G   toggle Gallery drawer
+ * - ⌘J   toggle chat history sheet
+ * - ⌘K   open command palette
+ * - ⌘.   open Add Node popover (also via right-click on canvas). We avoid
+ *        ⌘N because macOS / Chrome intercept it as "new window".
+ * - ⌘⇧L  toggle logs panel
+ * - Esc  close any open overlay (chat / palette / logs / gallery / add-node)
  *
  * `/` is handled in PromptBar to focus the textarea.
  */
 export function useLayoutShortcuts() {
   const {
-    toggleLeftPanel,
-    toggleRightPanel,
+    toggleLibrary,
+    toggleQueue,
+    toggleGallery,
     toggleChatSheet,
     toggleCommandPalette,
     toggleLogsPanel,
+    toggleAddNodePopover,
     closeAllOverlays,
   } = useLayoutStore();
 
@@ -39,24 +44,27 @@ export function useLayoutShortcuts() {
 
       const key = e.key.toLowerCase();
 
-      // ⌘⇧L for logs (Shift + L)
+      // ⌘⇧L for logs
       if (e.shiftKey && key === "l") {
         e.preventDefault();
         toggleLogsPanel();
         return;
       }
 
-      // Other shortcuts must NOT have Shift (avoid stealing system shortcuts)
       if (e.shiftKey) return;
 
       switch (key) {
         case "1":
           e.preventDefault();
-          toggleLeftPanel();
+          toggleLibrary();
           break;
         case "2":
           e.preventDefault();
-          toggleRightPanel();
+          toggleQueue();
+          break;
+        case "g":
+          e.preventDefault();
+          toggleGallery();
           break;
         case "j":
           e.preventDefault();
@@ -66,17 +74,23 @@ export function useLayoutShortcuts() {
           e.preventDefault();
           toggleCommandPalette();
           break;
+        case ".":
+          e.preventDefault();
+          toggleAddNodePopover();
+          break;
       }
     }
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
-    toggleLeftPanel,
-    toggleRightPanel,
+    toggleLibrary,
+    toggleQueue,
+    toggleGallery,
     toggleChatSheet,
     toggleCommandPalette,
     toggleLogsPanel,
+    toggleAddNodePopover,
     closeAllOverlays,
   ]);
 }

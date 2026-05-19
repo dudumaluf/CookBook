@@ -36,13 +36,15 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 ### Keyboard shortcuts
 
-- `⌘1` toggle the Library panel (left).
-- `⌘2` toggle the Properties panel (right).
+- `⌘1` toggle the Library (floating left).
+- `⌘2` toggle the Queue (floating right).
+- `⌘G` open the Gallery drawer.
+- `⌘.` open the Add node popover (also via right-click on the canvas; `⌘N` is reserved by the OS).
 - `⌘J` toggle the chat history sheet (above the prompt bar).
 - `⌘K` open the command palette.
 - `⌘⇧L` toggle the logs panel (dev).
 - `/` focus the prompt bar.
-- `Esc` close any open sheet / palette / logs.
+- `Esc` close any open overlay (chat / palette / logs / gallery / add-node).
 
 ## Environment
 

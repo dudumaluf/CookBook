@@ -7,41 +7,47 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
-export function LeftPanel() {
-  const { leftPanelOpen, toggleLeftPanel } = useLayoutStore();
+/**
+ * LibraryPanel
+ *
+ * Floating left panel with breathing room (12px margin from each edge it touches).
+ * Rounded card, soft border, backdrop blur — feels like it sits on top of the
+ * canvas rather than carving it up.
+ *
+ * Collapsed state = circular pill in the top-left corner (also with breathing).
+ */
+export function LibraryPanel() {
+  const { libraryOpen, toggleLibrary } = useLayoutStore();
 
-  if (!leftPanelOpen) {
+  if (!libraryOpen) {
     return (
-      <aside className="flex w-9 shrink-0 flex-col items-center gap-1 border-r border-border bg-sidebar py-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={toggleLeftPanel}
-              aria-label="Open library panel"
-            >
-              <Library className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Library (⌘1)</TooltipContent>
-        </Tooltip>
-      </aside>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={toggleLibrary}
+            aria-label="Open library"
+            className="pointer-events-auto absolute left-3 top-16 z-20 h-9 w-9 rounded-full border-border/80 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-md"
+          >
+            <Library className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">Library (⌘1)</TooltipContent>
+      </Tooltip>
     );
   }
 
   return (
     <aside
       aria-label="Library"
-      className="flex w-[280px] shrink-0 flex-col border-r border-border bg-sidebar"
+      className="pointer-events-auto absolute bottom-3 left-3 top-16 z-20 flex w-[280px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-xl shadow-black/30 backdrop-blur-md"
     >
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+      <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
           <Library className="h-3.5 w-3.5 text-muted-foreground" />
           <span>Library</span>
         </div>
-
         <div className="flex items-center gap-0.5">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -56,15 +62,14 @@ export function LeftPanel() {
             </TooltipTrigger>
             <TooltipContent>New asset</TooltipContent>
           </Tooltip>
-
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={toggleLeftPanel}
+                onClick={toggleLibrary}
                 className="h-6 w-6 text-muted-foreground"
-                aria-label="Collapse library panel"
+                aria-label="Collapse library"
               >
                 <ChevronsLeft className="h-3.5 w-3.5" />
               </Button>
@@ -72,14 +77,15 @@ export function LeftPanel() {
             <TooltipContent>Collapse (⌘1)</TooltipContent>
           </Tooltip>
         </div>
-      </div>
+      </header>
 
       <ScrollArea className="flex-1">
         <div className="flex flex-col items-start gap-1.5 px-3 py-4">
           <p className="text-sm text-foreground/80">No assets yet</p>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Click + to import images, train a Soul ID character, or add a
-            moodboard.
+            Click <span className="font-medium text-foreground/80">+</span> to
+            import images, train a Soul ID character, or add a moodboard. Drag
+            from here onto the canvas.
           </p>
         </div>
       </ScrollArea>
