@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — Slice 1 polish v3: canvas always live, welcome is just an overlay
+
+User caught a UX inconsistency: with no nodes the canvas showed a fake CSS dotted grid and **no** pan / zoom / Controls / MiniMap. The moment a node landed, all of that chrome popped in. Asked: "shouldn't the canvas already be pannable and have those elements from the start?"
+
+- **`CanvasFlow` is always mounted** (`canvas-area.tsx`): `CanvasArea` always renders `<CanvasFlow />`. React Flow owns the dotted background, Controls (zoom / fit / theme), MiniMap, and pan/zoom from the first paint. No more "everything appears" jolt when the first node lands.
+- **Welcome becomes a `WelcomeOverlay`** (same file): renders on top of the live canvas when `nodes.length === 0`. The outer container is `pointer-events-none` so panning and zooming the canvas under it still works; only the actual CTA (Blank canvas button) opts back into pointer events. Renamed from `WelcomeState` to make the overlay nature obvious.
+- **Fake CSS grid removed**: the radial-gradient dotted background was a placeholder that competed with React Flow's `<Background variant="Dots">`. Same gap, same color, same opacity — keeping only the real one.
+- **MiniMap hidden when empty** (`canvas-flow.tsx`): `{rfNodes.length > 0 && <MiniMap />}` so we don't show an empty dark rectangle bottom-right. Reappears as soon as there's anything to navigate.
+- **`workflow-store` bumped to v2**: not a schema change — used to clear dev-state local persistence so we could verify the empty-canvas path. Future *schema* changes should bump to v3+ and ship a `migrate`.
+
+Verified: lint clean, 28/28 tests. MCP smoke confirmed empty canvas now shows Controls (zoom/fit/theme) + dotted background from the start; ⌘. → Text → node appears and the welcome overlay unmounts cleanly without disturbing the chrome.
+
 ## 2026-05-19 — Slice 1 polish v2: four-corner layout, theme into Controls, MiniMap in the wild
 
 User feedback after the first polish pass: lifting the zoom controls to clear the prompt bar left an ugly gap below them on wide viewports, the canvas already has a MiniMap that could live bottom-right, the theme/gallery buttons could group with Add Node top-right (or theme could disappear into the zoom cluster).

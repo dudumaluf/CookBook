@@ -263,20 +263,22 @@ export function CanvasFlow() {
         color="var(--color-muted-foreground)"
         style={{ opacity: 0.18 }}
       />
-      <MiniMap
-        pannable
-        zoomable
-        position="bottom-right"
-        className="hidden lg:block"
-        style={{
-          right: "0.75rem",
-          bottom: "0.75rem",
-          width: 180,
-          height: 120,
-        }}
-        maskColor="oklch(0.135 0 0 / 50%)"
-        nodeColor="oklch(0.4 0.06 73)"
-      />
+      {rfNodes.length > 0 && (
+        <MiniMap
+          pannable
+          zoomable
+          position="bottom-right"
+          className="hidden lg:block"
+          style={{
+            right: "0.75rem",
+            bottom: "0.75rem",
+            width: 180,
+            height: 120,
+          }}
+          maskColor="oklch(0.135 0 0 / 50%)"
+          nodeColor="oklch(0.4 0.06 73)"
+        />
+      )}
       <Controls
         position="bottom-left"
         showInteractive={false}

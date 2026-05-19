@@ -12,13 +12,19 @@ import { CanvasContextMenu } from "./canvas-context-menu";
 /**
  * CanvasArea
  *
- * Renders one of two states depending on the workflow store:
+ * `CanvasFlow` is always mounted: React Flow owns the dotted background, the
+ * Controls (zoom / fit / theme), the MiniMap, and — most importantly — pan +
+ * zoom. The canvas is interactive from the very first paint, even before any
+ * node exists, so there's no jarring "everything appears" when the first node
+ * lands.
  *
- *   - **Empty**  → the WelcomeState (hero + recipe cards + assistant hint).
- *   - **Populated** → React Flow canvas via `CanvasFlow`.
+ * When the workflow is empty we layer a `WelcomeOverlay` on top of the canvas.
+ * The overlay's outer container is `pointer-events-none`, so it never blocks
+ * React Flow's pan/zoom hit-testing; only its interactive children (the
+ * Blank canvas button) opt back in with `pointer-events-auto`.
  *
  * Wrapped in `CanvasContextMenu` so right-clicking anywhere on the canvas
- * (background or future nodes) opens the canvas action menu.
+ * opens the canvas action menu (Add node, etc.).
  */
 export function CanvasArea() {
   const hasNodes = useWorkflowStore((s) => s.nodes.length > 0);
@@ -30,28 +36,21 @@ export function CanvasArea() {
         aria-label="Canvas"
         className="absolute inset-0 overflow-hidden bg-background"
       >
-        {hasNodes ? (
-          <CanvasFlow />
-        ) : (
-          <>
-            <div
-              aria-hidden
-              className="absolute inset-0 opacity-[0.18]"
-              style={{
-                backgroundImage:
-                  "radial-gradient(circle, var(--color-muted-foreground) 1px, transparent 1px)",
-                backgroundSize: "24px 24px",
-              }}
-            />
-            <WelcomeState />
-          </>
-        )}
+        <CanvasFlow />
+        {!hasNodes && <WelcomeOverlay />}
       </main>
     </CanvasContextMenu>
   );
 }
 
-function WelcomeState() {
+/**
+ * WelcomeOverlay
+ *
+ * Floats above an already-interactive React Flow canvas. The outer container
+ * is `pointer-events-none` so panning and zooming the canvas under it still
+ * works; only the actual CTAs opt back into pointer events.
+ */
+function WelcomeOverlay() {
   const libraryOpen = useLayoutStore((s) => s.libraryOpen);
   const queueOpen = useLayoutStore((s) => s.queueOpen);
   // Reserve breathing space for the floating panels (sides) and for the
@@ -61,7 +60,7 @@ function WelcomeState() {
 
   return (
     <div
-      className="@container/welcome absolute inset-0 z-10 flex items-start justify-center overflow-y-auto pb-32 pt-24 transition-[padding] duration-200"
+      className="@container/welcome pointer-events-none absolute inset-0 z-10 flex items-start justify-center overflow-y-auto pb-32 pt-24 transition-[padding] duration-200"
       style={{ paddingLeft: padLeft, paddingRight: padRight }}
     >
       <div className="flex w-full max-w-[720px] flex-col items-center gap-8 @md/welcome:gap-10">
@@ -100,7 +99,12 @@ function WelcomeState() {
         </div>
 
         <div className="flex flex-col items-center gap-3">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5" disabled>
+          <Button
+            variant="outline"
+            size="sm"
+            className="pointer-events-auto h-8 gap-1.5"
+            disabled
+          >
             <Plus className="h-3.5 w-3.5" />
             Blank canvas
           </Button>

@@ -136,7 +136,10 @@ export const useWorkflowStore = create<WorkflowState>()(
     {
       name: "cookbook.workflow",
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      // v2 (no schema change vs v1): bumped during Slice 1 polish to clear
+      // dev-state local persistence after the canvas became always-mounted —
+      // any future *schema* changes should bump to v3+ and ship a `migrate`.
+      version: 2,
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.
       skipHydration: true,

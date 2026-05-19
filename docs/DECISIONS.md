@@ -130,6 +130,18 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0017 — Canvas is always live; welcome is a non-blocking overlay
+
+- **Date**: 2026-05-19
+- **Context**: The original Slice 1 implementation only mounted React Flow when the workflow had at least one node. When empty we showed a hero ("What do you want to make?") on top of a hand-rolled CSS dotted background. The first time a node was created, React Flow mounted and *all* its chrome (Controls, MiniMap, pan/zoom, real Background dots) appeared at once. User feedback: "shouldn't the canvas already be pannable and not have those elements pop in?"
+- **Decision**: Always mount `CanvasFlow`. The canvas is interactive from the first paint regardless of node count. The welcome experience moves into a `WelcomeOverlay` that floats above the live React Flow canvas, with `pointer-events: none` on its outer container so panning and zooming the canvas under it still works. Only its actual CTAs (e.g. the Blank canvas button) opt back into pointer events.
+- **Consequences / details**:
+  - The dotted background is owned by React Flow's `<Background variant="Dots">` in all states. The CSS-radial-gradient placeholder is gone — same look, single source of truth.
+  - MiniMap is conditionally rendered (`nodes.length > 0 && <MiniMap />`) so empty canvas doesn't show a blank dark rectangle bottom-right. Controls stay always visible — zoom in/out/fit/theme are useful even when empty (and the user just *being able to click them* signals "this thing is alive").
+  - Fit-view on an empty canvas is a no-op visually. We accept that — it's not worth a custom disabled state for one button on one transient state.
+  - Welcome content is conditionally rendered rather than animated out. If we want fade-out polish later, that's a wrapper around `<WelcomeOverlay />` and not a structural change.
+  - The pattern generalises: any future "first-time" or "empty-state" UI for the canvas should be a non-blocking overlay on top of the live React Flow, not a replacement for it.
+
 ## ADR-0016 — Four-corner canvas chrome (Slice 1 polish v2)
 
 - **Date**: 2026-05-19
