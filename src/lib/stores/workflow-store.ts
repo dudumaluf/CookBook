@@ -136,10 +136,19 @@ export const useWorkflowStore = create<WorkflowState>()(
     {
       name: "cookbook.workflow",
       storage: createJSONStorage(() => localStorage),
-      // v2 (no schema change vs v1): bumped during Slice 1 polish to clear
-      // dev-state local persistence after the canvas became always-mounted —
-      // any future *schema* changes should bump to v3+ and ship a `migrate`.
+      // v2 (no schema change vs v1): bumped during Slice 1 polish for a dev
+      // wipe; v1 and v2 share the same shape, so `migrate` is a pass-through.
+      // Future *schema* changes should bump the version AND add a real
+      // case here that transforms the persisted state.
       version: 2,
+      migrate: (persistedState, version) => {
+        // v1 → v2: shape unchanged. Just pass through so existing user data
+        // is preserved instead of being silently discarded.
+        if (version === 1) {
+          return persistedState as Partial<WorkflowState>;
+        }
+        return persistedState as Partial<WorkflowState>;
+      },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.
       skipHydration: true,
