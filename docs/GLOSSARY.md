@@ -22,15 +22,19 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 - **Cache key** — `hash(nodeId + serializedConfig + sortedUpstreamOutputHashes + seedStrategy + lockedSeedValue)`. Determines cache hit/miss.
 - **Seed strategy** — per-node config. `locked` (deterministic), `random` (every run different), `inherited` (follows recipe-level seed).
 - **Pin** — flag on a specific output that makes it immune to cache invalidation. Unpin to reset.
-- **Approval gate** — top-bar toggle. When on, the assistant asks before running any operation that costs > $0.10 or is ambiguous.
 
 ## UI
 
-- **Shell** — the persistent chrome around the canvas: top bar, left panel, right panel, bottom drawer, prompt bar.
-- **Library panel** (left) — assets + recipes tabs. Drag from here onto the canvas.
-- **Properties panel** (right) — config + history + pin controls for the selected node. Or the assistant chat.
-- **Bottom drawer** — execution queue + global logs.
+- **Shell** — the persistent chrome around the canvas: top bar, left panel (Library), right panel (Properties), prompt bar, plus on-demand overlays.
+- **Library panel** (left, 280px, fixed) — typed assets. Drag from here onto the canvas. `⌘1` toggles.
+- **Properties panel** (right, 320px, fixed) — config + history + pin controls for the selected node. `⌘2` toggles.
 - **Prompt bar** — floating input at the bottom of the canvas where the user talks to the assistant. `/` focuses it.
+- **Chat sheet** — slide-up overlay above the prompt bar that shows conversation history. The prompt bar acts as its footer. `⌘J` toggles.
+- **Queue pill** — indicator in the top bar (right of breadcrumb). Idle by default; turns active with `● {N} running · ${cost}` when jobs run. Click opens the **Queue sheet** — a panel anchored top-right of the canvas with thumbnails + status.
+- **Command palette** — `⌘K` global modal. Search recipes, assets, actions; navigate with arrows, run with Enter.
+- **Logs panel** — `⌘⇧L` dev-tool overlay on the right edge of the canvas. Streams engine + service logs.
+- **Welcome state** — when the canvas has no nodes, shows a hero ("What do you want to make?") + 3 recipe cards + "Blank canvas" button + hint to use the prompt bar.
+- **Approval gate** — top-bar toggle. When on (default), the assistant asks before running any operation that costs > $0.10 or is ambiguous.
 
 ## Tech
 

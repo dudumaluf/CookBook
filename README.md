@@ -36,10 +36,13 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 ### Keyboard shortcuts
 
-- `⌘1` toggle the Library / Recipes panel (left).
-- `⌘2` toggle the Properties / Chat panel (right).
-- `⌘3` toggle the Queue / Logs drawer (bottom).
+- `⌘1` toggle the Library panel (left).
+- `⌘2` toggle the Properties panel (right).
+- `⌘J` toggle the chat history sheet (above the prompt bar).
+- `⌘K` open the command palette.
+- `⌘⇧L` toggle the logs panel (dev).
 - `/` focus the prompt bar.
+- `Esc` close any open sheet / palette / logs.
 
 ## Environment
 

@@ -80,3 +80,26 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Context**: The user is also the QA; we must keep them in the loop without burning their attention on every change.
 - **Decision**: After significant UI changes the agent uses the `cursor-ide-browser` MCP to navigate to `localhost:3000`, take a screenshot, check console for errors, and attach the screenshot to the next message for user confirmation. The user does final manual QA only on the natural "deliverable" boundary (e.g. after a milestone).
 - **Consequences**: Faster iteration, fewer "looks wrong" round-trips.
+
+## ADR-0011 — Two fixed panels + smart overlays (supersedes Day 1 three-panel layout)
+
+- **Date**: 2026-05-19
+- **Context**: Day 1 shipped a 3-panel layout (Library/Recipes left tabs, Properties/Chat right tabs, Queue/Logs bottom drawer). On reflection, three things were wrong:
+  - **Recipes** is a start-of-session choice, not a mid-flow tool — doesn't earn a tab.
+  - **Chat** is the primary interaction (the assistant is how the user does everything) — hiding it behind a tab made it feel secondary.
+  - **Queue+Logs bottom drawer** stole 240px of canvas height (node graphs need verticality) and queue items are visual thumbnails that look bad in a wide-short layout.
+- **Options**: (a) keep 3-panel and tune; (b) 2-panel + contextual overlays for the rest; (c) 0-panel, everything contextual/floating.
+- **Decision**: (b). Only **Library** (left, 280px) and **Properties** (right, 320px) earn persistent slots — both are used constantly during a flow. Everything else lives where it makes contextual sense:
+  - **Chat** → slide-up sheet anchored above the prompt bar (Cmd+J). Prompt bar becomes its footer.
+  - **Queue** → pill in the top bar; click opens a sheet anchored top-right of the canvas.
+  - **Recipes** → welcome state on empty canvas (3 cards) + Cmd+K command palette + project switcher dropdown ("New from recipe…").
+  - **Logs** → Cmd+Shift+L overlay from the right edge; pure dev tool.
+  - **Command palette** → Cmd+K global modal; first-class entry for actions/search.
+- **Consequences**:
+  - Canvas reclaims full vertical space (no more bottom drawer).
+  - Chat feels primary (lives next to where you type).
+  - Cleaner default view; advanced surfaces are one shortcut away.
+  - Adds 4 new components (chat-sheet, queue-indicator, queue-sheet, command-palette, logs-panel) but each is small.
+  - WelcomeState uses container queries (`@container/welcome`) so it adapts to canvas width regardless of which panels are open — robust to any configuration.
+  - Layout store bumped to v2 with migration that preserves user preferences.
+- **Trade-offs accepted**: Slightly more chrome states to learn (5 shortcuts vs 3), but each is discoverable via tooltip + welcome state copy + command palette.

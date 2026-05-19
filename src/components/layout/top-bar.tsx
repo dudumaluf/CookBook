@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { QueueIndicator } from "./queue-indicator";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 export function TopBar() {
@@ -16,7 +17,6 @@ export function TopBar() {
       role="banner"
       className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background/80 px-3 backdrop-blur-md"
     >
-      {/* Brand + project switcher */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -36,7 +36,6 @@ export function TopBar() {
 
       <Separator orientation="vertical" className="h-5" />
 
-      {/* Breadcrumb (canvas nesting) */}
       <nav
         aria-label="Canvas breadcrumb"
         className="flex items-center gap-1.5 text-sm text-muted-foreground"
@@ -46,7 +45,10 @@ export function TopBar() {
 
       <div className="flex-1" />
 
-      {/* Approval gate toggle */}
+      <QueueIndicator />
+
+      <Separator orientation="vertical" className="h-5" />
+
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

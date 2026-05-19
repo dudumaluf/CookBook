@@ -2,7 +2,7 @@
 
 Each milestone has an explicit **acceptance criterion** — what the user must be able to do for the milestone to be considered "shipped". Engineering work that doesn't move us toward an acceptance criterion is suspect.
 
-## Day 1 — Foundation _(in progress)_
+## Day 1 — Foundation _(shipped, refined)_
 
 Scaffold the project, lock the design language, and prove the testing rhythm.
 
@@ -11,12 +11,18 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 - Next.js + React + TS + Tailwind v4 + shadcn (base-ui) scaffold.
 - Test stack (Vitest + Testing Library + happy-dom + MSW) with 3 passing sample tests.
 - Premium dark theme with warm amber accent, Geist Sans, smooth 150ms transitions.
-- Layout shell: 48px top bar, 280px left panel (Library / Recipes), 320px right panel (Properties / Chat), 240px bottom drawer (Queue / Logs), floating prompt bar.
-- Cmd+1/2/3 keyboard shortcuts toggle the three panels.
-- `docs/` folder seeded with all 9 docs.
-- First commit on `main`.
+- Layout shell — see [ADR-0011](./DECISIONS.md):
+  - Two fixed panels: Library left (280px), Properties right (320px).
+  - Floating prompt bar + slide-up ChatSheet (Cmd+J).
+  - Top-bar Queue pill + QueueSheet anchored top-right.
+  - Cmd+K command palette (stub).
+  - Cmd+Shift+L logs panel (stub).
+  - Welcome state on empty canvas with 3 recipe cards (Soul Image Burst, Reference Edit, Photo → Video) gated as "Available in M0a/b/c".
+- Shortcuts: `⌘1`, `⌘2`, `⌘J`, `⌘K`, `⌘⇧L`, `/`, `Esc`.
+- `docs/` folder seeded with all 9 docs + `scripts/docs-check.ts`.
+- First commit + layout-refactor commit on `main`.
 
-**Acceptance**: User can open `localhost:3000`, see the empty premium shell, toggle panels with shortcuts, switch theme, and approve that "this feels like the right vibe". `npm test`, `npm run build`, `npm run lint` all green.
+**Acceptance**: User can open `localhost:3001` (port 3000 taken by Prism dev server), see the empty premium shell with welcome state + 3 disabled recipe cards, toggle panels + open all overlays with shortcuts, switch theme, and approve "this feels right". `npm test`, `npm run build`, `npm run lint`, `npm run docs:check` all green.
 
 ---
 
