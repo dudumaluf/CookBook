@@ -16,6 +16,7 @@ import { EditableTitle } from "./editable-title";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useProjectStore } from "@/lib/stores/project-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 /**
  * AppShell — refactor v3 (ADR-0013)
@@ -43,6 +44,7 @@ export function AppShell() {
   useEffect(() => {
     useLayoutStore.persist.rehydrate();
     useProjectStore.persist.rehydrate();
+    useWorkflowStore.persist.rehydrate();
   }, []);
 
   const addNodeLeft = libraryOpen ? "calc(280px + 1.5rem)" : "0.75rem";

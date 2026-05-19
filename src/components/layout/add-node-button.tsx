@@ -1,19 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  Plus,
-  Type,
-  Image as ImageIcon,
-  Layers,
-  Eye,
-  Sparkles,
-  Film,
-  Combine,
-  Download,
-  Search,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,139 +11,74 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import "@/lib/engine/all-nodes";
+import { nodeRegistry } from "@/lib/engine/registry";
 import { useLayoutStore } from "@/lib/stores/layout-store";
-
-interface NodeDef {
-  id: string;
-  label: string;
-  description: string;
-  icon: LucideIcon;
-  category: string;
-  status: "stub";
-}
-
-const NODE_CATALOG: NodeDef[] = [
-  {
-    id: "text",
-    label: "Text",
-    description: "Inline string editable in the node",
-    icon: Type,
-    category: "Inputs",
-    status: "stub",
-  },
-  {
-    id: "image",
-    label: "Image",
-    description: "Single image input or upload",
-    icon: ImageIcon,
-    category: "Inputs",
-    status: "stub",
-  },
-  {
-    id: "asset",
-    label: "Asset",
-    description: "Reference an item from the library",
-    icon: Layers,
-    category: "Inputs",
-    status: "stub",
-  },
-  {
-    id: "image-iterator",
-    label: "Image iterator",
-    description: "Collection of images that fan out downstream",
-    icon: Layers,
-    category: "Iterators",
-    status: "stub",
-  },
-  {
-    id: "vision-read",
-    label: "Vision read",
-    description: "Fal OpenRouter vision describes references",
-    icon: Eye,
-    category: "AI · Vision",
-    status: "stub",
-  },
-  {
-    id: "soul-image",
-    label: "Soul image generation",
-    description: "Higgsfield Soul ID image with structured prompt",
-    icon: Sparkles,
-    category: "AI · Generation",
-    status: "stub",
-  },
-  {
-    id: "nano-banana-edit",
-    label: "Nano Banana edit",
-    description: "Fal image edit with reference + instruction",
-    icon: Sparkles,
-    category: "AI · Generation",
-    status: "stub",
-  },
-  {
-    id: "seedance-video",
-    label: "Seedance 2.0 video",
-    description: "Photo → motion video",
-    icon: Film,
-    category: "AI · Video",
-    status: "stub",
-  },
-  {
-    id: "kling-video",
-    label: "Kling 3 video",
-    description: "Photo → motion video (Kling)",
-    icon: Film,
-    category: "AI · Video",
-    status: "stub",
-  },
-  {
-    id: "compositor",
-    label: "Compositor",
-    description: "Timeline compose of text, images, video",
-    icon: Combine,
-    category: "Compose",
-    status: "stub",
-  },
-  {
-    id: "export",
-    label: "Export",
-    description: "Save to disk + library",
-    icon: Download,
-    category: "Output",
-    status: "stub",
-  },
-];
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import type { NodeCategory, NodeSchema } from "@/types/node";
 
 /**
- * AddNodeButton
- *
- * Small floating pill (bottom-left). Click → popover with categorized,
- * searchable node catalog. Everything is currently stubbed ("Available in
- * M0a") — the M0a milestone hooks each entry to the canvas.
- *
- * The right-click context menu on the canvas will reuse the same `NODE_CATALOG`.
+ * Categories shown in the popover. Order is intentional (workflow read order:
+ * inputs first, output last). Categories without registered nodes render as
+ * "Coming soon" labels so the user can see the planned shape.
  */
+const CATEGORY_LABELS: { id: NodeCategory; label: string }[] = [
+  { id: "input", label: "Inputs" },
+  { id: "iterator", label: "Iterators" },
+  { id: "ai-vision", label: "AI · Vision" },
+  { id: "ai-text", label: "AI · Text" },
+  { id: "ai-image", label: "AI · Image" },
+  { id: "ai-video", label: "AI · Video" },
+  { id: "transform", label: "Transform" },
+  { id: "compose", label: "Compose" },
+  { id: "output", label: "Output" },
+];
+
 export function AddNodeButton() {
   const { addNodePopoverOpen, setAddNodePopoverOpen } = useLayoutStore();
+  const addWorkflowNode = useWorkflowStore((s) => s.addNode);
+  const nodeCount = useWorkflowStore((s) => s.nodes.length);
   const [query, setQuery] = useState("");
+
+  const allSchemas = useMemo(() => nodeRegistry.list(), []);
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = q
-      ? NODE_CATALOG.filter(
+      ? allSchemas.filter(
           (n) =>
-            n.label.toLowerCase().includes(q) ||
+            n.title.toLowerCase().includes(q) ||
             n.description.toLowerCase().includes(q) ||
             n.category.toLowerCase().includes(q),
         )
-      : NODE_CATALOG;
-    const map = new Map<string, NodeDef[]>();
-    for (const node of filtered) {
-      const list = map.get(node.category) ?? [];
-      list.push(node);
-      map.set(node.category, list);
+      : allSchemas;
+
+    const byCategory = new Map<NodeCategory, NodeSchema[]>();
+    for (const schema of filtered) {
+      const list = byCategory.get(schema.category) ?? [];
+      list.push(schema);
+      byCategory.set(schema.category, list);
     }
-    return Array.from(map.entries());
-  }, [query]);
+    return byCategory;
+  }, [allSchemas, query]);
+
+  function handlePick(schema: NodeSchema) {
+    // Cascade placement based on current node count so newcomers are visible
+    // and predictable. Slice 2/3 will drop at the actual click coords via the
+    // canvas-context-menu hand-off.
+    const offset = nodeCount * 36;
+    addWorkflowNode(schema.kind, { x: 200 + offset, y: 160 + offset });
+    setAddNodePopoverOpen(false);
+    setQuery("");
+  }
+
+  const matchedCategories = CATEGORY_LABELS.filter(
+    (c) => (grouped.get(c.id)?.length ?? 0) > 0,
+  );
+  const emptyCategories = CATEGORY_LABELS.filter(
+    (c) => (grouped.get(c.id)?.length ?? 0) === 0,
+  );
+  const noMatches = query.trim().length > 0 && matchedCategories.length === 0;
 
   return (
     <Popover open={addNodePopoverOpen} onOpenChange={setAddNodePopoverOpen}>
@@ -189,41 +112,61 @@ export function AddNodeButton() {
             />
           </div>
         </div>
-        <ScrollArea className="h-[300px]">
+        <ScrollArea className="h-[320px]">
           <div className="flex flex-col gap-1 p-2">
-            {grouped.length === 0 && (
+            {noMatches && (
               <p className="px-2 py-4 text-xs text-muted-foreground">
                 No matches for &quot;{query}&quot;
               </p>
             )}
-            {grouped.map(([category, nodes]) => (
-              <div key={category} className="flex flex-col gap-0.5">
+
+            {matchedCategories.map((cat) => (
+              <div key={cat.id} className="flex flex-col gap-0.5">
                 <p className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {category}
+                  {cat.label}
                 </p>
-                {nodes.map((node) => (
-                  <Button
-                    key={node.id}
-                    variant="ghost"
-                    disabled
-                    className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-left"
-                  >
-                    <node.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="flex min-w-0 flex-1 flex-col items-start">
-                      <span className="text-xs text-foreground">
-                        {node.label}
+                {grouped.get(cat.id)?.map((schema) => {
+                  const Icon = schema.icon;
+                  return (
+                    <Button
+                      key={schema.kind}
+                      variant="ghost"
+                      onClick={() => handlePick(schema)}
+                      className="h-auto w-full justify-start gap-2 px-2 py-1.5 text-left"
+                    >
+                      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="flex min-w-0 flex-1 flex-col items-start">
+                        <span className="text-xs text-foreground">
+                          {schema.title}
+                        </span>
+                        <span className="truncate text-[10px] text-muted-foreground">
+                          {schema.description}
+                        </span>
                       </span>
-                      <span className="truncate text-[10px] text-muted-foreground">
-                        {node.description}
-                      </span>
-                    </span>
-                    <span className="rounded-sm border border-border/60 px-1 py-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
-                      M0a
-                    </span>
-                  </Button>
-                ))}
+                    </Button>
+                  );
+                })}
               </div>
             ))}
+
+            {!query.trim() && emptyCategories.length > 0 && (
+              <div className="mt-2 flex flex-col gap-0.5 border-t border-border/40 pt-2">
+                <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                  Coming soon
+                </p>
+                {emptyCategories.map((cat) => (
+                  <div
+                    key={cat.id}
+                    className="flex items-center justify-between px-2 py-1 text-[11px] text-muted-foreground/60"
+                  >
+                    <span>{cat.label}</span>
+                    <span className="rounded-sm border border-border/60 px-1 py-0.5 text-[9px] uppercase tracking-wider">
+                      M0a
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </ScrollArea>
       </PopoverContent>

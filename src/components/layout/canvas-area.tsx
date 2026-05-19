@@ -4,19 +4,25 @@ import { ArrowDown, Image as ImageIcon, Wand2, Film, Plus } from "lucide-react";
 import { type ComponentType } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CanvasFlow } from "@/components/canvas/canvas-flow";
 import { useLayoutStore } from "@/lib/stores/layout-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { CanvasContextMenu } from "./canvas-context-menu";
 
 /**
  * CanvasArea
  *
- * Renders the dotted background + welcome state. Once nodes exist (M0a), the
- * welcome will swap for the React Flow canvas.
+ * Renders one of two states depending on the workflow store:
+ *
+ *   - **Empty**  → the WelcomeState (hero + recipe cards + assistant hint).
+ *   - **Populated** → React Flow canvas via `CanvasFlow`.
  *
  * Wrapped in `CanvasContextMenu` so right-clicking anywhere on the canvas
  * (background or future nodes) opens the canvas action menu.
  */
 export function CanvasArea() {
+  const hasNodes = useWorkflowStore((s) => s.nodes.length > 0);
+
   return (
     <CanvasContextMenu>
       <main
@@ -24,16 +30,22 @@ export function CanvasArea() {
         aria-label="Canvas"
         className="absolute inset-0 overflow-hidden bg-background"
       >
-        <div
-          aria-hidden
-          className="absolute inset-0 opacity-[0.18]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle, var(--color-muted-foreground) 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-          }}
-        />
-        <WelcomeState />
+        {hasNodes ? (
+          <CanvasFlow />
+        ) : (
+          <>
+            <div
+              aria-hidden
+              className="absolute inset-0 opacity-[0.18]"
+              style={{
+                backgroundImage:
+                  "radial-gradient(circle, var(--color-muted-foreground) 1px, transparent 1px)",
+                backgroundSize: "24px 24px",
+              }}
+            />
+            <WelcomeState />
+          </>
+        )}
       </main>
     </CanvasContextMenu>
   );
@@ -61,8 +73,8 @@ function WelcomeState() {
             What do you want to make?
           </h1>
           <p className="max-w-md text-balance text-sm leading-relaxed text-muted-foreground">
-            Start from a recipe below, or describe what you want in the prompt
-            bar. Recipes land in M0a — the shell is ready for them.
+            Add a node to start building, or describe what you want in the
+            prompt bar (assistant lands later in M0a).
           </p>
         </header>
 
@@ -93,7 +105,7 @@ function WelcomeState() {
             Blank canvas
           </Button>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            Or talk to the assistant below
+            Or use ⌘. / right-click to add a node
             <ArrowDown className="h-3 w-3" aria-hidden />
           </div>
         </div>

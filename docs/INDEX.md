@@ -14,6 +14,12 @@ This folder is the **single source of truth** for the project. Every architectur
 8. **[CHANGELOG.md](./CHANGELOG.md)** — date-keyed log of what shipped each day.
 9. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
 
+## Milestone snapshots
+
+End-of-slice and end-of-milestone snapshots. Read the latest one if you're picking up the project after a context flip — they're the single source of truth for "where are we, exactly".
+
+- **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** — schema engine + canvas + Text/Image nodes (current).
+
 ## Maintenance rules (the contract)
 
 Whenever any of the following happen, the corresponding doc **must** be updated in the same commit:

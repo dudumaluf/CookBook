@@ -130,6 +130,21 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0014 — Schema-driven node engine (M0a Slice 1)
+
+- **Date**: 2026-05-19
+- **Context**: M0a needs a node engine that can grow into many node types (Text, Image, Iterators, Vision, Generation, Video, Compose, Export) without each node having to reinvent its scaffolding (handles, persistence shape, registration, popover entry, eventually run/cache).
+- **Options**:
+  - (a) **Class-based hierarchy** — abstract `BaseNode` class, concrete subclasses. Lots of boilerplate, hard to keep types tight with React Flow.
+  - (b) **Schema-driven** — `defineNode({ kind, inputs, outputs, defaultConfig, execute, Body })` returns a plain schema object, registered into a central `NodeRegistry`. Each node is one file: schema + Body component co-located.
+  - (c) **Pure React Flow custom nodes** — skip the abstraction layer, write each node directly as a React Flow node type. Fastest in the short term, but every node re-implements handles + persistence + add-node-popover entry.
+- **Decision**: (b). The schema is the only thing the rest of the system needs to know about a node: the registry drives the AddNode popover, the workflow store uses `defaultConfig` when adding, the canvas-flow bridge renders the Body via the schema's `Body`, and (later) the run engine reads `inputs`/`outputs`/`execute` to schedule and cache.
+- **Notes / consequences**:
+  - **TypeScript variance**: `NodeSchema<TConfig>` uses TConfig in both contravariant (execute, Body) and covariant (defaultConfig) positions, making the generic invariant. The fix is a single generic on `nodeRegistry.register<TConfig>(schema)` that erases at the storage boundary — callers keep their typed schemas, the registry stores `NodeSchema` (TConfig = unknown). `all-nodes.ts` calls `register(...)` per schema (no shared array) so each call uses its own generic.
+  - **Reactive vs executable**: schemas can mark themselves `reactive: true` when their output is a pure function of `config` (Text, Image, Number). The run engine in Slice 3 will treat reactive nodes as always-fresh sources without needing an explicit "Run".
+  - **React Flow bridge**: one generic React Flow node type (`"cookbook"`) routes to the schema's Body based on `data.kind`. This avoids the maintenance cost of keeping `nodeTypes` in sync as new nodes are added.
+  - **Workflow store** persists `{ nodes, edges }` to `localStorage` under `cookbook.workflow` with `skipHydration: true` (same SSR-safe pattern as the layout + project stores). Repository abstraction (Slice 5) will replace `localStorage` with SQLite without touching the store interface.
+
 ## ADR-0013 — No top bar; every chrome element floats (supersedes the top-bar portion of ADR-0012)
 
 - **Date**: 2026-05-19

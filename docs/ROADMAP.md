@@ -33,22 +33,28 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 
 ---
 
-## M0a — Soul Image Burst
+## M0a — Soul Image Burst _(in progress — Slice 1 shipped)_
 
 The first end-to-end recipe: pick a Soul ID + 1–5 references → get N images of "me" in the referenced contexts.
 
-**Ships**:
+Broken into 6 vertical slices. Each is independently committable + testable + demo-able.
 
-- Schema-driven node engine (`defineNode` + standardized output + reactive vs executable).
-- Workflow store (Zustand) + execution store (Zustand) — strict separation.
-- Run engine with topological sort, hash-based cache, seed strategy per node.
-- Library + asset import (drag-and-drop folder → images).
-- Nodes: `Image`, `ImageIterator`, `Text`, `Number`, `LLMText` (via Fal OpenRouter), `VisionLLM` (via Fal OpenRouter), `ArraySplit`, `SoulID`, `HiggsfieldImageGen`, `Export`.
-- Recipe: "Soul Image Burst" — assembled and saved.
-- Queue (bottom drawer) shows executions with status, cost, and result thumbnails.
-- Properties panel (right) shows node config + history + pin toggle.
+- **Slice 1 — Schema engine + canvas + Text/Image** _(shipped 2026-05-19)_
+  - `defineNode` + `NodeRegistry` + `extractInputByType` engine.
+  - Workflow store (Zustand, localStorage) — nodes, edges, selection.
+  - React Flow canvas mounted, generic node type dispatching to schema `Body`.
+  - BaseNode shell + colored datatype handles.
+  - Two trivial nodes: Text (reactive, textarea, text out) and Image (reactive, URL + preview, image out).
+  - AddNode popover spawns real nodes from the registry.
+  - WelcomeState swaps to canvas when nodes exist; persistence verified end-to-end.
+  - See **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** for the full slice-1 snapshot.
+- **Slice 2 — Library + asset import** _(next)_: file drop into library, Image node accepts library asset ref, IndexedDB for blobs.
+- **Slice 3 — Run engine + execution store + first executable node**: topological sort, hash cache, seed strategy, cost preview modal, LLMText via Fal OpenRouter. Run button reappears in chrome.
+- **Slice 4 — Higgsfield + Soul ID + complete recipe**: SoulID, HiggsfieldImageGen, ImageIterator, ArraySplit, Export. Composite "Soul Image Burst" assembled.
+- **Slice 5 — Properties popover + queue thumbnails + save/load**: node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets.
+- **Slice 6 — Assistant DSL + M0a close**: LLM assistant catalog auto-gen, tool calls (createWorkflow / runNodes / getCost), prompt bar wires to assistant.
 
-**Acceptance**: User drops a Soul ID + an image iterator with 3 references, sends "give me 8 variations" to the assistant, confirms cost, and gets 8 images saved to disk + visible in the queue.
+**Acceptance** (end of M0a): User drops a Soul ID + an image iterator with 3 references, sends "give me 8 variations" to the assistant, confirms cost, and gets 8 images saved to disk + visible in the queue.
 
 ---
 

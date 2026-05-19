@@ -2,6 +2,31 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — M0a Slice 1: schema engine + canvas + Text/Image nodes (ADR-0014)
+
+The first vertical slice of M0a. The canvas is no longer cosmetic — it spawns, persists, edits, deletes real nodes.
+
+- **Types** (`src/types/node.ts`): `DataType`, `StandardizedOutput` (text / image / video / number discriminated union), `NodeIO`, `NodeCategory`, `NodeSchema<TConfig>`, `NodeBodyProps`, `NodeInstance`, `WorkflowEdge`, `ExecContext`.
+- **Engine** (`src/lib/engine/`):
+  - `defineNode<TConfig>(schema)` — identity helper that pins TConfig.
+  - `NodeRegistry` — `register / get / has / list / listByCategory`, generic `register<T>(NodeSchema<T>)` to defuse TConfig variance.
+  - `extractInputByType` + `extractInputArrayByType` — typed helpers with overloads per `DataType` (engine-side, used by `execute` in Slice 3+).
+  - `all-nodes.ts` — registers every shipped node on import; this is the single import point for the registry to be populated.
+- **Workflow store** (`src/lib/stores/workflow-store.ts`): Zustand with `addNode / removeNode / updateNodeConfig / moveNode / addEdge / removeEdge / setSelectedNodeIds / clear`. Persisted to `localStorage` (`cookbook.workflow`, version 1) with `skipHydration: true`. Validates against registry: addNode rejects unknown kinds; addEdge rejects self-loops + duplicate single-input connections.
+- **BaseNode + handle dot** (`src/components/nodes/base-node.tsx`, `handle-dot.tsx`): shared shadcn-styled card chrome (header with icon + title + delete on hover, body slot, footer with input/output labels) + colored handles on each side via `--datatype-*` tokens.
+- **Datatype tokens** (`src/app/globals.css`): `--datatype-text` (blue), `--datatype-image` (rose), `--datatype-video` (purple), `--datatype-number` (green), `--datatype-any` (gray). Defined for both light and dark themes.
+- **Two trivial nodes**:
+  - `Text` (reactive, `{ text: string }` config, output: `text`) — textarea body.
+  - `Image` (reactive, `{ url: string }` config, output: `image`) — URL input + preview thumbnail.
+- **CanvasFlow** (`src/components/canvas/canvas-flow.tsx`): React Flow mounted, wired to workflow-store via `useMemo` adapters. One generic node type that dispatches to `schema.Body`. Background dots, MiniMap (xl+), Controls. Cookbook's `--datatype-any` colors edges by default.
+- **AddNodeButton** (`src/components/layout/add-node-button.tsx`): now spawns real nodes from the registry, grouped by category. Categories with no registered nodes render as "Coming soon" entries.
+- **CanvasArea** swaps `WelcomeState` for `CanvasFlow` whenever `workflow.nodes.length > 0`.
+- **Layout shell**: imports `@xyflow/react/dist/style.css`, rehydrates the workflow store after mount.
+- **Tests**: +5 files (`engine/define-node`, `engine/registry`, `engine/extract-input`, `stores/workflow-store`, `nodes/node-text`). 28 tests total green.
+- **Docs**: ADR-0014 logged.
+
+Verified: lint clean, 28/28 tests, build OK, MCP smoke: ⌘. opens popover → click Text → node appears → ⌘. → Image → second node appears → type prompt → reload → nodes + config persist exactly.
+
 ## 2026-05-19 — Layout refactor v3: no top bar, everything floats (ADR-0013)
 
 User feedback after v2: the top bar still felt like banner chrome, the Reset/Approval/Run cluster confused them, the side panels were too tall, the chevron close affordance read as "expand", and the queue dot was redundant. Also a stale-build bug (DropdownMenuLabel needed DropdownMenuGroup) was hitting them even though the code was fixed — Turbopack cache.

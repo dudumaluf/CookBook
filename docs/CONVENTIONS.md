@@ -49,7 +49,8 @@ cookbook/
 - Hooks: `useFoo` in `kebab-case` filename (`use-layout-shortcuts.ts`).
 - Stores: `useFooStore` in `kebab-case` filename (`layout-store.ts`).
 - Constants: `SCREAMING_SNAKE_CASE` for true compile-time constants, `camelCase` otherwise.
-- Node schemas: `node-<kind>.ts` (e.g. `node-soul-id.ts`).
+- Node schemas: `node-<kind>.tsx` (e.g. `node-soul-id.tsx`). Each file exports both the schema (`<kind>NodeSchema`) and (privately) the Body component. The schema is the public contract; the Body is an implementation detail.
+- Every new node must be registered in `src/lib/engine/all-nodes.ts` via `nodeRegistry.register(...)` so the AddNode popover, canvas, and (later) LLM assistant catalog can see it.
 
 ## Styling
 

@@ -23,6 +23,24 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 - **Seed strategy** — per-node config. `locked` (deterministic), `random` (every run different), `inherited` (follows recipe-level seed).
 - **Pin** — flag on a specific output that makes it immune to cache invalidation. Unpin to reset.
 
+## Engine
+
+- **NodeSchema** — declarative shape of a node type: kind, category, inputs, outputs, defaultConfig, optional `execute`, `Body` component, optional `reactive` flag.
+- **defineNode** — identity helper that produces a typed `NodeSchema<TConfig>`. Lives in `src/lib/engine/define-node.ts`.
+- **NodeRegistry** — central catalog. `register(schema)` / `get(kind)` / `list()` / `listByCategory()`. The singleton `nodeRegistry` is populated by `all-nodes.ts` on import.
+- **NodeInstance** — runtime occurrence of a schema on the canvas: `{ id, kind, position, config }`. Lives in the workflow-store.
+- **WorkflowEdge** — `{ id, source, sourceHandle, target, targetHandle }`. Stored alongside NodeInstances in the workflow-store.
+- **StandardizedOutput** — the only shape that flows through edges. Discriminated union over `text | image | video | number`. A node may emit a single value or an array (iterators).
+- **DataType** — `"text" | "image" | "video" | "number" | "any"`. Handles carry a DataType for colored dots + connection compatibility.
+- **NodeIO** — single handle descriptor: `{ id, label, dataType, multiple? }`.
+- **NodeCategory** — `"input" | "iterator" | "ai-vision" | "ai-text" | "ai-image" | "ai-video" | "transform" | "compose" | "output"`. Drives AddNode popover grouping.
+- **Reactive node** — output is a pure function of `config`; no upstream input needed (Text, Image, Number). The run engine treats reactive nodes as always-fresh sources.
+- **Executable node** — has `execute()` + non-empty inputs; requires the run engine to be invoked (M0a Slice 3).
+- **ExecContext** — `{ nodeId, config, inputs, signal }` passed to `execute`. The engine fills `inputs` with resolved StandardizedOutputs.
+- **NodeBodyProps** — `{ nodeId, config, updateConfig, selected }`. The schema's Body component receives this to render the node interior.
+- **BaseNode** — the shared card chrome (header + body slot + footer + colored handles) wrapping every schema's Body.
+- **CanvasFlow** — React Flow mount that bridges workflow-store ↔ React Flow's internal model. One generic React Flow node type (`"cookbook"`) dispatches by schema kind.
+
 ## UI
 
 - **Shell** — single full-bleed canvas with every chrome element floating on top of it (no top bar). See ADR-0013.
