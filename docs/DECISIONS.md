@@ -129,3 +129,30 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Trade-offs accepted**:
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
+
+## ADR-0013 — No top bar; every chrome element floats (supersedes the top-bar portion of ADR-0012)
+
+- **Date**: 2026-05-19
+- **Context**: After ADR-0012 shipped, the user said:
+  - The top bar still feels like banner chrome. The canvas should breathe edge-to-edge.
+  - The Reset / Approval / Run cluster in the top-right confused them — they didn't know what these icons meant.
+  - Side panels stretching from below the top bar to the bottom feel heavy; could be smaller and vertically centered.
+  - The chevron-arrow close affordance reads as "expand", not "close" — a literal × would be clearer.
+  - The dot next to the Queue icon is redundant if the icon already conveys state.
+  - Collapsed panel pills should sit at the same vertical eye-line as the open panel they replace.
+- **Options**: (a) keep top bar, just hide unfamiliar icons; (b) collapse top bar into a floating logo cluster with a richer menu; (c) move all canvas-level meta to the bottom controls cluster.
+- **Decision**: (b). The TopBar component is deleted. Replacement chrome:
+  - **Top-left floating ProjectMenu** — bigger circular logo (32px) inside a pill with chevron. The DropdownMenu now holds Project actions, Workflow toggles (**Approval gate as a Checkbox item**, Reset workflow as a stub), Workspace shortcuts (Command palette, Show logs, Settings), and About.
+  - **Top-center floating EditableTitle** — pill with backdrop, click-to-edit. Lives in `project-store`.
+  - **No Run / Reset / Approval on the top right**. Run reappears in M0a when there's actually something to run. Approval and Reset live inside the project menu.
+  - **Library + Queue floating panels** — vertically centered (`top-1/2 -translate-y-1/2`), capped at `min(70vh, 640px)`, lighter border (`border-border/70`), close affordance is now a literal × icon.
+  - **Collapsed pill** for each panel uses the same `top-1/2 -translate-y-1/2` so it sits where the open panel center was — no jump.
+  - **Queue header dot indicator removed**. The Activity icon itself colors amber when active and muted when idle.
+- **Consequences**:
+  - Removes `top-bar.tsx`.
+  - `shell.tsx` becomes a single `relative h-screen w-screen overflow-hidden` div with the canvas absolute-positioned and every other piece overlaid.
+  - Visual language unifies around: pills + rounded-2xl cards · `border-border/70` · `bg-popover/95` · `backdrop-blur-md` · soft shadow.
+  - User mental model is simpler: "everything is a floating thing on the canvas; the canvas is the work."
+- **Trade-offs accepted**:
+  - On very wide viewports the title pill sits visually high (compared to a top bar). Acceptable.
+  - The Run button isn't visible on Day 1 — that's intentional (nothing to run yet). M0a restores it where it makes sense.

@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import {
   ChevronDown,
   FilePlus,
@@ -10,10 +9,13 @@ import {
   Keyboard,
   ScrollText,
   Info,
+  RotateCcw,
+  ShieldCheck,
 } from "lucide-react";
 
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
@@ -27,27 +29,39 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
 /**
  * ProjectMenu
  *
- * Top-left cluster: company logo + chevron triggering a dropdown for
- * project-level actions. Day 1: the destinations are stubs (most land in
- * M0a/d). The shortcuts are wired so muscle memory builds before the panels
- * exist.
+ * Floating top-left: bigger circular logo + small chevron. Click opens a
+ * DropdownMenu with everything that used to clutter the top bar:
+ *
+ * - Project actions (New / Open recent — stubs until M0d)
+ * - Workspace (Command palette, Show logs, Settings)
+ * - Approval gate (checkbox — the user is in control of run friction)
+ * - Reset workflow (M0a — currently disabled)
+ * - About
+ *
+ * Removing the top bar entirely (ADR-0013) means there is no chrome strip
+ * to look at: the canvas breathes edge-to-edge and the logo becomes one of
+ * the floating overlays.
  */
 export function ProjectMenu() {
-  const router = useRouter();
-  const { setLogsPanelOpen, setCommandPaletteOpen } = useLayoutStore();
+  const {
+    setLogsPanelOpen,
+    setCommandPaletteOpen,
+    approvalGateOn,
+    setApprovalGate,
+  } = useLayoutStore();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Project menu"
-        className="inline-flex h-8 items-center gap-1 rounded-full pl-0.5 pr-1.5 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+        className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-popover/95 p-1 pl-1 pr-2 shadow-lg shadow-black/30 backdrop-blur-md transition-colors hover:bg-popover focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
       >
-        <span className="relative inline-flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-foreground">
+        <span className="relative inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-foreground">
           <Image
             src="/logo.png"
             alt="Brand logo"
-            width={28}
-            height={28}
+            width={32}
+            height={32}
             priority
             className="object-cover"
           />
@@ -55,7 +69,7 @@ export function ProjectMenu() {
         <ChevronDown className="h-3 w-3 text-muted-foreground" aria-hidden />
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="start" sideOffset={8} className="w-56">
+      <DropdownMenuContent align="start" sideOffset={8} className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Project</DropdownMenuLabel>
           <DropdownMenuItem disabled>
@@ -65,6 +79,23 @@ export function ProjectMenu() {
           <DropdownMenuItem disabled>
             <FolderOpen className="h-3.5 w-3.5" />
             Open recent…
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Workflow</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={approvalGateOn}
+            onCheckedChange={(checked) => setApprovalGate(Boolean(checked))}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Approval gate
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuItem disabled>
+            <RotateCcw className="h-3.5 w-3.5" />
+            Reset workflow
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
@@ -90,10 +121,7 @@ export function ProjectMenu() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem
-          onClick={() => router.refresh()}
-          className="text-muted-foreground"
-        >
+        <DropdownMenuItem disabled className="text-muted-foreground">
           <Info className="h-3.5 w-3.5" />
           About Cookbook
         </DropdownMenuItem>

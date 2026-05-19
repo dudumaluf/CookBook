@@ -58,7 +58,7 @@ export function EditableTitle() {
           }
         }}
         aria-label="Project name"
-        className="h-7 min-w-[180px] max-w-[420px] rounded-md border border-border bg-background px-2 text-center text-sm text-foreground outline-none focus:border-accent/60"
+        className="h-8 min-w-[200px] max-w-[420px] rounded-full border border-accent/60 bg-popover px-3 text-center text-sm text-foreground shadow-lg shadow-black/30 outline-none backdrop-blur-md"
       />
     );
   }
@@ -68,7 +68,7 @@ export function EditableTitle() {
       type="button"
       onClick={startEditing}
       aria-label={`Rename project (currently ${name})`}
-      className="h-7 max-w-[420px] truncate rounded-md px-2 text-sm text-foreground/90 transition-colors hover:bg-muted/40"
+      className="inline-flex h-8 max-w-[420px] items-center truncate rounded-full border border-border/70 bg-popover/95 px-3 text-sm text-foreground/90 shadow-lg shadow-black/30 backdrop-blur-md transition-colors hover:bg-popover"
     >
       {name}
     </button>

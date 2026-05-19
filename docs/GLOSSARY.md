@@ -25,23 +25,23 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 
 ## UI
 
-- **Shell** — the persistent chrome around the canvas: top bar, floating panels (Library + Queue), prompt bar, plus contextual overlays.
-- **Floating panel** — a card-style overlay (rounded-2xl, soft shadow, backdrop blur) that sits _on top_ of the canvas with 12px breathing margin from each edge it touches, never edge-to-edge.
-- **Library panel** (floating, left, 280px) — typed assets. Drag from here onto the canvas. `⌘1` toggles. Collapsed = circular pill in the top-left corner.
-- **Queue panel** (floating, right, 320px, default open) — in-flight + recent executions with thumbnails, cost, elapsed time. The header dot is amber when active. `⌘2` toggles. Collapsed = circular pill in the top-right corner.
+- **Shell** — single full-bleed canvas with every chrome element floating on top of it (no top bar). See ADR-0013.
+- **Floating panel** — a card-style overlay (rounded-2xl, soft shadow, backdrop blur, `border-border/70`) sitting on top of the canvas with 12px breathing margin from every edge it touches.
+- **Library panel** (floating, left, 280px wide, vertically centered, `min(70vh, 640px)`) — typed assets. Drag from here onto the canvas. `⌘1` toggles. Closed = circular pill at the same vertical center.
+- **Queue panel** (floating, right, 320px wide, vertically centered, `min(70vh, 640px)`, default open) — in-flight + recent executions with thumbnails, cost, elapsed time. The Activity icon colors amber when active, muted when idle (no separate dot indicator). `⌘2` toggles. Closed = circular pill at the same vertical center.
 - **Properties popover** _(M0a)_ — node-anchored floating popover that only exists when a node is selected. Replaces the removed Properties panel.
-- **Editable title** — centered project name in the top bar. Click to edit, Enter commits, Esc reverts. Persisted in `project-store`.
-- **Project menu** — logo + chevron at the top-left. DropdownMenu with New project, Open recent, Command palette (⌘K), Show logs (⌘⇧L), Settings, About.
-- **Add node button** — floating pill at the bottom-left of the canvas. Click → searchable categorized Popover. Also opens via canvas right-click context menu and `⌘N`.
+- **Project menu** — floating top-left: bigger circular logo + chevron, opens a DropdownMenu with Project (New / Open recent), Workflow (Approval gate checkbox + Reset), Workspace (Command palette ⌘K / Show logs ⌘⇧L / Settings), About.
+- **Editable title** — floating pill at the top-center. Click to edit, Enter commits, Esc reverts. Persisted in `project-store`.
+- **Add node button** — floating pill at the bottom-left of the canvas. Click → searchable categorized Popover. Also opens via canvas right-click context menu and `⌘.` (`⌘N` is OS-reserved).
 - **Canvas context menu** — right-clicking the canvas opens a small floating menu (Add node…, Toggle library, Toggle queue, Open gallery). `Add node…` hands off to the Add node popover via shared store state.
 - **Canvas controls** — small floating pill at the bottom-right with Gallery + Theme toggle. Zoom/Fit will join when React Flow lands.
 - **Gallery drawer** — bottom-drawer overlay (~65vh) with backdrop. Browse, hover-to-play, multi-select + space-to-compare, density slider, search/filter. `⌘G` toggles.
-- **Prompt bar** — floating input at the bottom of the canvas where the user talks to the assistant. `/` focuses it. Reserves CSS padding equal to floating-panel widths so it stays centered between them.
+- **Prompt bar** — floating input at the bottom-center where the user talks to the assistant. `/` focuses it. Reserves CSS padding equal to floating-panel widths so it stays centered between them.
 - **Chat sheet** — slide-up overlay above the prompt bar that shows conversation history. The prompt bar acts as its footer. `⌘J` toggles.
 - **Command palette** — `⌘K` global modal. Search recipes, assets, actions; navigate with arrows, run with Enter.
 - **Logs panel** — `⌘⇧L` dev-tool overlay on the right edge of the canvas. Streams engine + service logs.
 - **Welcome state** — when the canvas has no nodes, shows a hero ("What do you want to make?") + 3 recipe cards + "Blank canvas" button + hint to use the prompt bar.
-- **Approval gate** — top-bar toggle (Approval/Auto). When ON (default), the assistant asks before running any operation that costs > $0.10 or is ambiguous.
+- **Approval gate** — checkbox item inside the Project menu (Workflow group). When checked (default), the assistant asks before running any operation that costs > $0.10 or is ambiguous.
 
 ## Tech
 

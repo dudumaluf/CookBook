@@ -2,6 +2,30 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — Layout refactor v3: no top bar, everything floats (ADR-0013)
+
+User feedback after v2: the top bar still felt like banner chrome, the Reset/Approval/Run cluster confused them, the side panels were too tall, the chevron close affordance read as "expand", and the queue dot was redundant. Also a stale-build bug (DropdownMenuLabel needed DropdownMenuGroup) was hitting them even though the code was fixed — Turbopack cache.
+
+- **TopBar deleted**. Shell becomes a single full-bleed relative container with the canvas absolute-positioned and every chrome element overlaid.
+- **ProjectMenu** redesigned: bigger circular logo (32px) inside a pill with chevron, anchored top-left. Menu now contains:
+  - Project (New, Open recent — stubs)
+  - **Workflow → Approval gate (DropdownMenuCheckboxItem)** + Reset workflow (M0a stub)
+  - Workspace (Command palette, Show logs, Settings)
+  - About Cookbook
+- **EditableTitle** is now a standalone floating pill, top-center, click-to-edit (still persisted to `project-store`).
+- **Run / Reset / Approval icons removed from chrome**. Run reappears in M0a; Reset + Approval live inside the project menu now.
+- **Library + Queue panels**:
+  - Vertically centered (`top-1/2 -translate-y-1/2`), capped at `min(70vh, 640px)`.
+  - Close affordance switched from `ChevronsLeft/Right` to a literal `X` icon (clearer "close" semantics).
+  - Lighter border (`border-border/70`) for cohesion with the new pill language.
+  - Collapsed pill stays at the same vertical center as the open panel — no jump when toggling.
+- **Queue dot indicator removed**. The Activity icon itself colors amber when active, muted when idle.
+- **Theme toggle** stays in the bottom-right CanvasControls cluster (unchanged).
+- **Bug fix**: cleared `.next` cache + restarted dev server to ensure the DropdownMenuGroup wrapper from v2 is picked up (Turbopack HMR had stale chunks). The fix itself was already in code.
+- **ADR-0013** logged.
+
+Verification: lint clean, 5/5 tests, build OK, MCP smoke confirmed (project menu opens with Approval checkbox + groups, editable title commits, panels collapse to vertically-centered pills, no Reset/Approval/Run cluttering the top, no top bar at all).
+
 ## 2026-05-19 — Layout refactor v2: floating panels with breathing room
 
 After ADR-0011 shipped, the user pushed three more issues: Properties was empty most of the time, edge-to-edge panels carved up the canvas, and queue/library felt like banner chrome instead of objects floating on top. ADR-0012 follows.

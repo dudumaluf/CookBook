@@ -22,7 +22,7 @@ export function CanvasArea() {
       <main
         role="main"
         aria-label="Canvas"
-        className="relative flex flex-1 overflow-hidden bg-background"
+        className="absolute inset-0 overflow-hidden bg-background"
       >
         <div
           aria-hidden
@@ -42,14 +42,14 @@ export function CanvasArea() {
 function WelcomeState() {
   const libraryOpen = useLayoutStore((s) => s.libraryOpen);
   const queueOpen = useLayoutStore((s) => s.queueOpen);
-  // Reserve breathing space for floating panels so the centered welcome
-  // content stays visible between them rather than disappearing behind.
+  // Reserve breathing space for the floating panels (sides) and for the
+  // floating logo/title cluster (top). Welcome content centers between them.
   const padLeft = libraryOpen ? "calc(280px + 2rem)" : "1.5rem";
   const padRight = queueOpen ? "calc(320px + 2rem)" : "1.5rem";
 
   return (
     <div
-      className="@container/welcome relative z-10 flex w-full items-start justify-center overflow-y-auto pb-32 pt-16 transition-[padding] duration-200"
+      className="@container/welcome absolute inset-0 z-10 flex items-start justify-center overflow-y-auto pb-32 pt-24 transition-[padding] duration-200"
       style={{ paddingLeft: padLeft, paddingRight: padRight }}
     >
       <div className="flex w-full max-w-[720px] flex-col items-center gap-8 @md/welcome:gap-10">

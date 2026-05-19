@@ -11,17 +11,19 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 - Next.js + React + TS + Tailwind v4 + shadcn (base-ui) scaffold.
 - Test stack (Vitest + Testing Library + happy-dom + MSW) with 3 passing sample tests.
 - Premium dark theme with warm amber accent, Geist Sans, smooth 150ms transitions.
-- Layout shell — see [ADR-0012](./DECISIONS.md) (canonical) and [ADR-0011](./DECISIONS.md) (superseded for history):
-  - **Floating** Library panel (left) and Queue panel (right) with 12px breathing margin, rounded-2xl, soft shadow, backdrop blur. Both collapse to circular corner pills.
+- Layout shell — see [ADR-0013](./DECISIONS.md) (canonical) and [ADR-0011](./DECISIONS.md) + [ADR-0012](./DECISIONS.md) (superseded for history):
+  - **No top bar**. Canvas is full-bleed; every chrome element floats over it.
+  - **ProjectMenu** floating top-left: bigger logo + chevron → DropdownMenu with Project, Workflow (Approval checkbox + Reset), Workspace, About.
+  - **EditableTitle** floating top-center: click-to-edit pill, persisted in project-store.
+  - **Floating** Library panel (left, ⌘1) and Queue panel (right, ⌘2): vertically centered, `min(70vh, 640px)`, X close affordance, collapse to circular vertically-centered pills.
   - **No Properties panel** — returns as a node-anchored popover in M0a.
-  - Minimal top bar: company logo + chevron menu (DropdownMenu) · centered editable project title (Notion-style, persisted in project-store) · Reset + Approval + Run cluster.
-  - Add Node pill bottom-left + searchable categorized popover (Inputs/Iterators/AI Vision/AI Generation/AI Video/Compose/Output). Same catalog from canvas right-click context menu and Cmd+N.
-  - Canvas controls cluster bottom-right (Gallery, Theme).
-  - GalleryDrawer (Cmd+G) — bottom-drawer overlay (~65vh) with backdrop, density + search skeleton, "celebrate the work" copy.
+  - Add Node pill bottom-left + searchable categorized popover. Same catalog from canvas right-click context menu and ⌘. (⌘N is OS-reserved).
+  - Canvas controls cluster bottom-right (Gallery ⌘G, Theme).
+  - GalleryDrawer (⌘G) — bottom-drawer overlay (~65vh) with backdrop, density + search skeleton, "celebrate the work" copy.
   - PromptBar reserves CSS padding equal to floating-panel widths so it stays centered between them.
-  - Slide-up ChatSheet above the PromptBar (Cmd+J).
-  - Cmd+K command palette (stub).
-  - Cmd+Shift+L logs panel (stub).
+  - Slide-up ChatSheet above the PromptBar (⌘J).
+  - ⌘K command palette (stub).
+  - ⌘⇧L logs panel (stub).
   - Welcome state on empty canvas with 3 recipe cards (Soul Image Burst, Reference Edit, Photo → Video) gated as "Available in M0a/b/c".
 - Shortcuts: `⌘1` (Library), `⌘2` (Queue), `⌘G` (Gallery), `⌘J` (Chat), `⌘K` (Palette), `⌘.` (Add node — `⌘N` is system-reserved), `⌘⇧L` (Logs), `/` (focus prompt), `Esc` (close overlays).
 - `docs/` folder seeded with all 9 docs + `scripts/docs-check.ts`.

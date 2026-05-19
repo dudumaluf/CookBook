@@ -1,28 +1,29 @@
 "use client";
 
-import { Activity, ChevronsRight } from "lucide-react";
+import { Activity, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
  * QueuePanel
  *
- * Always-visible floating right panel showing in-flight + recent executions.
- * Day 1 is empty; M0a wires execution store. Collapsed = circular pill in
- * top-right (with breathing).
- *
- * The dot indicator in the header lights up (amber accent) when there's
- * active work; otherwise it's muted.
+ * Floating right panel mirroring the LibraryPanel geometry: vertically
+ * centered, max ~70vh. The activity icon itself conveys state (amber when
+ * the queue is active in M0a; muted otherwise) so we no longer carry a
+ * separate dot indicator next to it.
  */
 export function QueuePanel() {
   const { queueOpen, toggleQueue } = useLayoutStore();
 
   // M0a wires these from execution store.
   const runningCount = 0;
-  const totalCost = 0;
   const isActive = runningCount > 0;
 
   if (!queueOpen) {
@@ -34,7 +35,7 @@ export function QueuePanel() {
             size="icon"
             onClick={toggleQueue}
             aria-label="Open queue"
-            className="pointer-events-auto absolute right-3 top-16 z-20 h-9 w-9 rounded-full border-border/80 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-md"
+            className="pointer-events-auto absolute right-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 rounded-full border-border/70 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-md"
           >
             <Activity
               className={`h-4 w-4 ${
@@ -43,7 +44,7 @@ export function QueuePanel() {
             />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="left">Queue</TooltipContent>
+        <TooltipContent side="left">Queue (⌘2)</TooltipContent>
       </Tooltip>
     );
   }
@@ -51,27 +52,20 @@ export function QueuePanel() {
   return (
     <aside
       aria-label="Execution queue"
-      className="pointer-events-auto absolute bottom-3 right-3 top-16 z-20 flex w-[320px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-xl shadow-black/30 backdrop-blur-md"
+      className="pointer-events-auto absolute right-3 top-1/2 z-20 flex w-[320px] -translate-y-1/2 flex-col rounded-2xl border border-border/70 bg-popover/95 shadow-xl shadow-black/30 backdrop-blur-md"
+      style={{ height: "min(70vh, 640px)" }}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+      <header className="flex items-center justify-between gap-2 border-b border-border/50 px-3 py-2">
         <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${
-              isActive ? "bg-accent" : "bg-muted-foreground/40"
+          <Activity
+            className={`h-3.5 w-3.5 ${
+              isActive ? "text-accent" : "text-muted-foreground"
             }`}
-            aria-hidden
           />
-          <Activity className="h-3.5 w-3.5 text-muted-foreground" />
           <span>Queue</span>
-          {isActive ? (
-            <span className="text-xs font-normal text-muted-foreground">
-              {runningCount} running · ${totalCost.toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-xs font-normal text-muted-foreground">
-              idle
-            </span>
-          )}
+          <span className="text-xs font-normal text-muted-foreground">
+            {isActive ? `${runningCount} running` : "idle"}
+          </span>
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -80,12 +74,12 @@ export function QueuePanel() {
               size="icon"
               onClick={toggleQueue}
               className="h-6 w-6 text-muted-foreground"
-              aria-label="Collapse queue"
+              aria-label="Close queue"
             >
-              <ChevronsRight className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Collapse</TooltipContent>
+          <TooltipContent>Close (⌘2)</TooltipContent>
         </Tooltip>
       </header>
 
