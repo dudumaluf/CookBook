@@ -14,6 +14,7 @@ import { GalleryDrawer } from "./gallery-drawer";
 import { ProjectMenu } from "./project-menu";
 import { EditableTitle } from "./editable-title";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
+import { useAssetStore } from "@/lib/stores/asset-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -46,6 +47,7 @@ export function AppShell() {
     useLayoutStore.persist.rehydrate();
     useProjectStore.persist.rehydrate();
     useWorkflowStore.persist.rehydrate();
+    useAssetStore.persist.rehydrate();
   }, []);
 
   return (

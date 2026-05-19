@@ -33,7 +33,7 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 
 ---
 
-## M0a — Soul Image Burst _(in progress — Slice 1 shipped)_
+## M0a — Soul Image Burst _(in progress — Slices 1 + 2 shipped)_
 
 The first end-to-end recipe: pick a Soul ID + 1–5 references → get N images of "me" in the referenced contexts.
 
@@ -48,10 +48,17 @@ Broken into 6 vertical slices. Each is independently committable + testable + de
   - AddNode popover spawns real nodes from the registry.
   - WelcomeState swaps to canvas when nodes exist; persistence verified end-to-end.
   - See **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** for the full slice-1 snapshot.
-- **Slice 2 — Library + asset import** _(next)_: file drop into library, Image node accepts library asset ref, IndexedDB for blobs.
-- **Slice 3 — Run engine + execution store + first executable node**: topological sort, hash cache, seed strategy, cost preview modal, LLMText via Fal OpenRouter. Run button reappears in chrome.
+- **Slice 2 — Library + Asset abstraction + drag-to-canvas** _(shipped 2026-05-19)_
+  - `Asset` discriminated union + `AssetScope` (`global` / `project`) — `src/types/asset.ts`.
+  - `asset-store` (Zustand + persist, skipHydration, pass-through migrate).
+  - Custom-MIME drag contract + `assetToNode()` spawn map; canvas drop handler stays kind-agnostic.
+  - `LibraryPanel` rewired: `NewAssetPopover` (URL paste form) + `LibraryContent` (grouped by kind, 2-col grid, draggable `AssetCard`).
+  - Image node gains optional `assetId` link → body shows asset name + Unlink chip; `execute()` prefers the linked asset's url so library edits propagate; Unlink keeps the last url for standalone use.
+  - 23 new tests (51 total). See ADR-0018.
+  - **Still parked for later slices**: file/disk upload (Slice 3+, needs blob storage), folders/tags UI, multi-select + space-to-compare, hover-to-play video previews, grid density slider, drag-preview ghost styling.
+- **Slice 3 — Run engine + execution store + first executable node** _(next)_: topological sort, hash cache, seed strategy, cost preview modal, LLMText via Fal OpenRouter. Run button reappears in chrome. Local-blob upload likely rides along here.
 - **Slice 4 — Higgsfield + Soul ID + complete recipe**: SoulID, HiggsfieldImageGen, ImageIterator, ArraySplit, Export. Composite "Soul Image Burst" assembled.
-- **Slice 5 — Properties popover + queue thumbnails + save/load**: node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets.
+- **Slice 5 — Properties popover + queue thumbnails + save/load**: node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets (the Asset repository abstraction lands here, swapping storage without touching `asset-store`'s public API).
 - **Slice 6 — Assistant DSL + M0a close**: LLM assistant catalog auto-gen, tool calls (createWorkflow / runNodes / getCost), prompt bar wires to assistant.
 
 **Acceptance** (end of M0a): User drops a Soul ID + an image iterator with 3 references, sends "give me 8 variations" to the assistant, confirms cost, and gets 8 images saved to disk + visible in the queue.

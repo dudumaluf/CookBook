@@ -2,6 +2,30 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-19 — M0a Slice 2: Library + Asset abstraction + drag-to-canvas
+
+First real reason to open the Library: it now holds typed `Asset`s and dragging one onto the canvas spawns the matching node already linked to the asset. Pure local persistence; Drizzle/SQLite swaps in for the same store API in Slice 5.
+
+- **Asset types** (`src/types/asset.ts`): discriminated union over `kind`. Ships `image` only; `imageGroup`, `soulId`, `moodboard`, `product`, `video`, `3dObject` extend the union when their nodes land. Every asset has `{ id, name, tags, scope, createdAt, updatedAt }` plus per-kind payload. `AssetScope = "global" | "project"` lives on the asset so duplicating a project clones references, never blobs.
+- **Asset store** (`src/lib/stores/asset-store.ts`): Zustand + persist + skipHydration (matches the pattern of `layout-store` / `project-store` / `workflow-store`). API: `createImageAsset / removeAsset / updateAsset / getAsset / listByScope / listByKind / clear`. v1 with a pass-through migrate ready for future schema bumps.
+- **Drag contract** (`src/lib/library/asset-drag.ts`): custom MIME `application/x-cookbook-asset` + typed `{ assetId, kind }` payload. OS files and foreign-app URLs are ignored on the canvas because they don't carry our MIME.
+- **Asset → node spawn map** (`src/lib/library/asset-to-node.ts`): single source of truth for "what node does an asset spawn?". Adding a kind = one entry here; the canvas drop handler stays generic.
+- **`LibraryPanel`** now uses `LibraryContent` (grouped by kind, 2-col grid) + `NewAssetPopover` (paste URL form, sonner toast on success). The old "no assets yet" copy stays as the empty state.
+- **`CanvasFlow` accepts drops**: `onDragOver` claims the event iff our MIME is present; `onDrop` parses the payload, looks up the asset, calls `screenToFlowPosition` for canvas coordinates, then `addNode(kind, position, initialConfig)`. Wrapped in `<ReactFlowProvider>` so `useReactFlow` is available without timing issues.
+- **`addNode` extended** (`workflow-store`): now takes an optional `initialConfig` that's shallow-merged onto the schema's `defaultConfig`. Lets the drop handler bake `{ url, assetId }` into the spawned Image node.
+- **Image node linking**: `ImageNodeConfig` gains optional `assetId`. When set, the body swaps the URL input for a *Linked* chip showing the asset name + Unlink button; `execute()` reads the asset's url so library edits propagate. Unlink clears `assetId` but keeps the last url so the node still works standalone.
+- **Tests** (23 new, total 51):
+  - `tests/unit/stores/asset-store.test.ts` — create / remove / update / listByScope / listByKind.
+  - `tests/unit/library/asset-drag.test.ts` — MIME + round-trip + garbage rejection.
+  - `tests/unit/library/asset-to-node.test.ts` — image asset → image node mapping.
+  - `tests/component/library/asset-card.test.tsx` — render + drag start dataTransfer + delete.
+  - `tests/component/library/new-asset-popover.test.tsx` — create flow + URL-tail-as-name fallback + empty URL rejection.
+  - `tests/component/nodes/node-image.test.tsx` — free-URL mode + linked mode + Unlink + execute precedence (asset > stale url > fallback).
+  - `tests/unit/stores/workflow-store.test.ts` — new coverage for `addNode(kind, pos, initialConfig)`.
+- **Docs**: ADR-0018 (Asset model + scope + asset↔node spawn map), GLOSSARY entries for `Asset / AssetScope / AssetCard / assetToNode / Link-Unlink`.
+
+Polish backlog noted but parked for later slices: grid density slider, hover-to-play video preview, multi-select + space-to-compare, search/filter, drag preview ghost styling, asset folders/tags UI.
+
 ## 2026-05-19 — Slice 1 polish v3: canvas always live, welcome is just an overlay
 
 User caught a UX inconsistency: with no nodes the canvas showed a fake CSS dotted grid and **no** pan / zoom / Controls / MiniMap. The moment a node landed, all of that chrome popped in. Asked: "shouldn't the canvas already be pannable and have those elements from the start?"

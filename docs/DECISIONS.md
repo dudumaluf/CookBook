@@ -130,6 +130,24 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0018 — Asset model: discriminated union + scope + asset↔node spawn map
+
+- **Date**: 2026-05-19 (M0a Slice 2)
+- **Context**: We need a Library that holds reusable content (images today; image groups, Soul IDs, moodboards, products, videos, 3D objects later). Hard constraints from the briefing: an asset that's "global" should be available in every project, an asset that's "project" should not leak; duplicating a project should *not* duplicate the underlying blobs; dragging an asset onto the canvas must spawn the right node already pre-populated; library edits should propagate to nodes that reference the asset.
+- **Decision**:
+  1. **Type system** (`src/types/asset.ts`): `Asset` is a discriminated union over `kind`. Every variant extends `AssetCommon` (`id`, `name`, `tags`, `scope`, `createdAt`, `updatedAt`) and adds its own payload (e.g. `ImageAsset` adds `url`, `width?`, `height?`). New asset kinds extend the union — no other change required.
+  2. **Scope** lives on the asset itself, not in storage location: `AssetScope = "global" | "project"`. Project duplication clones references (ids), never blobs.
+  3. **Store** (`src/lib/stores/asset-store.ts`): one Zustand store, persisted to localStorage in M0a (SQLite/Drizzle takes over in Slice 5 via the Repository abstraction). API surface: `createImageAsset / removeAsset / updateAsset / getAsset / listByScope / listByKind / clear`. Versioned with a pass-through migrate so the store can be schema-evolved safely.
+  4. **Drag contract** (`src/lib/library/asset-drag.ts`): custom MIME `application/x-cookbook-asset` with a typed payload `{ assetId, kind }`. The MIME means foreign drags (OS files, other apps' URLs) are simply ignored by the canvas, which falls back to default browser behaviour.
+  5. **Spawn map** (`src/lib/library/asset-to-node.ts`): `assetToNode(asset) → { kind, initialConfig }` is the only place that couples asset kinds to node kinds. Adding a new asset kind = adding one entry here + one type variant in #1. The canvas drop handler in `canvas-flow.tsx` never grows a switch.
+  6. **Node linking**: Image node gains optional `config.assetId`. When set, the body shows the linked asset's name + Unlink chip and the execute() function reads the asset's url (so library edits propagate). When unlinked, the node keeps its last url and behaves as a free-URL node.
+- **Why a custom MIME**: lets the canvas accept Library drags only. We don't want a stray PNG from Finder spawning random nodes. Foreign drags fall through to the browser default (which usually does nothing on the canvas surface).
+- **Why both `url` and `assetId` on Image config**: the url is the *execute-time contract* (always works, even if the linked asset was deleted). The assetId is the *editorial link* (lets us follow renames / url changes in the library, and lets us show a Linked-asset chip in the UI). Either alone is wrong: only assetId → broken on asset delete; only url → loses connection to the source of truth.
+- **Trade-offs**:
+  - Discriminated union means every new kind touches both `types/asset.ts` and `asset-to-node.ts`. We accept that as the entire "asset kind" contract being in two small files — better than a registry indirection at this size.
+  - Storing asset URLs in node config duplicates a string. Cheap, simplifies execute().
+  - Library is project-flat in Slice 2 (no folders, no multi-select, no compare view). Those land when there's enough volume to need them.
+
 ## ADR-0017 — Canvas is always live; welcome is a non-blocking overlay
 
 - **Date**: 2026-05-19

@@ -20,8 +20,18 @@ export interface WorkflowState {
   edges: WorkflowEdge[];
   selectedNodeIds: string[];
 
-  /** Add a node of the given kind at a canvas position. Returns the new id. */
-  addNode: (kind: string, position: { x: number; y: number }) => string;
+  /**
+   * Add a node of the given kind at a canvas position. Returns the new id.
+   *
+   * `initialConfig` is shallow-merged on top of the schema's `defaultConfig`.
+   * Used by the library drag handler to bake in `{ url, assetId }` etc. when
+   * spawning from an asset drop.
+   */
+  addNode: (
+    kind: string,
+    position: { x: number; y: number },
+    initialConfig?: Record<string, unknown>,
+  ) => string;
   removeNode: (id: string) => void;
   updateNodeConfig: <TConfig = unknown>(
     id: string,
@@ -47,21 +57,24 @@ export const useWorkflowStore = create<WorkflowState>()(
       edges: [],
       selectedNodeIds: [],
 
-      addNode: (kind, position) => {
+      addNode: (kind, position, initialConfig) => {
         const schema = nodeRegistry.get(kind);
         if (!schema) {
           console.warn(`workflow-store.addNode: unknown kind "${kind}"`);
           return "";
         }
         const id = makeId(kind);
+        // Clone defaultConfig so mutating one instance never leaks into the
+        // schema or other instances. JSON round-trip is fine because configs
+        // are serialized to localStorage anyway.
+        const baseConfig = JSON.parse(
+          JSON.stringify(schema.defaultConfig),
+        ) as Record<string, unknown>;
         const node: NodeInstance = {
           id,
           kind,
           position,
-          // Clone defaultConfig so mutating one instance never leaks into the
-          // schema or other instances. JSON round-trip is fine because configs
-          // are serialized to localStorage anyway.
-          config: JSON.parse(JSON.stringify(schema.defaultConfig)),
+          config: { ...baseConfig, ...(initialConfig ?? {}) },
         };
         set((state) => ({ nodes: [...state.nodes, node] }));
         return id;

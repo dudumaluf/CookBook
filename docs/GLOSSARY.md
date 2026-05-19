@@ -4,7 +4,11 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 
 ## Domain
 
-- **Asset** — a typed entity stored in the library. Each asset has a `kind` (`image`, `images`, `soul-id`, `moodboard`, `product`, `character-sheet`, `video`, `audio`, `3d-object`). Assets are draggable onto the canvas, where they become nodes.
+- **Asset** — a typed entity stored in the library. Each asset has a `kind` (Slice 2 ships `image`; future kinds: `imageGroup`, `soulId`, `moodboard`, `product`, `characterSheet`, `video`, `audio`, `3dObject`). Assets are draggable onto the canvas, where they spawn the matching node — preserving an `assetId` link so library edits propagate. See `src/types/asset.ts`.
+- **AssetScope** — `"global" | "project"`. `global` assets are visible across all projects (Soul ID models you reuse, a moodboard you like for every commercial). `project` assets live with the current project only. Duplicating a project must reuse asset ids — never copy the underlying blobs. See ADR-0018.
+- **AssetCard** — draggable thumbnail tile inside `LibraryContent`. Uses HTML5 DnD with the custom `application/x-cookbook-asset` MIME so OS files / foreign URLs don't trigger the canvas drop handler. Hover reveals a Delete affordance.
+- **assetToNode()** — `src/lib/library/asset-to-node.ts` maps each `AssetKind` to a `{ kind, initialConfig }` spawn rule. The canvas drop handler is kind-agnostic; new asset kinds register here.
+- **Link / Unlink (Image node)** — an Image node with `config.assetId` set is *linked* to a library asset: the asset's url is canonical, the body shows the asset name + Unlink button. Unlinking clears `assetId`, keeping the last url so the node still works standalone.
 - **Soul ID** — a Higgsfield-trained character model representing the user's likeness. Tied to a specific Higgsfield account. Has two states in the library: `SoulIDDraft` (training in progress) and `SoulIDReady` (usable).
 - **Moodboard** — an asset of kind "collection of images" used for visual reference. Distinct from `ImageIterator` in intent — moodboards convey style/vibe, iterators feed batches.
 - **Recipe** — a saved subgraph (nodes + connections + their config) that can be re-instantiated on a canvas later. The unit of reuse.

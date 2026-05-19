@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { isValidElement, type ReactElement, type ReactNode } from "react"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
@@ -9,8 +10,35 @@ function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
 
-function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
+// Mirror the shadcn `asChild` ergonomics by translating to Base UI's `render`
+// prop. Lets us write `<PopoverTrigger asChild><Button /></PopoverTrigger>`
+// just like the rest of the codebase (TooltipTrigger uses the same pattern).
+type PopoverTriggerExtra = { asChild?: boolean; children?: ReactNode }
+type PopoverTriggerProps = Omit<
+  PopoverPrimitive.Trigger.Props,
+  "render" | "children"
+> &
+  PopoverTriggerExtra
+
+function PopoverTrigger({
+  asChild,
+  children,
+  ...props
+}: PopoverTriggerProps) {
+  if (asChild && isValidElement(children)) {
+    return (
+      <PopoverPrimitive.Trigger
+        data-slot="popover-trigger"
+        render={children as ReactElement<Record<string, unknown>>}
+        {...props}
+      />
+    )
+  }
+  return (
+    <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props}>
+      {children}
+    </PopoverPrimitive.Trigger>
+  )
 }
 
 function PopoverContent({

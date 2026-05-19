@@ -27,6 +27,19 @@ describe("workflow-store", () => {
     expect(useWorkflowStore.getState().nodes).toHaveLength(0);
   });
 
+  it("addNode merges initialConfig over the schema's defaultConfig", () => {
+    const id = useWorkflowStore.getState().addNode(
+      "image",
+      { x: 0, y: 0 },
+      { url: "https://example.com/cat.jpg", assetId: "asset_abc" },
+    );
+    expect(useWorkflowStore.getState().nodes[0]?.config).toEqual({
+      url: "https://example.com/cat.jpg",
+      assetId: "asset_abc",
+    });
+    expect(id).toMatch(/^image_/);
+  });
+
   it("updateNodeConfig merges partial config", () => {
     const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     useWorkflowStore

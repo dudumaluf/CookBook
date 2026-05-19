@@ -1,6 +1,6 @@
 "use client";
 
-import { Library, Plus, X } from "lucide-react";
+import { Library, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { LibraryContent } from "@/components/library/library-content";
+import { NewAssetPopover } from "@/components/library/new-asset-popover";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
@@ -52,19 +54,7 @@ export function LibraryPanel() {
           <span>Library</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground"
-                aria-label="New asset"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New asset</TooltipContent>
-          </Tooltip>
+          <NewAssetPopover />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -83,14 +73,7 @@ export function LibraryPanel() {
       </header>
 
       <ScrollArea className="flex-1">
-        <div className="flex flex-col items-start gap-1.5 px-3 py-4">
-          <p className="text-sm text-foreground/80">No assets yet</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Click <span className="font-medium text-foreground/80">+</span> to
-            import images, train a Soul ID character, or add a moodboard. Drag
-            from here onto the canvas.
-          </p>
-        </div>
+        <LibraryContent />
       </ScrollArea>
     </aside>
   );

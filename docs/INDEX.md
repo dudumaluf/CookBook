@@ -18,7 +18,8 @@ This folder is the **single source of truth** for the project. Every architectur
 
 End-of-slice and end-of-milestone snapshots. Read the latest one if you're picking up the project after a context flip — they're the single source of truth for "where are we, exactly".
 
-- **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** — schema engine + canvas + Text/Image nodes (current).
+- **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** — schema engine + canvas + Text/Image nodes.
+- **[STATE-AFTER-M0a-slice2.md](./STATE-AFTER-M0a-slice2.md)** — Library + Asset abstraction + drag-to-canvas (current).
 
 ## Maintenance rules (the contract)
 

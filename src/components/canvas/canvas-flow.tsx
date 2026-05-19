@@ -8,6 +8,8 @@ import {
   Controls,
   MiniMap,
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
   type Connection,
   type Edge as RfEdge,
   type EdgeChange,
@@ -21,7 +23,13 @@ import { useTheme } from "next-themes";
 
 import "@/lib/engine/all-nodes";
 import { nodeRegistry } from "@/lib/engine/registry";
+import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import {
+  ASSET_DRAG_MIME,
+  parseAssetDrag,
+} from "@/lib/library/asset-drag";
+import { assetToNode } from "@/lib/library/asset-to-node";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 import { BaseNode } from "@/components/nodes/base-node";
@@ -145,21 +153,40 @@ function toFlowEdge(e: WorkflowEdge): RfEdge {
 /* ────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Public wrapper. Wraps the inner component in a `ReactFlowProvider` so
+ * `useReactFlow` (needed for screen-to-flow coordinate conversion on drop) is
+ * available without depending on `ReactFlow` mount timing.
+ */
+export function CanvasFlow() {
+  return (
+    <ReactFlowProvider>
+      <CanvasFlowInner />
+    </ReactFlowProvider>
+  );
+}
+
+/**
  * React Flow canvas wired to the workflow store. The store is the source of
  * truth; React Flow's internal state is derived from it via memos.
  *
  * Change handlers translate React Flow events back to store mutations. We
  * only act on changes the store cares about (position, removal, selection,
  * new connections).
+ *
+ * Drag-from-Library lands here too: `onDragOver` claims the drag iff the
+ * payload carries our custom MIME, and `onDrop` resolves the asset and asks
+ * the workflow store to spawn the corresponding node at the drop position.
  */
-export function CanvasFlow() {
+function CanvasFlowInner() {
   const nodes = useWorkflowStore((s) => s.nodes);
   const edges = useWorkflowStore((s) => s.edges);
   const moveNode = useWorkflowStore((s) => s.moveNode);
   const removeNode = useWorkflowStore((s) => s.removeNode);
   const removeEdge = useWorkflowStore((s) => s.removeEdge);
   const addEdge = useWorkflowStore((s) => s.addEdge);
+  const addNode = useWorkflowStore((s) => s.addNode);
   const setSelectedNodeIds = useWorkflowStore((s) => s.setSelectedNodeIds);
+  const { screenToFlowPosition } = useReactFlow();
 
   const rfNodes = useMemo(() => nodes.map(toFlowNode), [nodes]);
   const rfEdges = useMemo(() => edges.map(toFlowEdge), [edges]);
@@ -234,6 +261,38 @@ export function CanvasFlow() {
     window.dispatchEvent(new Event("resize"));
   }, []);
 
+  // Library asset drag — accept iff our custom MIME is present; ignore
+  // foreign drags (OS files, other apps' URLs) so they fall through to the
+  // browser's default behaviour.
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    if (event.dataTransfer.types.includes(ASSET_DRAG_MIME)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
+      if (!raw) return;
+      event.preventDefault();
+
+      const payload = parseAssetDrag(raw);
+      if (!payload) return;
+
+      const asset = useAssetStore.getState().getAsset(payload.assetId);
+      if (!asset) return;
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      const { kind, initialConfig } = assetToNode(asset);
+      addNode(kind, position, initialConfig);
+    },
+    [screenToFlowPosition, addNode],
+  );
+
   return (
     <ReactFlow
       nodes={rfNodes}
@@ -242,6 +301,8 @@ export function CanvasFlow() {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       fitView={rfNodes.length > 0}
       fitViewOptions={{ padding: 0.3, maxZoom: 1.2 }}
       minZoom={0.2}
