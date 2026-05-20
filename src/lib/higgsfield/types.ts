@@ -179,6 +179,12 @@ export interface HiggsfieldSoulIdListResponse {
  * Discriminator the client wrapper uses to decide whether to retry, surface
  * a config UI, or treat the failure as cancellation. Best-effort — not every
  * upstream failure mode gets a distinct code.
+ *
+ * `concurrent_limit` is empirically observable: Higgsfield caps concurrent
+ * requests per keypair at 4, returning a 400 with
+ * `{"detail":"Maximum number of concurrent requests (4) has been reached"}`.
+ * The UI should hint "wait for an in-flight job to finish" rather than
+ * dumping the raw upstream message into the alert pill.
  */
 export type HiggsfieldErrorCode =
   | "invalid_request"
@@ -188,6 +194,7 @@ export type HiggsfieldErrorCode =
   | "nsfw"
   | "aborted"
   | "timeout"
+  | "concurrent_limit"
   | "unknown";
 
 export interface HiggsfieldErrorResponse {

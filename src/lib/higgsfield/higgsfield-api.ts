@@ -58,12 +58,15 @@ function loadCredentials(): Credentials {
 }
 
 /**
- * Per the current Higgsfield docs (May 2026): one combined header
- *   `Authorization: Key <KEY>:<SECRET>`
- * Prism shipped a slightly different shape (separate `hf-api-key` +
- * `hf-secret` headers) but the docs surface the combined form, so we
- * follow the docs. If we ever see a 401 we'll send both formats and
- * note the discrepancy in the ADR.
+ * Per the official Higgsfield API reference (cloud.higgsfield.ai/models,
+ * May 2026): canonical auth header is `Authorization: Key {key}:{secret}`.
+ *
+ * Prism (May-2026 codebase) uses the older `hf-api-key` + `hf-secret`
+ * pair which the platform still accepts on submit but appears to route
+ * jobs through a different (slower / starved) queue path — empirically,
+ * jobs submitted under that auth get stuck in `queued` indefinitely on
+ * the v2/standard endpoint. The official `Authorization: Key` header is
+ * the one we use for every request.
  */
 function authHeaders(creds: Credentials): Record<string, string> {
   return {
@@ -115,17 +118,49 @@ async function fetchJson<T>(
     }
   }
   if (!res.ok) {
-    const message =
-      typeof parsed === "string"
-        ? parsed
-        : parsed && typeof parsed === "object"
-          ? JSON.stringify(parsed)
-          : `HTTP ${res.status}`;
+    const detail = extractDetail(parsed);
+    const message = detail ?? `HTTP ${res.status}`;
+
+    // Specific upstream error: concurrent-requests cap. Surfaced verbatim
+    // by Higgsfield as `{"detail":"Maximum number of concurrent requests
+    // (4) has been reached"}`. Detect by string match (no specific status
+    // code, no machine-readable error_code field on the response) and
+    // re-tag with `concurrent_limit` so the UI can prompt "wait for an
+    // in-flight job to finish" instead of dumping the raw upstream text.
+    if (
+      res.status === 400 &&
+      detail &&
+      /concurrent requests/i.test(detail)
+    ) {
+      const err = new Error(`Higgsfield: ${detail}`);
+      annotate(err, "concurrent_limit");
+      throw err;
+    }
+
     const err = new Error(`Higgsfield ${res.status}: ${message}`);
     annotate(err, "upstream_error");
     throw err;
   }
   return parsed as T;
+}
+
+/** Pulls Higgsfield's `detail` field out, whether it's a string or an
+ *  array of validation errors (Zod-shape from FastAPI). */
+function extractDetail(parsed: unknown): string | undefined {
+  if (parsed === null || typeof parsed !== "object") {
+    return typeof parsed === "string" ? parsed : undefined;
+  }
+  const detail = (parsed as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    // FastAPI body-validation errors look like `[{type, loc, msg, ...}]`.
+    const first = detail[0];
+    if (first && typeof first === "object" && "msg" in first) {
+      return String((first as { msg: unknown }).msg);
+    }
+    return JSON.stringify(detail);
+  }
+  return JSON.stringify(parsed);
 }
 
 /* ------------------------------- Soul ID list ------------------------------- */

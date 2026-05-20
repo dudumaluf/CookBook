@@ -112,6 +112,28 @@ describe("callHiggsfieldImage", () => {
     expect((caught as HiggsfieldCallError).message).toMatch(/service unavailable/);
   });
 
+  it("propagates a 429 + code='concurrent_limit' as a typed HiggsfieldCallError", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(429, {
+        error:
+          "Higgsfield: Maximum number of concurrent requests (4) has been reached",
+        code: "concurrent_limit",
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await callHiggsfieldImage({ prompt: "go", mode: "none", signal });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(HiggsfieldCallError);
+    expect((caught as HiggsfieldCallError).code).toBe("concurrent_limit");
+    expect((caught as HiggsfieldCallError).message).toMatch(
+      /concurrent requests/i,
+    );
+  });
+
   it("maps a non-JSON failure body to a generic message + code='unknown'", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response("<html>nginx 502</html>", {

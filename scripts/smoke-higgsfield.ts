@@ -44,8 +44,15 @@ function loadEnv(): Env {
 }
 
 function authHeaders({ key, secret }: Env): Record<string, string> {
+  // The current Higgsfield docs (May 2026) say `Authorization: Key K:S`,
+  // but Prism's empirically-validated production code uses separate
+  // `hf-api-key` + `hf-secret` headers. The combined Authorization form
+  // *passes auth* (requests succeed) but the Soul ID `custom_reference_id`
+  // is silently dropped — the model renders without any character lock.
+  // See investigation note in ADR-0029 (Slice 4.5).
   return {
-    Authorization: `Key ${key}:${secret}`,
+    "hf-api-key": key,
+    "hf-secret": secret,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
@@ -99,17 +106,38 @@ interface StatusResponse {
   message?: string;
 }
 
-async function generateOne(env: Env, soulId?: string): Promise<string> {
+interface GenerateOptions {
+  aspectRatio: "1:1" | "9:16" | "16:9" | "4:3" | "3:4" | "3:2" | "2:3";
+  prompt?: string;
+}
+
+async function generateOne(
+  env: Env,
+  soulId: string | undefined,
+  opts: GenerateOptions,
+): Promise<string> {
   const body: Record<string, unknown> = {
     prompt:
-      "an editorial portrait, soft window light, neutral background, photoreal",
-    aspect_ratio: "1:1",
+      opts.prompt ??
+      // Note: explicit "full body, head not cropped, head fully in frame"
+      // — the previous run came back as a tight torso crop because the
+      // generic "portrait" prompt was being interpreted as upper-body.
+      "an editorial full-body portrait, head and shoulders fully in frame, soft window light, neutral background, photoreal",
+    aspect_ratio: opts.aspectRatio,
     resolution: "720p",
     batch_size: 1,
   };
   if (soulId) body.custom_reference_id = soulId;
 
-  const submit = await fetch(`${API_BASE}/higgsfield-ai/soul/v2/standard`, {
+  // Soul ID-aware endpoint. The v2/standard endpoint silently DROPS
+  // custom_reference_id and renders a generic person — verified empirically
+  // (see scripts/probe-character-endpoint.ts). The /soul/character endpoint
+  // honours it. Prism's documentation said v2 only had "standard" mode but
+  // Higgsfield seems to have re-added character/reference modes since.
+  const endpoint = soulId
+    ? `${API_BASE}/higgsfield-ai/soul/character`
+    : `${API_BASE}/higgsfield-ai/soul/v2/standard`;
+  const submit = await fetch(endpoint, {
     method: "POST",
     headers: authHeaders(env),
     body: JSON.stringify(body),
@@ -121,7 +149,8 @@ async function generateOne(env: Env, soulId?: string): Promise<string> {
     );
   }
   const queued = JSON.parse(submitText) as QueueResponse;
-  console.log(`  queued: request_id=${queued.request_id}`);
+  const tag = `[${opts.aspectRatio}]`;
+  console.log(`  ${tag} queued: request_id=${queued.request_id}`);
 
   const deadline = Date.now() + 6 * 60_000;
   while (Date.now() < deadline) {
@@ -137,7 +166,7 @@ async function generateOne(env: Env, soulId?: string): Promise<string> {
       );
     }
     const status = JSON.parse(pollText) as StatusResponse;
-    process.stdout.write(`  status=${status.status}\n`);
+    process.stdout.write(`  ${tag} status=${status.status}\n`);
     if (status.status === "completed") {
       const url = status.images?.[0]?.url;
       if (!url) throw new Error("completed but no image url");
@@ -164,21 +193,57 @@ async function main() {
     );
   }
 
-  if (process.argv.includes("--generate")) {
-    console.log("\n→ generating one image…");
-    const completedSoulIds = ids.filter(
-      (i) => i.status === "completed" && i.model_version === "v2",
+  // Aspect ratios to render: defaults to all three primaries. Override
+  // with `--ratios=1:1,9:16` etc. for a subset.
+  const ratiosArg = process.argv
+    .find((a) => a.startsWith("--ratios="))
+    ?.split("=")[1];
+  const wantsGenerate =
+    process.argv.includes("--generate") ||
+    process.argv.some((a) => a.startsWith("--ratios="));
+
+  if (!wantsGenerate) {
+    console.log(
+      "\n[smoke-higgsfield] OK (list-only — pass --generate or --ratios=… to also test generation)",
     );
-    const pickSoulId = completedSoulIds[0]?.id;
-    if (pickSoulId) {
-      console.log(`  using Soul ID: ${pickSoulId.slice(0, 8)}…`);
-    } else {
-      console.log("  no completed v2 Soul IDs — generating without one");
-    }
-    const url = await generateOne(env, pickSoulId);
-    console.log(`\n[smoke-higgsfield] OK: ${url}`);
+    return;
+  }
+
+  type AR = GenerateOptions["aspectRatio"];
+  const ratios: AR[] = ratiosArg
+    ? (ratiosArg.split(",").map((s) => s.trim()) as AR[])
+    : ["1:1", "9:16", "16:9"];
+
+  const completedSoulIds = ids.filter(
+    (i) => i.status === "completed" && i.model_version === "v2",
+  );
+  const pickSoulId = completedSoulIds[0]?.id;
+  if (pickSoulId) {
+    console.log(`\n→ generating ${ratios.length} image(s) using Soul ID ${pickSoulId.slice(0, 8)}…`);
   } else {
-    console.log("\n[smoke-higgsfield] OK (list-only — pass --generate to also test generation)");
+    console.log(
+      `\n→ generating ${ratios.length} image(s) without a Soul ID (no completed v2 character)`,
+    );
+  }
+
+  // Run all aspect ratios in parallel — the queue accepts concurrent
+  // submissions and total wallclock drops to the slowest single render.
+  const results = await Promise.allSettled(
+    ratios.map(async (ar) => {
+      console.log(`  [${ar}] submitting…`);
+      const url = await generateOne(env, pickSoulId, { aspectRatio: ar });
+      console.log(`  [${ar}] DONE: ${url}`);
+      return { ar, url };
+    }),
+  );
+
+  console.log("\n[smoke-higgsfield] summary:");
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      console.log(`  ✓ ${r.value.ar}  →  ${r.value.url}`);
+    } else {
+      console.log(`  ✗ FAIL: ${r.reason?.message ?? r.reason}`);
+    }
   }
 }
 

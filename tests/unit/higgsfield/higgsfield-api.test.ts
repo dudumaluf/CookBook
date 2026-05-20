@@ -233,6 +233,54 @@ describe("generateSoulImage", () => {
     ).rejects.toMatchObject({ code: "upstream_error" });
   });
 
+  it("throws code='concurrent_limit' on Higgsfield's 4-concurrent cap message", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(400, {
+        detail: "Maximum number of concurrent requests (4) has been reached",
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await expect(
+      generateSoulImage(defaultRequest(), new AbortController().signal, {
+        pollIntervalMs: 1,
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toMatchObject({ code: "concurrent_limit" });
+  });
+
+  it("surfaces FastAPI body-validation errors with their `msg` field (not the JSON blob)", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(422, {
+        detail: [
+          {
+            type: "missing",
+            loc: ["body", "prompt"],
+            msg: "Field required",
+            input: {},
+          },
+        ],
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await expect(
+      generateSoulImage(defaultRequest(), new AbortController().signal, {
+        pollIntervalMs: 1,
+        timeoutMs: 5_000,
+      }),
+    ).rejects.toMatchObject({
+      code: "upstream_error",
+      message: /Field required/,
+    });
+  });
+
   it("throws code='timeout' when the poll budget is exhausted", async () => {
     setEnv();
     fetchMock.mockResolvedValueOnce(

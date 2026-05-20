@@ -237,6 +237,22 @@ describe("POST /api/higgsfield/image", () => {
     expect(body.code).toBe("upstream_error");
   });
 
+  it("returns 429 + code='concurrent_limit' when Higgsfield's per-keypair cap is full", async () => {
+    const err = new Error(
+      "Higgsfield: Maximum number of concurrent requests (4) has been reached",
+    );
+    (err as Error & { code?: string }).code = "concurrent_limit";
+    generateSoulImage.mockRejectedValueOnce(err);
+
+    const res = await POST(
+      makeRequest({ prompt: "go", mode: "none" }) as never,
+    );
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.code).toBe("concurrent_limit");
+    expect(body.error).toMatch(/concurrent requests/i);
+  });
+
   it("returns 502 + code='timeout' when the poll loop exceeds the budget", async () => {
     const err = new Error("Higgsfield request did not finish within 360000ms");
     (err as Error & { code?: string }).code = "timeout";

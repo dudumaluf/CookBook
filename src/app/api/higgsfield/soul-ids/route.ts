@@ -48,6 +48,9 @@ function mapErrorToResponse(
   if (e?.code === "missing_keys") {
     return errorResponse(500, "missing_keys", e.message);
   }
+  if (e?.code === "concurrent_limit") {
+    return errorResponse(429, "concurrent_limit", e.message);
+  }
   if (e?.code === "upstream_error") {
     return errorResponse(502, "upstream_error", e.message);
   }

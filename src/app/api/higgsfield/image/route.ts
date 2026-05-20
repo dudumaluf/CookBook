@@ -17,6 +17,9 @@ import {
  * Returns:
  *   200 → `HiggsfieldImageSuccessResponse` (`{ imageUrls, requestId, model }`)
  *   400 → `{ error, code: "invalid_request" }` — Zod / superRefine failure
+ *   429 → `{ error, code: "concurrent_limit" }` — Higgsfield's per-keypair
+ *         concurrent requests cap (4) is full; the user should wait for an
+ *         in-flight job to finish before submitting another.
  *   499 → `{ error, code: "aborted" }` — caller cancelled or request timed out client-side
  *   500 → `{ error, code: "missing_keys" | "unknown" }`
  *   502 → `{ error, code: "upstream_error" | "upstream_failed" | "nsfw" | "timeout" }`
@@ -67,6 +70,9 @@ function mapErrorToResponse(
   }
   if (e?.code === "missing_keys") {
     return errorResponse(500, "missing_keys", e.message);
+  }
+  if (e?.code === "concurrent_limit") {
+    return errorResponse(429, "concurrent_limit", e.message);
   }
   if (e?.code === "nsfw") {
     return errorResponse(502, "nsfw", e.message);
