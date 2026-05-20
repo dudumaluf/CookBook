@@ -213,6 +213,116 @@ describe("LLM-callable recipe path — Soul Image Burst (mocked)", () => {
     expect(genRecord.usage?.model).toBe("higgsfield-ai/soul/v2/standard");
   });
 
+  it("with an ImageIterator wired, HiggsfieldImageGen runs ONCE PER reference image", async () => {
+    // Iterator fan-out: 3 references → 3 separate calls, each with a
+    // different referenceUrl. The engine picks up the iterator flag and
+    // dispatches the downstream node 3 times in parallel.
+    callMock.mockImplementation(async (args) => ({
+      imageUrls: [`https://cdn.example/result-for-${args.referenceUrl?.slice(-5)}`],
+      requestId: `req-${args.referenceUrl?.slice(-5)}`,
+      model: "higgsfield-ai/soul/v2/standard",
+    }));
+
+    const soulAssetId = useAssetStore.getState().importSoulIdAsset({
+      customReferenceId: "b66a1caa-612f-440d-8353-debceb00aae6",
+      variant: "v2",
+      name: "Test Soul",
+      thumbnailUrl: null,
+    });
+    const ref1 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/aa1.jpg" });
+    const ref2 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/bb2.jpg" });
+    const ref3 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/cc3.jpg" });
+
+    const store = useWorkflowStore.getState();
+    const promptId = store.addNode("text", { x: 0, y: 0 }, { text: "go" });
+    const soulId = store.addNode("soul-id", { x: 0, y: 200 }, {
+      assetId: soulAssetId,
+    });
+    const i1 = store.addNode("image", { x: 0, y: 400 }, {
+      assetId: ref1,
+      url: "https://example.com/aa1.jpg",
+    });
+    const i2 = store.addNode("image", { x: 0, y: 500 }, {
+      assetId: ref2,
+      url: "https://example.com/bb2.jpg",
+    });
+    const i3 = store.addNode("image", { x: 0, y: 600 }, {
+      assetId: ref3,
+      url: "https://example.com/cc3.jpg",
+    });
+    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {});
+    const genId = store.addNode("higgsfield-image-gen", { x: 400, y: 100 }, {});
+
+    store.addEdge({
+      source: promptId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "prompt",
+    });
+    store.addEdge({
+      source: soulId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "soulId",
+    });
+    // 3 images → iterator → genId.image (single input → fan-out).
+    store.addEdge({
+      source: i1,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: i2,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: i3,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: iterId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "image",
+    });
+
+    const { result, records } = await runFromStore();
+    expect(result.ok).toBe(true);
+
+    // Three separate generator invocations, each in reference mode.
+    expect(callMock).toHaveBeenCalledTimes(3);
+    const seenRefs = callMock.mock.calls
+      .map((c) => c[0].referenceUrl)
+      .sort();
+    expect(seenRefs).toEqual([
+      "https://example.com/aa1.jpg",
+      "https://example.com/bb2.jpg",
+      "https://example.com/cc3.jpg",
+    ]);
+    for (const c of callMock.mock.calls) {
+      expect(c[0].mode).toBe("reference");
+    }
+
+    // The aggregated output is the array of 3 result images.
+    const genRecord = records.get(genId)!;
+    expect(genRecord.status).toBe("done");
+    const out = genRecord.output as StandardizedOutput[];
+    expect(out).toHaveLength(3);
+    // Fan-out progress reached 3/3 by the end.
+    expect(genRecord.fanOut).toEqual({ total: 3, done: 3 });
+  });
+
   it("with an Image input wired switches to mode='reference'", async () => {
     callMock.mockResolvedValueOnce({
       imageUrls: ["https://cdn.example/ref-result.png"],
