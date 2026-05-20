@@ -56,6 +56,7 @@ describe("callHiggsfieldImage", () => {
     await callHiggsfieldImage({
       prompt: "go",
       mode: "none",
+      variant: "none",
       signal,
     });
 
@@ -68,7 +69,7 @@ describe("callHiggsfieldImage", () => {
     );
     expect(init.signal).toBe(signal);
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ prompt: "go", mode: "none" });
+    expect(body).toEqual({ prompt: "go", mode: "none", variant: "none" });
     expect(body.signal).toBeUndefined();
   });
 
@@ -84,6 +85,7 @@ describe("callHiggsfieldImage", () => {
     const result = await callHiggsfieldImage({
       prompt: "go",
       mode: "none",
+      variant: "none",
       signal,
     });
     expect(result.imageUrls).toEqual([
@@ -103,7 +105,7 @@ describe("callHiggsfieldImage", () => {
 
     let caught: unknown;
     try {
-      await callHiggsfieldImage({ prompt: "go", mode: "none", signal });
+      await callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal });
     } catch (err) {
       caught = err;
     }
@@ -123,7 +125,7 @@ describe("callHiggsfieldImage", () => {
 
     let caught: unknown;
     try {
-      await callHiggsfieldImage({ prompt: "go", mode: "none", signal });
+      await callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal });
     } catch (err) {
       caught = err;
     }
@@ -143,7 +145,7 @@ describe("callHiggsfieldImage", () => {
     );
 
     await expect(
-      callHiggsfieldImage({ prompt: "go", mode: "none", signal }),
+      callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal }),
     ).rejects.toMatchObject({
       message: /HTTP 502/,
       code: "unknown",
@@ -156,7 +158,7 @@ describe("callHiggsfieldImage", () => {
     );
 
     await expect(
-      callHiggsfieldImage({ prompt: "go", mode: "none", signal }),
+      callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
@@ -168,7 +170,7 @@ describe("callHiggsfieldImage", () => {
     });
 
     await expect(
-      callHiggsfieldImage({ prompt: "go", mode: "none", signal }),
+      callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
@@ -176,7 +178,7 @@ describe("callHiggsfieldImage", () => {
     fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("fetch failed")));
 
     await expect(
-      callHiggsfieldImage({ prompt: "go", mode: "none", signal }),
+      callHiggsfieldImage({ prompt: "go", mode: "none", variant: "none", signal }),
     ).rejects.toMatchObject({ code: "network" });
   });
 });

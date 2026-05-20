@@ -240,12 +240,43 @@ interface StatusResponse {
   detail?: unknown;
 }
 
-const SOUL_V2_ENDPOINT = `${API_BASE}/higgsfield-ai/soul/v2/standard`;
-const SOUL_V2_MODEL_ID = "higgsfield-ai/soul/v2/standard";
+/**
+ * Endpoint dispatch by Soul variant — see ADR-0029.
+ *
+ * Higgsfield silently ignores `custom_reference_id` when the request hits
+ * the wrong endpoint for the character's trained variant (e.g. a v2 char
+ * on /soul/cinema renders generically, no error). Picking the right URL
+ * from the variant is the single most important thing this wrapper does.
+ *
+ * For variant === "none" (no Soul ID wired) we route to v2/standard for
+ * the best quality generic render.
+ */
+const SOUL_ENDPOINT_BY_VARIANT: Record<
+  HiggsfieldImageRequest["variant"],
+  { url: string; modelId: string }
+> = {
+  v2: {
+    url: `${API_BASE}/higgsfield-ai/soul/v2/standard`,
+    modelId: "higgsfield-ai/soul/v2/standard",
+  },
+  cinema: {
+    url: `${API_BASE}/higgsfield-ai/soul/cinema`,
+    modelId: "higgsfield-ai/soul/cinema",
+  },
+  v1: {
+    url: `${API_BASE}/higgsfield-ai/soul/character`,
+    modelId: "higgsfield-ai/soul/character",
+  },
+  none: {
+    url: `${API_BASE}/higgsfield-ai/soul/v2/standard`,
+    modelId: "higgsfield-ai/soul/v2/standard",
+  },
+};
 
 /**
- * Submit a Soul 2 standard image generation and wait for completion.
- * Returns the array of image URLs (1 or 4 depending on `batchSize`).
+ * Submit a Soul image generation and wait for completion. Picks the right
+ * endpoint from `args.variant` (see SOUL_ENDPOINT_BY_VARIANT). Returns the
+ * array of image URLs (1 or 4 depending on `batchSize`).
  */
 export async function generateSoulImage(
   args: HiggsfieldImageRequest,
@@ -253,6 +284,7 @@ export async function generateSoulImage(
   options: { pollIntervalMs?: number; timeoutMs?: number } = {},
 ): Promise<HiggsfieldImageSuccessResponse> {
   const creds = loadCredentials();
+  const endpoint = SOUL_ENDPOINT_BY_VARIANT[args.variant];
 
   // Build the per-mode body. We're explicit about which fields we send so
   // a future schema addition (negative_prompt, etc.) doesn't leak through
@@ -273,7 +305,15 @@ export async function generateSoulImage(
   if (args.mode === "reference" && args.referenceUrl) {
     body.image_url = args.referenceUrl;
   }
-  if (args.mode === "style" && args.styleId) {
+  // The cinema endpoint 400s on any style_id ("Provided Soul style not
+  // found"); we never send styleId on cinema even if it leaked through
+  // the request schema. Same belt-and-suspenders pattern Prism's wrapper
+  // had. Other variants get the styleId when in style mode.
+  if (
+    args.mode === "style" &&
+    args.styleId &&
+    args.variant !== "cinema"
+  ) {
     body.style_id = args.styleId;
   }
   if (typeof args.seed === "number") body.seed = args.seed;
@@ -282,7 +322,7 @@ export async function generateSoulImage(
   if (signal.aborted) throw makeAbort();
 
   // Step 1 — submit and grab the request id.
-  const queued = await fetchJson<QueueResponse>(SOUL_V2_ENDPOINT, creds, {
+  const queued = await fetchJson<QueueResponse>(endpoint.url, creds, {
     method: "POST",
     body: JSON.stringify(body),
     signal,
@@ -323,7 +363,7 @@ export async function generateSoulImage(
       return {
         imageUrls: urls,
         requestId: queued.request_id,
-        model: SOUL_V2_MODEL_ID,
+        model: endpoint.modelId,
       };
     }
 

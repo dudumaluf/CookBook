@@ -42,7 +42,7 @@ describe("POST /api/higgsfield/image", () => {
   });
 
   it("returns 400 when the prompt is missing", async () => {
-    const res = await POST(makeRequest({ mode: "none" }) as never);
+    const res = await POST(makeRequest({ mode: "none", variant: "none" }) as never);
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("invalid_request");
@@ -51,7 +51,7 @@ describe("POST /api/higgsfield/image", () => {
 
   it("returns 400 when mode='reference' but no referenceUrl is supplied", async () => {
     const res = await POST(
-      makeRequest({ prompt: "hi", mode: "reference" }) as never,
+      makeRequest({ prompt: "hi", mode: "reference", variant: "v2" }) as never,
     );
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -61,7 +61,7 @@ describe("POST /api/higgsfield/image", () => {
 
   it("returns 400 when mode='style' but no styleId is supplied", async () => {
     const res = await POST(
-      makeRequest({ prompt: "hi", mode: "style" }) as never,
+      makeRequest({ prompt: "hi", mode: "style", variant: "v2" }) as never,
     );
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -74,6 +74,7 @@ describe("POST /api/higgsfield/image", () => {
       makeRequest({
         prompt: "hi",
         mode: "none",
+      variant: "none",
         referenceUrl: "https://example.com/ref.jpg",
       }) as never,
     );
@@ -87,6 +88,7 @@ describe("POST /api/higgsfield/image", () => {
       makeRequest({
         prompt: "hi",
         mode: "reference",
+        variant: "v2",
         referenceUrl: "https://example.com/ref.jpg",
         styleId: "a3f4c891-7b2e-4d1a-9e8c-1f4b2a3c5d6e",
       }) as never,
@@ -102,6 +104,7 @@ describe("POST /api/higgsfield/image", () => {
       makeRequest({
         prompt: "hi",
         mode: "none",
+      variant: "none",
         soulId: "not-a-uuid",
       }) as never,
     );
@@ -115,6 +118,7 @@ describe("POST /api/higgsfield/image", () => {
       makeRequest({
         prompt: "hi",
         mode: "none",
+      variant: "none",
         seed: 9_999_999,
       }) as never,
     );
@@ -134,6 +138,7 @@ describe("POST /api/higgsfield/image", () => {
       makeRequest({
         prompt: "warm light, soft focus",
         mode: "reference",
+        variant: "v2",
         referenceUrl: "https://example.com/ref.jpg",
         soulId: "a3f4c891-7b2e-4d1a-9e8c-1f4b2a3c5d6e",
         aspectRatio: "1:1",
@@ -155,6 +160,7 @@ describe("POST /api/higgsfield/image", () => {
     expect(args).toEqual({
       prompt: "warm light, soft focus",
       mode: "reference",
+      variant: "v2",
       referenceUrl: "https://example.com/ref.jpg",
       soulId: "a3f4c891-7b2e-4d1a-9e8c-1f4b2a3c5d6e",
       aspectRatio: "1:1",
@@ -173,7 +179,7 @@ describe("POST /api/higgsfield/image", () => {
     });
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(499);
     const body = await res.json();
@@ -188,7 +194,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(500);
     const body = await res.json();
@@ -204,7 +210,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(502);
     const body = await res.json();
@@ -217,7 +223,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(502);
     const body = await res.json();
@@ -230,7 +236,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(502);
     const body = await res.json();
@@ -245,7 +251,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(429);
     const body = await res.json();
@@ -259,7 +265,7 @@ describe("POST /api/higgsfield/image", () => {
     generateSoulImage.mockRejectedValueOnce(err);
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(502);
     const body = await res.json();
@@ -275,7 +281,7 @@ describe("POST /api/higgsfield/image", () => {
     );
 
     const res = await POST(
-      makeRequest({ prompt: "go", mode: "none" }) as never,
+      makeRequest({ prompt: "go", mode: "none", variant: "none" }) as never,
     );
     expect(res.status).toBe(500);
     const body = await res.json();

@@ -61,6 +61,7 @@ describe("generateSoulImage", () => {
     return {
       prompt: "soft window light, editorial",
       mode: "none",
+      variant: "none",
       ...overrides,
     } as HiggsfieldImageRequest;
   }
@@ -380,6 +381,7 @@ describe("generateSoulImage", () => {
       {
         prompt: "go",
         mode: "reference",
+        variant: "v2",
         referenceUrl: "https://example.com/me.jpg",
         soulId: SOUL_ID_UUID,
       },
@@ -421,6 +423,7 @@ describe("generateSoulImage", () => {
       {
         prompt: "go",
         mode: "style",
+        variant: "v2",
         styleId: "b1c2d3e4-5f6a-4789-90bc-1d2e3f405162",
       },
       new AbortController().signal,
@@ -431,6 +434,102 @@ describe("generateSoulImage", () => {
     const body = JSON.parse(submitInit.body as string);
     expect(body.style_id).toBe("b1c2d3e4-5f6a-4789-90bc-1d2e3f405162");
     expect(body.image_url).toBeUndefined();
+  });
+
+  it("dispatches to /soul/v2/standard when variant='v2'", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-v2",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-v2",
+        images: [{ url: "https://cdn.example/v2.png" }],
+      }),
+    );
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const result = await generateSoulImage(
+      defaultRequest({ variant: "v2" }),
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+    expect(fetchMock.mock.calls[0]![0]).toContain("/soul/v2/standard");
+    expect(result.model).toBe("higgsfield-ai/soul/v2/standard");
+  });
+
+  it("dispatches to /soul/cinema when variant='cinema' and drops styleId silently", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-c",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-c",
+        images: [{ url: "https://cdn.example/c.png" }],
+      }),
+    );
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const result = await generateSoulImage(
+      {
+        prompt: "go",
+        variant: "cinema",
+        mode: "style",
+        styleId: SOUL_ID_UUID, // would 400 on cinema; wrapper drops it
+      },
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+    expect(fetchMock.mock.calls[0]![0]).toContain("/soul/cinema");
+    expect(result.model).toBe("higgsfield-ai/soul/cinema");
+    const body = JSON.parse(
+      fetchMock.mock.calls[0]![1]!.body as string,
+    );
+    expect(body.style_id).toBeUndefined();
+  });
+
+  it("dispatches to /soul/character when variant='v1'", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-1",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-1",
+        images: [{ url: "https://cdn.example/1.png" }],
+      }),
+    );
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const result = await generateSoulImage(
+      defaultRequest({ variant: "v1" }),
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+    expect(fetchMock.mock.calls[0]![0]).toContain("/soul/character");
+    expect(result.model).toBe("higgsfield-ai/soul/character");
   });
 
   it("forwards seed + negative prompt + aspect/resolution/batchSize", async () => {
@@ -458,6 +557,7 @@ describe("generateSoulImage", () => {
       {
         prompt: "go",
         mode: "none",
+        variant: "none",
         aspectRatio: "9:16",
         resolution: "1080p",
         batchSize: 4,

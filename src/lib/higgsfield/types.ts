@@ -54,6 +54,21 @@ export type SoulBatchSize = (typeof SOUL_BATCH_SIZES)[number];
 export const SOUL_MODES = ["reference", "style", "none"] as const;
 export type SoulMode = (typeof SOUL_MODES)[number];
 
+/**
+ * Soul variant of the wired character. Drives endpoint dispatch:
+ *   v2     → /higgsfield-ai/soul/v2/standard (the official Soul 2 model)
+ *   cinema → /higgsfield-ai/soul/cinema (no style catalogue)
+ *   v1     → /higgsfield-ai/soul/character (legacy character mode)
+ *   none   → /higgsfield-ai/soul/v2/standard (generic v2 render, no character)
+ *
+ * Per ADR-0029, mismatch (v2-trained char on /soul/cinema) silently degrades
+ * to a generic person — so the node MUST coerce the endpoint to the wired
+ * character's variant. The `variant` field on the request shape is what the
+ * client sends; the server wrapper picks the URL from this discriminator.
+ */
+export const SOUL_VARIANTS = ["v2", "v1", "cinema", "none"] as const;
+export type SoulVariant = (typeof SOUL_VARIANTS)[number];
+
 export const higgsfieldImageRequestSchema = z
   .object({
     /** Required text prompt. */
@@ -63,6 +78,14 @@ export const higgsfieldImageRequestSchema = z
      * Optional — without it the model renders generically.
      */
     soulId: z.string().uuid().optional(),
+    /**
+     * Soul variant to dispatch to. Required because the same UUID can only
+     * be honoured on one endpoint (v2-trained char → /soul/v2/standard,
+     * cinema-trained → /soul/cinema, v1-trained → /soul/character).
+     * Send "none" when no Soul ID is wired (the request renders generically
+     * via /soul/v2/standard).
+     */
+    variant: z.enum(SOUL_VARIANTS),
     /**
      * Mode + the (mutually-exclusive) reference / style payloads.
      * The route validates that the right field is set for each mode.
@@ -135,8 +158,10 @@ export interface HiggsfieldImageSuccessResponse {
   /** Higgsfield's request id (useful for support / debugging). */
   requestId: string;
   /**
-   * Echo the model that ran. Always `higgsfield-ai/soul/v2/standard` for
-   * Slice 4; future variants (cinema, character) get their own values.
+   * Echo the actual endpoint that ran (`higgsfield-ai/soul/v2/standard`,
+   * `higgsfield-ai/soul/cinema`, or `higgsfield-ai/soul/character`). The
+   * Queue panel surfaces this so the user can spot variant-coercion at a
+   * glance.
    */
   model: string;
 }
