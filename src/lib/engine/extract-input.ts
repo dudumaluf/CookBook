@@ -1,6 +1,7 @@
 import type {
   DataType,
   ImageRef,
+  SoulIdRef,
   StandardizedOutput,
   VideoRef,
 } from "@/types/node";
@@ -48,6 +49,11 @@ export function extractInputByType(
 export function extractInputByType(
   inputs: InputRecord,
   handleId: string,
+  expected: "soul-id",
+): SoulIdRef | undefined;
+export function extractInputByType(
+  inputs: InputRecord,
+  handleId: string,
   expected: "any",
 ): StandardizedOutput["value"] | undefined;
 export function extractInputByType(
@@ -87,6 +93,11 @@ export function extractInputArrayByType(
   handleId: string,
   expected: "number",
 ): number[];
+export function extractInputArrayByType(
+  inputs: InputRecord,
+  handleId: string,
+  expected: "soul-id",
+): SoulIdRef[];
 export function extractInputArrayByType(
   inputs: InputRecord,
   handleId: string,

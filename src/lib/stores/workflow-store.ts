@@ -258,6 +258,12 @@ export const useWorkflowStore = create<WorkflowState>()(
     {
       name: "cookbook.workflow",
       storage: createJSONStorage(() => localStorage),
+      // v7: SoulID node lands (ADR-0029, Slice 4.2). Config shape is
+      // `{ assetId?, customReferenceId?, variant?, name?, thumbnailUrl? }`
+      // where everything is optional but `customReferenceId + variant`
+      // together are what `execute()` needs. Migration sanitises any
+      // pre-existing soul-id config in place, dropping fields that aren't
+      // strings / valid variants so the engine never sees garbage.
       // v6: NodeInstance gained an optional `size: { width?, height? }` for
       // user-resized nodes (ADR-0028). Additive — no existing payload
       // breaks; the migrate just sanitises any pre-existing `size` to a
@@ -274,7 +280,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // can re-wire them with Text nodes.
       // v3: LLMTextNodeConfig renamed `prompt` → `user` and added `system`.
       // v2: dev wipe; shape unchanged vs v1.
-      version: 6,
+      version: 7,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -288,8 +294,37 @@ export const useWorkflowStore = create<WorkflowState>()(
         // sanitisation, not just llm-text.
         const state = (persistedState ?? {}) as Partial<WorkflowState>;
         if (!state.nodes) return state;
+        const validSoulIdVariants = new Set(["v1", "v2", "cinema"]);
         const migratedNodes = state.nodes.map((nRaw) => {
           let n = nRaw;
+          if (n.kind === "soul-id") {
+            // v7 sanitisation. Required fields land as `undefined` if the
+            // shape is wrong; the node body's empty state ("Import a
+            // character") will render and the user can re-wire.
+            const old = (n.config ?? {}) as Record<string, unknown>;
+            const next: Record<string, unknown> = {};
+            if (typeof old.assetId === "string") next.assetId = old.assetId;
+            if (
+              typeof old.customReferenceId === "string" &&
+              old.customReferenceId.length > 0
+            ) {
+              next.customReferenceId = old.customReferenceId;
+            }
+            if (
+              typeof old.variant === "string" &&
+              validSoulIdVariants.has(old.variant)
+            ) {
+              next.variant = old.variant;
+            }
+            if (typeof old.name === "string") next.name = old.name;
+            if (
+              typeof old.thumbnailUrl === "string" ||
+              old.thumbnailUrl === null
+            ) {
+              next.thumbnailUrl = old.thumbnailUrl;
+            }
+            n = { ...n, config: next };
+          }
           if (n.kind === "llm-text") {
             const old = (n.config ?? {}) as Record<string, unknown>;
             const next: Record<string, unknown> = {

@@ -10,6 +10,7 @@ import type {
   AssetKind,
   AssetScope,
   ImageAsset,
+  SoulIdAsset,
 } from "@/types/asset";
 
 /**
@@ -59,6 +60,24 @@ export interface AssetState {
   createImageAssetFromUrl: (params: {
     url: string;
     name?: string;
+    tags?: string[];
+    scope?: AssetScope;
+  }) => string;
+
+  /**
+   * Import a Higgsfield Soul ID character into the library. Stores only the
+   * character reference (UUID + variant + cover thumbnail); the bytes never
+   * touch our storage — Higgsfield owns the trained model. ADR-0029.
+   *
+   * Returns the new asset id. Idempotent on `customReferenceId`: if the
+   * character is already in the library, returns the existing id without
+   * creating a duplicate (so re-clicking "Import" in the popover is safe).
+   */
+  importSoulIdAsset: (params: {
+    customReferenceId: string;
+    variant: "v1" | "v2" | "cinema";
+    name: string;
+    thumbnailUrl?: string | null;
     tags?: string[];
     scope?: AssetScope;
   }) => string;
@@ -150,6 +169,35 @@ export const useAssetStore = create<AssetState>()(
         return id;
       },
 
+      importSoulIdAsset: (params) => {
+        const ref = params.customReferenceId.trim();
+        // De-dupe: if a Soul ID asset with this customReferenceId already
+        // exists, return its id — re-importing is a no-op so the popover's
+        // "Import" button is idempotent.
+        const existing = get().assets.find(
+          (a): a is SoulIdAsset =>
+            a.kind === "soul-id" && a.customReferenceId === ref,
+        );
+        if (existing) return existing.id;
+
+        const id = makeAssetId();
+        const now = Date.now();
+        const asset: SoulIdAsset = {
+          id,
+          kind: "soul-id",
+          name: params.name.trim() || ref,
+          tags: params.tags ?? [],
+          scope: params.scope ?? "global",
+          customReferenceId: ref,
+          variant: params.variant,
+          thumbnailUrl: params.thumbnailUrl ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((state) => ({ assets: [...state.assets, asset] }));
+        return id;
+      },
+
       removeAsset: async (id) => {
         const asset = get().assets.find((a) => a.id === id);
         // Optimistic local drop — the UI updates immediately; if the
@@ -188,7 +236,7 @@ export const useAssetStore = create<AssetState>()(
     {
       name: "cookbook.assets",
       storage: createJSONStorage(() => localStorage),
-      version: 3,
+      version: 4,
       /**
        * Migration ladder.
        *
@@ -197,6 +245,10 @@ export const useAssetStore = create<AssetState>()(
        *   lived in IndexedDB which we no longer write to, so a v2 blob
        *   asset would render as a broken placeholder forever. Cleaner to
        *   drop the metadata record entirely and let the user re-upload.
+       * v3 → v4: forward-portable sanity sweep that drops any soul-id
+       *   asset whose required fields are malformed (missing
+       *   customReferenceId or unknown variant). A clean v3 payload —
+       *   which only contained image kinds — survives unchanged.
        *
        * Future versions fall through unchanged.
        */
@@ -226,11 +278,23 @@ export const useAssetStore = create<AssetState>()(
           if (version < 3) {
             state.assets = state.assets.filter((raw) => {
               const a = raw as ImageAsset;
-              // Drop the v2 `blob` shape (bytes are gone — they lived only
-              // in IndexedDB which we no longer maintain).
               return !(
                 a.kind === "image" &&
                 (a.source as { type: string }).type === "blob"
+              );
+            });
+          }
+          if (version < 4) {
+            const validVariants = new Set(["v1", "v2", "cinema"]);
+            state.assets = state.assets.filter((raw) => {
+              const a = raw as Asset;
+              if (a.kind !== "soul-id") return true;
+              const candidate = a as Partial<SoulIdAsset>;
+              return (
+                typeof candidate.customReferenceId === "string" &&
+                candidate.customReferenceId.length > 0 &&
+                typeof candidate.variant === "string" &&
+                validVariants.has(candidate.variant)
               );
             });
           }

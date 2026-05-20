@@ -56,6 +56,7 @@
   --datatype-image: oklch(0.6 0.2 0);
   --datatype-video: oklch(0.5 0.22 295);
   --datatype-number: oklch(0.6 0.15 140);
+  --datatype-soul-id: oklch(0.7 0.16 70);
   --datatype-any: oklch(0.5 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -113,6 +114,7 @@
   --datatype-image: oklch(0.72 0.18 0);
   --datatype-video: oklch(0.62 0.2 295);
   --datatype-number: oklch(0.75 0.1 140);
+  --datatype-soul-id: oklch(0.78 0.14 70);
   --datatype-any: oklch(0.75 0 0);
   --chart-1: oklch(0.72 0.13 73);
   --chart-2: oklch(0.65 0.12 200);

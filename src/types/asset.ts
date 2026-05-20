@@ -79,10 +79,37 @@ export interface ImageAsset extends AssetCommon {
 }
 
 /**
+ * Higgsfield Soul ID character reference (Slice 4, ADR-0029).
+ *
+ * `customReferenceId` is the UUID Higgsfield assigns each trained character
+ * (their `custom_reference_id` field). `variant` records which Soul model
+ * the character was trained with — generation endpoints accept characters
+ * only on the matching variant (v2-trained character → /soul/v2/standard;
+ * cinema-trained → /soul/cinema; v1-trained → /soul/{standard|character|
+ * reference}). Sent through the graph as `{ type: "soul-id", value: SoulIdRef }`.
+ *
+ * No bytes — Soul ID assets are pure references to characters that live in
+ * the user's Higgsfield account; the thumbnail URL is the cover image
+ * Higgsfield exposes from its `reference_media` array.
+ *
+ * Slice 4 ships this as the `kind` for already-trained characters imported
+ * from the user's account via /api/higgsfield/soul-ids. M0b adds the
+ * full training flow (uploads → POST /v1/custom-references → poll), at
+ * which point we'll add `status: "training" | "ready"` so a draft can sit
+ * in the library while training is in flight.
+ */
+export interface SoulIdAsset extends AssetCommon {
+  kind: "soul-id";
+  customReferenceId: string;
+  variant: "v1" | "v2" | "cinema";
+  thumbnailUrl: string | null;
+}
+
+/**
  * The full Asset union. New kinds get added here and to
  * `lib/library/asset-to-node.ts`.
  */
-export type Asset = ImageAsset;
+export type Asset = ImageAsset | SoulIdAsset;
 
 export type AssetKind = Asset["kind"];
 

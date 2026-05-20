@@ -29,6 +29,19 @@ const SPAWN: { [K in AssetKind]: SpawnFn<Extract<Asset, { kind: K }>> } = {
       url: asset.source.url,
     },
   }),
+  "soul-id": (asset) => ({
+    kind: "soul-id",
+    initialConfig: {
+      assetId: asset.id,
+      // Denormalize the character reference so the node keeps working as
+      // a standalone if the asset is later removed from the library — same
+      // pattern as the image node carries `url` alongside `assetId`.
+      customReferenceId: asset.customReferenceId,
+      variant: asset.variant,
+      name: asset.name,
+      thumbnailUrl: asset.thumbnailUrl,
+    },
+  }),
 };
 
 export function assetToNode(asset: Asset): AssetToNodeResult {

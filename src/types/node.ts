@@ -16,9 +16,16 @@ import type { ComponentType } from "react";
 
 /**
  * The set of datatypes that can flow through edges. `any` accepts everything;
- * `image`/`video` carry asset refs (URL + minimal metadata).
+ * `image`/`video` carry asset refs (URL + minimal metadata); `soul-id`
+ * carries a Higgsfield Soul ID character reference (Slice 4 / ADR-0029).
  */
-export type DataType = "text" | "image" | "video" | "number" | "any";
+export type DataType =
+  | "text"
+  | "image"
+  | "video"
+  | "number"
+  | "soul-id"
+  | "any";
 
 export interface ImageRef {
   url: string;
@@ -36,6 +43,22 @@ export interface VideoRef {
 }
 
 /**
+ * Higgsfield Soul ID character reference. The `customReferenceId` is the
+ * UUID Higgsfield assigns each trained character; `variant` ("v1" / "v2" /
+ * "cinema") is what the character was trained as and dictates which
+ * generation endpoint can use it (per ADR-0029).
+ *
+ * Carries an optional `name` + `thumbnailUrl` for UI presentation; consumers
+ * (`HiggsfieldImageGen.execute()`) only need the id + variant.
+ */
+export interface SoulIdRef {
+  customReferenceId: string;
+  variant: "v1" | "v2" | "cinema";
+  name?: string;
+  thumbnailUrl?: string;
+}
+
+/**
  * StandardizedOutput is the *only* shape that nodes emit. The engine and the
  * `extractInputByType` util both rely on this discriminated union.
  *
@@ -45,7 +68,8 @@ export type StandardizedOutput =
   | { type: "text"; value: string }
   | { type: "image"; value: ImageRef }
   | { type: "video"; value: VideoRef }
-  | { type: "number"; value: number };
+  | { type: "number"; value: number }
+  | { type: "soul-id"; value: SoulIdRef };
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Schema                                                                     */
