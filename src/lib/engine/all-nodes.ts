@@ -1,3 +1,4 @@
+import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
@@ -27,6 +28,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(imageNodeSchema);
   nodeRegistry.register(llmTextNodeSchema);
   nodeRegistry.register(soulIdNodeSchema);
+  nodeRegistry.register(higgsfieldImageGenNodeSchema);
   registered = true;
 }
 
