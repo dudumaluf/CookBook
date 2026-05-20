@@ -46,16 +46,32 @@ vi.mock("@/lib/llm/call-openrouter", async () => {
   };
 });
 
+vi.mock("@/lib/library/upload-asset", () => ({
+  uploadImageAsset: vi.fn(),
+  uploadImageFromUrl: vi.fn(),
+  deleteAssetObject: vi.fn().mockResolvedValue(undefined),
+}));
+
 const higgs = await import("@/lib/higgsfield/call-higgsfield-image");
 const callMock = vi.mocked(higgs.callHiggsfieldImage);
 const llm = await import("@/lib/llm/call-openrouter");
 const llmMock = vi.mocked(llm.callOpenRouter);
+const upload = await import("@/lib/library/upload-asset");
+const uploadFromUrlMock = vi.mocked(upload.uploadImageFromUrl);
 
 beforeEach(() => {
   useWorkflowStore.getState().clear();
   useAssetStore.getState().clear();
   callMock.mockReset();
   llmMock.mockReset();
+  uploadFromUrlMock.mockReset();
+  uploadFromUrlMock.mockImplementation(async (url) => ({
+    bucket: "cookbook-assets",
+    key: `images/x/${url.split("/").pop() ?? "result.png"}`,
+    url: `https://cdn.supabase.test/cookbook-assets/images/x/result.png`,
+    mime: "image/png",
+    sizeBytes: 1234,
+  }));
 });
 
 afterEach(() => {
@@ -423,5 +439,231 @@ describe("workflow introspection for an LLM", () => {
     expect(edges).toHaveLength(1);
     expect(edges[0]?.source).toBe(a);
     expect(edges[0]?.target).toBe(b);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────── */
+/* Recipe 4 — full Soul Image Burst close-the-loop with Export           */
+/* ────────────────────────────────────────────────────────────────────── */
+
+describe("LLM-callable recipe path — full burst with Export saves to Library", () => {
+  it("Text + SoulID + HiggsfieldImageGen(batch=4) + Export → 4 ImageAssets in the Library", async () => {
+    callMock.mockResolvedValueOnce({
+      imageUrls: [
+        "https://cdn.example/burst-final-1.png",
+        "https://cdn.example/burst-final-2.png",
+        "https://cdn.example/burst-final-3.png",
+        "https://cdn.example/burst-final-4.png",
+      ],
+      requestId: "req-final",
+      model: "higgsfield-ai/soul/v2/standard",
+    });
+
+    const soulAssetId = useAssetStore.getState().importSoulIdAsset({
+      customReferenceId: "b66a1caa-612f-440d-8353-debceb00aae6",
+      variant: "v2",
+      name: "Test Soul",
+      thumbnailUrl: null,
+    });
+
+    // Library starts with 1 asset (the Soul ID we just imported).
+    expect(useAssetStore.getState().assets).toHaveLength(1);
+
+    const store = useWorkflowStore.getState();
+    const promptId = store.addNode(
+      "text",
+      { x: 0, y: 0 },
+      { text: "editorial portrait, soft window light" },
+    );
+    const soulId = store.addNode(
+      "soul-id",
+      { x: 0, y: 200 },
+      { assetId: soulAssetId },
+    );
+    const genId = store.addNode("higgsfield-image-gen", { x: 300, y: 100 }, {
+      batchSize: 4,
+      aspectRatio: "1:1",
+      resolution: "720p",
+    });
+    const exportId = store.addNode(
+      "export",
+      { x: 600, y: 100 },
+      { namePrefix: "Burst" },
+    );
+    store.addEdge({
+      source: promptId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "prompt",
+    });
+    store.addEdge({
+      source: soulId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "soulId",
+    });
+    store.addEdge({
+      source: genId,
+      sourceHandle: "out",
+      target: exportId,
+      targetHandle: "in",
+    });
+
+    const { result, records } = await runFromStore();
+    expect(result.ok).toBe(true);
+
+    // Higgsfield was called once with batchSize: 4.
+    expect(callMock).toHaveBeenCalledTimes(1);
+    expect(callMock.mock.calls[0]![0].batchSize).toBe(4);
+
+    // Each generated URL was downloaded + re-uploaded once.
+    expect(uploadFromUrlMock).toHaveBeenCalledTimes(4);
+    expect(uploadFromUrlMock.mock.calls.map((c) => c[0]).sort()).toEqual([
+      "https://cdn.example/burst-final-1.png",
+      "https://cdn.example/burst-final-2.png",
+      "https://cdn.example/burst-final-3.png",
+      "https://cdn.example/burst-final-4.png",
+    ]);
+
+    // Library now has 5 assets: 1 SoulID + 4 fresh images named Burst 1..4.
+    const assets = useAssetStore.getState().assets;
+    expect(assets).toHaveLength(5);
+    const exported = assets.filter((a) => a.kind === "image");
+    expect(exported.map((a) => a.name).sort()).toEqual([
+      "Burst 1",
+      "Burst 2",
+      "Burst 3",
+      "Burst 4",
+    ]);
+    for (const asset of exported) {
+      if (asset.kind === "image") {
+        expect(asset.source.type).toBe("remote");
+      }
+    }
+
+    // Export node's record itself shows done with no output (it's a sink).
+    expect(records.get(exportId)?.status).toBe("done");
+  });
+
+  it("ImageIterator + 3 refs + HiggsfieldImageGen + Export → 3 fan-out generations, 3 ImageAssets exported", async () => {
+    // Each fan-out invocation returns 1 image (batchSize: 1).
+    callMock.mockImplementation(async (args) => ({
+      imageUrls: [
+        `https://cdn.example/fanout-${args.referenceUrl?.slice(-5) ?? "no-ref"}.png`,
+      ],
+      requestId: `req-fanout-${args.referenceUrl?.slice(-5) ?? "x"}`,
+      model: "higgsfield-ai/soul/v2/standard",
+    }));
+
+    const soulAssetId = useAssetStore.getState().importSoulIdAsset({
+      customReferenceId: "b66a1caa-612f-440d-8353-debceb00aae6",
+      variant: "v2",
+      name: "Test Soul",
+      thumbnailUrl: null,
+    });
+    const ref1 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/aaa11.jpg" });
+    const ref2 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/bbb22.jpg" });
+    const ref3 = useAssetStore
+      .getState()
+      .createImageAssetFromUrl({ url: "https://example.com/ccc33.jpg" });
+
+    const store = useWorkflowStore.getState();
+    const promptId = store.addNode(
+      "text",
+      { x: 0, y: 0 },
+      { text: "editorial portrait" },
+    );
+    const soulId = store.addNode(
+      "soul-id",
+      { x: 0, y: 200 },
+      { assetId: soulAssetId },
+    );
+    const i1 = store.addNode("image", { x: 0, y: 400 }, {
+      assetId: ref1,
+      url: "https://example.com/aaa11.jpg",
+    });
+    const i2 = store.addNode("image", { x: 0, y: 500 }, {
+      assetId: ref2,
+      url: "https://example.com/bbb22.jpg",
+    });
+    const i3 = store.addNode("image", { x: 0, y: 600 }, {
+      assetId: ref3,
+      url: "https://example.com/ccc33.jpg",
+    });
+    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {});
+    const genId = store.addNode("higgsfield-image-gen", { x: 400, y: 100 }, {});
+    const exportId = store.addNode(
+      "export",
+      { x: 700, y: 100 },
+      { namePrefix: "Variant" },
+    );
+
+    store.addEdge({
+      source: promptId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "prompt",
+    });
+    store.addEdge({
+      source: soulId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "soulId",
+    });
+    store.addEdge({
+      source: i1,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: i2,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: i3,
+      sourceHandle: "out",
+      target: iterId,
+      targetHandle: "images",
+    });
+    store.addEdge({
+      source: iterId,
+      sourceHandle: "out",
+      target: genId,
+      targetHandle: "image",
+    });
+    store.addEdge({
+      source: genId,
+      sourceHandle: "out",
+      target: exportId,
+      targetHandle: "in",
+    });
+
+    const { result, records } = await runFromStore();
+    expect(result.ok).toBe(true);
+
+    // Fan-out: 3 separate generator invocations.
+    expect(callMock).toHaveBeenCalledTimes(3);
+    // Then 3 uploads to Library.
+    expect(uploadFromUrlMock).toHaveBeenCalledTimes(3);
+
+    // Library: 1 SoulID + 3 image refs + 3 exported = 7 total.
+    const assets = useAssetStore.getState().assets;
+    expect(assets).toHaveLength(7);
+    const exported = assets
+      .filter((a) => a.kind === "image" && a.name.startsWith("Variant"))
+      .map((a) => a.name)
+      .sort();
+    expect(exported).toEqual(["Variant 1", "Variant 2", "Variant 3"]);
+
+    // Generator's record shows fan-out 3/3.
+    expect(records.get(genId)?.fanOut).toEqual({ total: 3, done: 3 });
+    expect(records.get(exportId)?.status).toBe("done");
   });
 });

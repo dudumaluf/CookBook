@@ -290,6 +290,15 @@ interface StatusResponse {
  *
  * For variant === "none" (no Soul ID wired) we route to v2/standard for
  * the best quality generic render.
+ *
+ * Note on reference images: /soul/v2/standard accepts `image_url` in the
+ * body but the visible influence on the output is subtle (the model
+ * leans on the prompt much more than the ref). If a stronger ref-driven
+ * style transfer is needed, the recipe-level pattern is to feed the ref
+ * through an LLM Vision node first (Image → LLM Text with vision
+ * system prompt → text → HiggsfieldImageGen.prompt). M0d's "save recipe
+ * as reusable node" feature will let users package that subgraph as a
+ * single "Image Describer" node.
  */
 const SOUL_ENDPOINT_BY_VARIANT: Record<
   HiggsfieldImageRequest["variant"],

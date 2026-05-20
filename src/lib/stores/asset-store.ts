@@ -65,6 +65,23 @@ export interface AssetState {
   }) => string;
 
   /**
+   * Commit an already-uploaded image (e.g. from the Export node, which has
+   * just downloaded a Higgsfield result and re-uploaded the bytes to our
+   * own bucket) as a `remote`-source asset. Skips the File → upload step
+   * entirely — the caller already has the descriptor.
+   */
+  createImageAssetFromUploaded: (params: {
+    bucket: string;
+    key: string;
+    url: string;
+    mime: string;
+    sizeBytes: number;
+    name: string;
+    tags?: string[];
+    scope?: AssetScope;
+  }) => string;
+
+  /**
    * Import a Higgsfield Soul ID character into the library. Stores only the
    * character reference (UUID + variant + cover thumbnail); the bytes never
    * touch our storage — Higgsfield owns the trained model. ADR-0029.
@@ -162,6 +179,30 @@ export const useAssetStore = create<AssetState>()(
           tags: params.tags ?? [],
           scope: params.scope ?? "project",
           source: { type: "url", url },
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((state) => ({ assets: [...state.assets, asset] }));
+        return id;
+      },
+
+      createImageAssetFromUploaded: (params) => {
+        const id = makeAssetId();
+        const now = Date.now();
+        const asset: ImageAsset = {
+          id,
+          kind: "image",
+          name: params.name.trim() || "Untitled",
+          tags: params.tags ?? [],
+          scope: params.scope ?? "project",
+          source: {
+            type: "remote",
+            bucket: params.bucket,
+            key: params.key,
+            url: params.url,
+            mime: params.mime,
+            sizeBytes: params.sizeBytes,
+          },
           createdAt: now,
           updatedAt: now,
         };

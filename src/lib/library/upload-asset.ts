@@ -91,6 +91,46 @@ export async function uploadImageAsset(
 }
 
 /**
+ * Download a remote image URL into our own bucket (Slice 4.5 — Export node).
+ *
+ * Used when the user wants to "save" generated images: the gen node
+ * returned a CloudFront URL hosted by the upstream provider (Higgsfield,
+ * Fal, etc.); to keep the asset durable and unblock future projects /
+ * recipes, we re-host it under our own bucket. Returns the same descriptor
+ * shape as `uploadImageAsset` so the asset-store can persist it as a
+ * `remote`-source asset.
+ *
+ * Filename derivation: the last path segment of the URL, sanitised,
+ * with a `.png` fallback when the URL has no extension.
+ */
+export async function uploadImageFromUrl(
+  url: string,
+  filenameHint?: string,
+): Promise<UploadedImageDescriptor> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch ${url}: HTTP ${res.status}`,
+    );
+  }
+  const blob = await res.blob();
+  const mime = blob.type || res.headers.get("content-type") || "image/png";
+
+  // Pull a filename hint out of the URL path tail; fall back to a generic.
+  const fallback =
+    filenameHint ||
+    url.split("?")[0]!.split("/").pop() ||
+    "generated.png";
+  const ensureExt = /\.(png|jpe?g|webp|gif|avif)$/i.test(fallback)
+    ? fallback
+    : `${fallback}.png`;
+
+  // Wrap in a File so we can reuse `uploadImageAsset`'s exact upload shape.
+  const file = new File([blob], ensureExt, { type: mime });
+  return uploadImageAsset(file);
+}
+
+/**
  * Delete an object from the assets bucket. Idempotent enough — Supabase
  * returns success even if the key didn't exist, which is what we want for
  * `removeAsset` (the user doesn't care if cleanup raced something).

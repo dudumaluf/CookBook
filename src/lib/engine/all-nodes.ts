@@ -1,3 +1,4 @@
+import { exportNodeSchema } from "@/components/nodes/node-export";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
@@ -31,6 +32,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(soulIdNodeSchema);
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
+  nodeRegistry.register(exportNodeSchema);
   registered = true;
 }
 
