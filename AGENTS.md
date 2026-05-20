@@ -15,15 +15,15 @@ This file is the **single starting point** for any new agent / chat session. If 
 ## Where we are right now
 
 - **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
-- **Last shipped slice**: Slice 3 (run engine + LLM Text + Queue panel + settings popover) plus two amendments — **ADR-0027** (standardised `⋯` settings affordance on BaseNode) and **ADR-0028** (node sizing contract: schema-declared min/max + per-instance drag-resize). Snapshot: [`docs/STATE-AFTER-M0a-slice3.md`](./docs/STATE-AFTER-M0a-slice3.md). Tests green at 290 / 290.
-- **Next up**: **Slice 4 — Higgsfield + Soul ID + complete Soul Image Burst recipe**. Adds `SoulID`, `HiggsfieldImageGen`, `ImageIterator`, `ArraySplit`, and `Export` nodes; assembles the composite "N variations of you in chosen settings" recipe end-to-end. See ROADMAP for the sub-slice plan.
+- **Last shipped slice**: **Slice 4 — Higgsfield + Soul ID + complete Soul Image Burst recipe** (sub-slices 4.1 → 4.5) + two new ADRs: **ADR-0029** (Higgsfield Cloud API route shape + `soul-id` `StandardizedOutput` variant + endpoint dispatch by Soul variant) and **ADR-0030** (engine fan-out — supersedes the strict-serial portion of ADR-0019). Snapshot: [`docs/STATE-AFTER-M0a-slice4.md`](./docs/STATE-AFTER-M0a-slice4.md). Tests green at 409 / 409.
+- **Next up**: **Slice 5 — Properties popover + queue thumbnails + save/load**. Node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets (the Asset repository abstraction lands here, swapping storage without touching `asset-store`'s public API). Per-recipe `maxConcurrent` config also fits this slice.
 
 ## Read these first (in order; ~10 min total)
 
 1. [`docs/VISION.md`](./docs/VISION.md) — *what we're building and why*. Tone, audience, what's in scope, what's explicitly out.
-2. [`docs/STATE-AFTER-M0a-slice3.md`](./docs/STATE-AFTER-M0a-slice3.md) — **exact current state**: which nodes ship, which stores exist, where files live, what the open questions are. Always read the latest `STATE-AFTER-*` snapshot first; everything else is reference.
+2. [`docs/STATE-AFTER-M0a-slice4.md`](./docs/STATE-AFTER-M0a-slice4.md) — **exact current state**: which nodes ship, which stores exist, where files live, what the open questions are. Always read the latest `STATE-AFTER-*` snapshot first; everything else is reference.
 3. [`docs/ROADMAP.md`](./docs/ROADMAP.md) — sliced plan with crisp acceptance criteria. Find the next slice + its expected scope here.
-4. [`docs/DECISIONS.md`](./docs/DECISIONS.md) — every architectural choice as an ADR (~28 entries, ADR-0001 → ADR-0028 at time of writing). New choices land here as new ADRs; existing ones explain *why* things are the way they are. Skim it once, search it when stuck.
+4. [`docs/DECISIONS.md`](./docs/DECISIONS.md) — every architectural choice as an ADR (~30 entries, ADR-0001 → ADR-0030 at time of writing). New choices land here as new ADRs; existing ones explain *why* things are the way they are. Skim it once, search it when stuck.
 5. [`docs/CONVENTIONS.md`](./docs/CONVENTIONS.md) — coding standards, naming, folder structure, error handling. Re-read before touching cross-cutting code.
 6. [`docs/TESTING.md`](./docs/TESTING.md) — what we test, with which tools, at which rhythm.
 7. [`docs/GLOSSARY.md`](./docs/GLOSSARY.md) — every project-specific term (node chrome, settings slot, size slot, NodeBodyResizeHandle, etc.). Search before inventing a new name.
@@ -36,7 +36,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ```bash
 npm install              # once
 npm run dev              # Next 16 + Turbopack on :3000
-npm test                 # Vitest, all 290 tests, ~5 s
+npm test                 # Vitest, all 409 tests, ~5 s
 npm run test:watch       # while iterating
 npx tsc --noEmit         # type check (no `npm run` wrapper for this one)
 npm run lint             # ESLint
@@ -49,11 +49,15 @@ Before considering any task "done": **all four** of `npm test`, `npm run lint`, 
 ## Environment
 
 ```
-HIGGSFIELD_API_KEY=...   # not yet wired — lands in Slice 4
-FAL_KEY=...              # required for any LLM call (text + vision)
+HIGGSFIELD_API_KEY=...      # required for HiggsfieldImageGen (Slice 4)
+HIGGSFIELD_API_SECRET=...   # paired with the above; auth is Authorization: Key KEY:SECRET
+FAL_KEY=...                 # required for any LLM call (text + vision)
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+NEXT_PUBLIC_SUPABASE_ASSETS_BUCKET=cookbook-assets
 ```
 
-All LLM calls route through Fal OpenRouter (no separate Anthropic / OpenAI keys); see ADR-0002 + ADR-0024.
+All LLM calls route through Fal OpenRouter (no separate Anthropic / OpenAI keys); see ADR-0002 + ADR-0024. Higgsfield goes direct to its Cloud API (ADR-0029); see `src/lib/higgsfield/`.
 
 ## Non-negotiables (the maintenance contract)
 
@@ -79,14 +83,14 @@ Other rules:
 
 ## Next task (starting fresh)
 
-Open [`docs/STATE-AFTER-M0a-slice3.md`](./docs/STATE-AFTER-M0a-slice3.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 4 — Higgsfield + Soul ID + complete recipe**". Suggested first actions:
+Open [`docs/STATE-AFTER-M0a-slice4.md`](./docs/STATE-AFTER-M0a-slice4.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5 — Properties popover + queue thumbnails + save/load**". Suggested first actions:
 
-1. Plan sub-slices for Slice 4 the same way Slice 3 was sliced (3.1 → 3.4): each sub-slice ships independently testable value (`SoulID`, `HiggsfieldImageGen`, `ImageIterator`, `ArraySplit`, `Export`) before assembling the composite Soul Image Burst recipe.
-2. Confirm `HIGGSFIELD_API_KEY` in `.env.local`; mirror the Fal `POST /api/fal/openrouter` server-route pattern (ADR-0024) for the Higgsfield endpoint.
-3. Before writing code, check `docs/PRISM-REUSE-LOG.md` — earlier Prism work on Higgsfield / Soul ID may be liftable with light adaptation.
-4. Mirror the existing node test rhythm: `tests/component/nodes/node-<kind>.test.tsx` per node, `tests/unit/llm/*` for any new server route, `tests/unit/stores/*` for any new store action.
+1. Plan sub-slices for Slice 5 the same way Slice 3 / Slice 4 were sliced: each sub-slice ships independently testable value (Properties popover; queue thumbnails; SQLite swap behind the existing Repository abstraction; per-recipe `maxConcurrent` config).
+2. Read [ADR-0005](./docs/DECISIONS.md) (local-first, cloud-ready architecture) — Slice 5 finally cashes the cheque it wrote: SQLite (Drizzle) + the filesystem-blob layer slot in behind the existing `useWorkflowStore` / `useAssetStore` interfaces. **Public API stays stable; the backing storage changes.**
+3. Decide which surface lands first: queue thumbnails (visual win, glues Slice 4's Export pipeline directly into the queue panel preview) or persistence (unblocks recipe-save which is M0d, but plumbing-heavy).
+4. Mirror the existing node + integration test rhythm: `tests/component/...` per UI surface, `tests/integration/...` per recipe-shaped flow, `scripts/smoke-*.ts` for any persistence migration sanity check.
 
-Confirm with the user before kicking off Slice 4 if any of the above is ambiguous (especially: Higgsfield endpoint shape, Soul ID node config, and how the assistant's "give me 8 variations" prompt should expand into the graph — the latter is tied to Slice 6 and may stay manual in Slice 4).
+Confirm with the user before kicking off Slice 5 if any of the above is ambiguous (especially: do queue thumbnails land before or after the SQLite swap, and where the Properties popover anchors in relation to the existing settings popover).
 
 ## File layout cheat-sheet
 

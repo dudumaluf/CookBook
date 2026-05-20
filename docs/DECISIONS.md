@@ -702,3 +702,99 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **`NodeResizeControl` renders a 16 × 16 hit area in the corner** even though the visual mark is 10 × 10. We accept the slightly oversized invisible hit zone in exchange for forgiving drag-acquisition — making it smaller meant users with imprecise pointers (laptop trackpads, drawing tablets) had to bullseye a 10 px target.
   - **Per-instance size is per-canvas-card, not per-recipe-template** — duplicating a node loses the resize. Acceptable for M0a (no "duplicate node" command yet); when duplication lands (M0a Slice 5 or later), the duplicator can choose whether to carry the size or reset.
   - **Resizable nodes interact with React Flow's `nodesDraggable: true`** — the resize handle has to be `pointer-events-auto` to receive the drag; the inner visual is `pointer-events-none` so it doesn't intercept clicks meant for the card. Verified working in the browser smoke test; locked in by the new BaseNode test for the data-testid.
+
+## ADR-0029 — Higgsfield Cloud API route shape, `soul-id` datatype, and endpoint dispatch by variant (M0a Slice 4)
+
+- **Date**: 2026-05-20
+- **Context**: Slice 4 wires Higgsfield as the second remote inference provider after Fal (Slice 3.2). Three intertwined decisions had to land at once: (1) the server-route shape mirrors of ADR-0024 vs something different (e.g. routing through Fal); (2) how Soul ID character references flow through the graph as a typed datatype; (3) which Higgsfield endpoint to call for which combination of (Soul-variant, mode). Each is small in isolation but together they're the spine of the whole "Soul Image Burst" recipe.
+- **Options considered for vendor routing**:
+  - **(a) Route Higgsfield through Fal OpenRouter.** Fal already proxies many image-gen models; if Higgsfield were on its catalog we'd reuse the existing Slice 3.2 plumbing for free. Rejected — Fal does not host Higgsfield (verified at fal.ai/models and via the Higgsfield docs). ADR-0002's "single-vendor LLM routing via Fal" was always scoped to LLMs only; image / video providers go direct.
+  - **(b) Direct-to-Higgsfield via the Cloud API**, server-side, mirroring the ADR-0024 secret-boundary pattern exactly. Picked. Same shape as the Fal route (server-only wrapper + API route + client wrapper + Zod schema), so reviewers / future maintainers / the Slice 6 assistant don't have to learn a second pattern.
+- **Options considered for the `soul-id` datatype**:
+  - **(a) Stuff a UUID into a `text` `StandardizedOutput`** and parse it where it's read. Hack; loses type safety; an LLM Text node could accidentally feed a Soul ID into a prompt input and the user would only notice when the render came back generic.
+  - **(b) Use `dataType: "any"`** on the Soul ID handle. Engine would accept it but every consumer would have to runtime-narrow.
+  - **(c) Extend `StandardizedOutput` with a typed `{ type: "soul-id", value: SoulIdRef }` variant.** Picked. Additive (no existing node breaks), keeps `extractInputByType("soul-id")` honest, and makes the SoulID → HiggsfieldImageGen edge legible to both the engine and an LLM-assistant caller.
+- **Options considered for endpoint dispatch**:
+  - **(a) Always hit `/higgsfield-ai/soul/v2/standard`** and pass every field. Looked tempting until empirical probes (`scripts/probe-all-soul-endpoints.ts`) showed Higgsfield silently drops `custom_reference_id` when the variant doesn't match the endpoint, and `image_url` is treated as a soft hint regardless. Rejected — silent failures are the worst kind.
+  - **(b) Dispatch by Soul variant.** Picked. The wrapper picks the URL from `args.variant`:
+    ```
+    v2     → /higgsfield-ai/soul/v2/standard
+    cinema → /higgsfield-ai/soul/cinema
+    v1     → /higgsfield-ai/soul/character
+    none   → /higgsfield-ai/soul/v2/standard (best-quality generic render)
+    ```
+    The variant comes from the wired `SoulIdRef.variant` (or `"none"` when no Soul ID is wired) and is sent on the request schema explicitly. The HiggsfieldImageGen node `execute()` reads it from the upstream and passes it through; no UI-side model picker needed because the variant is a property of the trained character, not a user choice.
+- **Options considered for the route's error vocabulary**:
+  - **(a) Map every error to `unknown`** and let the user read the message. Loses the whole reason ADR-0024's structured-codes design exists.
+  - **(b) Mirror Fal's discriminator + add Higgsfield-specific codes.** Picked. Codes in `HiggsfieldErrorCode`:
+    - `invalid_request` (400) — Zod / superRefine failure.
+    - `missing_keys` (500) — env vars absent.
+    - `concurrent_limit` (429) — Higgsfield's per-keypair "Maximum number of concurrent requests (4) has been reached" — detected by string-matching the `detail` field. **Empirically discovered**: this is **not** rate-limit-per-second, it's a hard cap on concurrent in-flight requests. Cancellation-on-timeout in the wrapper is what releases slots.
+    - `nsfw` (502) — soft-fail terminal status, no credits charged.
+    - `upstream_failed` (502) — generation failed for a reason Higgsfield didn't make machine-readable (server overload, invalid character UUID after deletion, etc.).
+    - `upstream_error` (502) — non-2xx response from Higgsfield.
+    - `timeout` (502) — poll loop exceeded the budget (default 6 min).
+    - `aborted` (499) — caller cancelled.
+- **Decision** (the four-file shape that landed, mirroring ADR-0024):
+  - **`src/lib/higgsfield/types.ts`** — Zod `higgsfieldImageRequestSchema` + `HiggsfieldSoulIdSummary` + `HiggsfieldImageSuccessResponse` + `HiggsfieldErrorResponse`. The schema's `superRefine` enforces cross-field rules (`mode === "reference"` requires `referenceUrl`; `mode === "style"` requires `styleId`; mode and field must agree).
+  - **`src/lib/higgsfield/higgsfield-api.ts`** — server-only (`import "server-only"`), lazy-config, async submit + 3-s poll loop until terminal status, cancellation via signal-aware `setTimeout` (so abort-during-wait rejects ASAP). `SOUL_ENDPOINT_BY_VARIANT` is the dispatch table; cinema endpoint drops `style_id` belt-and-suspenders. List-Soul-IDs walks pages and per-character backfills `thumbnail_url` from `reference_media[0].media_url` because the list endpoint never populates it (verified May 2026).
+  - **`src/app/api/higgsfield/image/route.ts`** + **`src/app/api/higgsfield/soul-ids/route.ts`** — POST and GET handlers respectively. `nodejs` runtime, `force-dynamic`. Map errors to HTTP using the `code` discriminator.
+  - **`src/lib/higgsfield/call-higgsfield-image.ts`** — browser fetch wrappers (`callHiggsfieldImage` + `fetchSoulIds`). `HiggsfieldCallError` with the same `code` discriminator + a `"network"` value for fetch-level failures. `499 → AbortError` translation so the engine routes cancelled runs into `cancelled` status.
+- **Auth header — current docs vs Prism's pattern**: the official Higgsfield docs (`cloud.higgsfield.ai/models`, May 2026) prescribe `Authorization: Key {key}:{secret}`. Prism's earlier code used separate `hf-api-key` + `hf-secret` headers; that form still passes auth but routes traffic through a slower / starved queue path that empirically left jobs stuck in `queued` indefinitely on the v2/standard endpoint. The official `Authorization: Key` form is the only one we use.
+- **Reference image — caveat**: `/soul/v2/standard` accepts `image_url` in the body but the visible influence on the output is subtle (the model leans on the prompt much more than the ref). For stronger ref-driven style transfer the recipe-level pattern (parked for M0d when "save recipe as reusable node" lands) is to feed the ref through an LLM Vision node first (`Image → LLMText (vision system prompt) → text → HiggsfieldImageGen.prompt`); that subgraph becomes a single "Image Describer" node once recipe-as-node ships. We deliberately do **not** auto-route reference traffic to a v1 endpoint (`/soul/reference`) because it loses Soul 2 fidelity for marginal ref-transfer gain.
+- **Investigation tooling preserved**: `scripts/probe-*.ts` lives alongside `scripts/smoke-*.ts`. The probes reverse-engineered the dispatch table via submit-then-cancel (cancellation refunds credits), and are kept versioned so the next time the API drifts the same tools work. `scripts/smoke-recipe.ts` proves the end-to-end LLM-callable recipe path lands a real image from a fresh Soul ID (~43 s for one 720p render against the real account).
+- **Trade-offs accepted**:
+  - **Endpoint table is empirical, not documented**. Higgsfield's public docs only mention `/soul/v2/standard`; the variant-specific endpoints we mapped via probes. Risk: Higgsfield could silently break our dispatch by removing endpoints. Mitigation: probes are version-controlled, error codes are structured, and the upstream-error message bubbles up to the user via the inline alert pill if anything regresses.
+  - **`thumbnail_url` always-null** means we issue N+1 GETs per `listSoulIds` call to backfill from `reference_media`. Acceptable until users have ≥10 trained Soul IDs; trivial to convert to bounded-concurrent later.
+  - **Per-character GET to backfill thumbnails happens on every popover open**, not cached. Acceptable: a Soul ID list is small, the per-character payload is small, and a cache adds invalidation complexity for a milliseconds-of-savings win. Revisit if the popover ever feels slow.
+  - **`StandardizedOutput` grew a new variant**, which is technically a breaking change to anyone pattern-matching exhaustively. Mitigated by: (a) every existing node ignores types it doesn't accept (no exhaustive matches); (b) the union extension is additive, so legacy callers that just check `value.type === "image"` still work.
+  - **Workflow-store + asset-store both bumped versions** to sanitise persisted payloads (`asset-store v3 → v4`, `workflow-store v6 → v7`). Forward-portable: same migrate funnel, both idempotent.
+
+## ADR-0030 — Engine fan-out: iterator nodes drive bounded-parallel execution (supersedes the strict-serial portion of ADR-0019)
+
+- **Date**: 2026-05-20
+- **Context**: ADR-0019 (Slice 3.1) shipped the run engine as **strict-topological + serial**: one node at a time, no parallelism. That was correct for the LLM Text recipe (single executable per run) but became wrong the moment Slice 4's "Soul Image Burst" recipe asked for *N variations against N reference images*. With strict-serial the user has to click Run N times and collect outputs by hand — a 32-image batch (8 references × batch-of-4) takes 32 clicks. Higgsfield itself accepts 4 concurrent requests per keypair (the cap that surfaces as `concurrent_limit`), so the engine leaves performance on the table for no reason. ADR-0019's serial-only branch needed to grow a fan-out exception.
+- **What we needed**:
+  1. A way for an "iterator" node to declare: *"my output array is meant to be consumed item-by-item, not as the array itself"* — so a downstream single-input handle runs N times instead of taking just `[0]`.
+  2. Parallelism bounded by a per-run `maxConcurrent` (default 4 = Higgsfield's keypair cap) so the engine never races itself into 429s.
+  3. UI-visible progress: "running 3/8" without each chip having to subscribe to a separate timer.
+  4. Cache transparency: a re-run with unchanged inputs should hit the cache **once** (the aggregated output), not N times (per-item cache fragmentation that complicates eviction and hash collisions).
+  5. Failure semantics: any per-item failure errors the whole node; the runner doesn't try to half-finish an iteration.
+  6. Abort semantics: an in-flight fan-out cancels every worker on signal.
+- **Options considered for the trigger**:
+  - **(a) Auto-detect by output shape** — any time an array lands on a single-input handle, fan out. Rejected — too magical. A node that legitimately wants to pass the array as a single value (e.g. an "image grid" downstream that takes an array as one logical unit) would behave incorrectly without any opt-out mechanism. Silent semantics changes are hard to debug.
+  - **(b) Schema-level opt-in: `iterator: true` on the upstream node.** Picked. The node author *declares intent*: "my output array is for fan-out". The engine reads the flag at dispatch time and branches. ImageIterator declares it; HiggsfieldImageGen does not (its array output represents a batch of 4 sibling images, not 4 fan-out items).
+- **Options considered for parallelism boundary**:
+  - **(a) Whole-graph scheduler with a worker pool**, like ADR-0006 originally hinted at. Maximum throughput; massive complexity (back-pressure, partial-failure semantics, concurrent progress emissions, cache-during-run race). Rejected — overkill for the M0a recipes; revisit when Slice 5+ ships persistent caching and longer-running recipes.
+  - **(b) Per-fan-out worker pool**, all other nodes still serial. Picked. The serial path of ADR-0019 stays intact for non-iterator graphs (so all 290 prior tests still pass without changes); only the fan-out branch spawns N workers. Bounded by `maxConcurrent` (default 4, configurable via `RunWorkflowOptions.maxConcurrent`).
+- **Options considered for failure semantics**:
+  - **(a) Best-effort: continue on per-item failure, return partial outputs.** Tempting for "8 variations and one NSFW'd, save the other 7" but breaks the cache contract — what hash do we cache for the partial output? Rejected; can revisit as a per-recipe flag.
+  - **(b) First failure wins: other workers bail, downstream cancelled.** Picked. Mirrors ADR-0019's serial-error semantics one level deeper. The error message names the failed item's index so the user can spot which one tripped.
+- **Decision** (the engine + types changes):
+  - **`NodeSchema.iterator?: boolean`** in `src/types/node.ts`. Marks a node whose `StandardizedOutput[]` return is meant to fan out to single-input downstream nodes. Default `false`; only ImageIterator declares `true` in Slice 4.
+  - **`ExecutionRecord.fanOut?: { total, done }`** in `src/types/node.ts`. Surfaces the fan-out progress on the running record so the StatusChip / Queue panel can show "3/8 done" without extra subscribe plumbing. Absent when the node isn't a fan-out target.
+  - **`runWorkflow` engine refactor** in `src/lib/engine/run-workflow.ts`:
+    - Per-node input collection now ALSO detects fan-out: when the only upstream feeding a single-input handle is an iterator-flagged node whose output is an array, the runner branches into a parallel-bounded worker pool.
+    - Worker pool uses a simple `nextIndex++` claim loop with N workers (`maxConcurrent`). Each worker runs `execute()` with the per-item input substituted on the fan-out handle.
+    - First failure wins (other workers bail); abort cancels everyone via the shared signal. Items already in-flight get the abort via the per-`execute()` `signal`.
+    - Outputs from per-item executions concatenate into a single flat array (each per-item result may itself be a single output or an array — both shapes flatten).
+    - **Cache key unchanged** (same `computeNodeHash` recipe). Fan-out caches the aggregated output by the same content hash, so a re-run of an unchanged graph hits the cache in one go. No per-item cache fragmentation.
+    - The serial path stays untouched for non-iterator upstreams; existing graphs / tests are unaffected.
+  - **`DEFAULT_MAX_CONCURRENT = 4`** constant matching Higgsfield's per-keypair cap. `RunWorkflowOptions.maxConcurrent` is the override (used by tests + future per-recipe configurability).
+- **Why "iterator" rather than "fanout" or "splat" or "broadcast"**:
+  - The user-facing mental model is *"this node iterates over its items"* — not "fans out", which is engine jargon. The schema flag matches the user's name.
+  - In M0a the only iterator is ImageIterator; future iterators (PromptIterator that iterates over LLM-generated prompts, ArraySplit that takes an explicit n in config, etc.) all fit under the same flag.
+- **Why parallel bounded matters now (not later)**:
+  - Without it the Soul Image Burst recipe's "8 variations" UX is broken: 8 × 60 s serial = 8 min of single-track waiting. With `maxConcurrent: 4` the same 8 variations finish in ~120 s (two waves of 4). Users care about wall-clock time more than CPU efficiency.
+  - 429-on-429 is real: empirically a fresh fan-out without bounds hits Higgsfield's `concurrent_limit` after the 5th request and the entire run fails.
+- **What this does NOT change**:
+  - ADR-0019's strict-serial guarantees apply *only when no upstream is iterator-flagged*. Every existing graph in the wild today has zero iterator-flagged nodes, so behaviour is identical for them.
+  - Cache key recipe (`fnv1a_64(stableStringify({ kind, config, deps }))`) — unchanged.
+  - Runner contract (`onProgress` semantics, `runId` guard, AbortSignal honoured) — unchanged. Fan-out emits more `running` records (one per progress bump) but every emit still goes through the same channel.
+  - Single-execution path for non-fan-out nodes — bit-identical to ADR-0019 (TS types may have changed but the behaviour didn't).
+- **Trade-offs accepted**:
+  - **No per-item cache** — a fan-out re-run with one item changed re-executes the *whole* fan-out. Mitigated by the fact that fan-out items today come from upstream Image nodes (whose hashes are stable), so in practice the whole-fan-out hash only changes when the iterator's input set changes. Per-item caching is a Slice 5+ concern when persistence lands.
+  - **Progress emit can be chatty** — 8-item fan-out emits 8+ `running` records per node. Engine keeps `runId` guards and the Queue panel re-renders are cheap (single-digit nodes); revisit if profiling flags it.
+  - **`fanOut.done` counts both successes and failures** so a cascaded-cancel mid-flight may report a non-final number. The terminal record (`done` or `error`) carries the canonical state; `fanOut` is informational.
+  - **Cinema and v1 endpoints have different latency profiles than v2/standard**, so a fan-out spanning multiple variants would have unbalanced workers. Acceptable: today no recipe mixes variants, and `maxConcurrent: 4` keeps the slowest-first pattern bounded.
+  - **`maxConcurrent: 4` is hardcoded as the default.** Higgsfield's cap is 4; Fal can absorb more. We default conservatively because the iterator-fan-out path is image-gen-shaped today; once Slice 5 ships a per-recipe runtime config, this becomes user-tunable.
