@@ -58,19 +58,50 @@ function loadCredentials(): Credentials {
 }
 
 /**
- * Per the official Higgsfield API reference (cloud.higgsfield.ai/models,
- * May 2026): canonical auth header is `Authorization: Key {key}:{secret}`.
+ * Higgsfield's API has TWO coexisting auth schemes — discovered via the
+ * cloud.higgsfield.ai/models reference UI:
  *
- * Prism (May-2026 codebase) uses the older `hf-api-key` + `hf-secret`
- * pair which the platform still accepts on submit but appears to route
- * jobs through a different (slower / starved) queue path — empirically,
- * jobs submitted under that auth get stuck in `queued` indefinitely on
- * the v2/standard endpoint. The official `Authorization: Key` header is
- * the one we use for every request.
+ *   1. Generation endpoints (`/higgsfield-ai/soul/*`,
+ *      `/requests/{id}/status`, `/requests/{id}/cancel`,
+ *      `/v1/custom-references/list`) take a single
+ *      `Authorization: Key KEY:SECRET` header.
+ *
+ *   2. Other `/v1/text2image/*` endpoints (notably
+ *      `/v1/text2image/soul-styles/v2` for listing Soul Style
+ *      presets, used when we ship a style picker UI in a later
+ *      slice) take separate `hf-api-key` + `hf-secret` headers.
+ *
+ * The split is a vestige of an in-progress auth migration on their
+ * side. Pick the right helper for each endpoint.
+ *
+ * Submitting v2/standard generation jobs with the LEGACY header pair
+ * still passes auth at the gateway, but empirically the request
+ * ends up in a queue path that never advances past `queued` — so we
+ * use the canonical scheme for everything generation-related, even
+ * though the docs cohort changes per endpoint.
  */
 function authHeaders(creds: Credentials): Record<string, string> {
   return {
     Authorization: `Key ${creds.key}:${creds.secret}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+/**
+ * Headers for the legacy auth scheme — used by `/v1/text2image/*`
+ * endpoints (Soul Style listings, etc.). Not used yet; will be when
+ * the style picker UI lands. Kept here so the next wrapper that needs
+ * a `/v1/text2image/*` call can `import { authHeadersV1 }` and not
+ * re-discover the auth split.
+ *
+ * eslint-disable-next-line @typescript-eslint/no-unused-vars
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function authHeadersV1(creds: Credentials): Record<string, string> {
+  return {
+    "hf-api-key": creds.key,
+    "hf-secret": creds.secret,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
