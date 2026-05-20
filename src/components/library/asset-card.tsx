@@ -13,7 +13,7 @@ import {
   serializeAssetDrag,
 } from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
-import type { Asset } from "@/types/asset";
+import type { Asset, ImageAsset } from "@/types/asset";
 
 interface AssetCardProps {
   asset: Asset;
@@ -32,6 +32,10 @@ interface AssetCardProps {
  */
 export function AssetCard({ asset }: AssetCardProps) {
   const removeAsset = useAssetStore((s) => s.removeAsset);
+  // `source.url` is canonical for both remote-uploaded and free-URL assets —
+  // no async resolver needed since we ditched the local IndexedDB blob layer.
+  const thumbUrl =
+    asset.kind === "image" ? (asset as ImageAsset).source.url : undefined;
 
   return (
     <div
@@ -46,10 +50,10 @@ export function AssetCard({ asset }: AssetCardProps) {
       className="group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border border-border/60 bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing"
       title={asset.name}
     >
-      {asset.kind === "image" && asset.url ? (
+      {asset.kind === "image" && thumbUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={asset.url}
+          src={thumbUrl}
           alt={asset.name}
           className="aspect-square w-full rounded-md border border-border/40 bg-background/40 object-cover"
           draggable={false}

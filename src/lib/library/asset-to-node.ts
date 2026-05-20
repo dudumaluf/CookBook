@@ -20,7 +20,14 @@ type SpawnFn<TAsset extends Asset> = (asset: TAsset) => AssetToNodeResult;
 const SPAWN: { [K in AssetKind]: SpawnFn<Extract<Asset, { kind: K }>> } = {
   image: (asset) => ({
     kind: "image",
-    initialConfig: { url: asset.url, assetId: asset.id },
+    initialConfig: {
+      assetId: asset.id,
+      // Denormalize the url so the node keeps working as a standalone if
+      // the asset is later deleted. `source.url` is always a real fetchable
+      // URL (cloud upload or paste-a-URL) since we ditched the local-blob
+      // detour — see ADR-0018b.
+      url: asset.source.url,
+    },
   }),
 };
 

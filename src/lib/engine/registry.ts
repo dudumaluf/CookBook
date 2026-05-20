@@ -20,10 +20,22 @@ export class NodeRegistry {
    * without TypeScript balking about TConfig variance. The map stores the
    * type-erased shape — config-specific typing only matters in the owning
    * node module and inside `execute` (where we cast back at the boundary).
+   *
+   * Re-registering the same kind is a silent upsert. This is critical for
+   * Turbopack HMR: when a node module is edited, the new module re-imports
+   * `all-nodes.ts` which calls `register()` again with the freshly-built
+   * schema. We *want* the new schema (so the body changes pick up), and we
+   * don't want to crash the page. In dev, we log so anyone genuinely
+   * duplicating a kind in source notices.
    */
   register<TConfig>(schema: NodeSchema<TConfig>): void {
-    if (this.byKind.has(schema.kind)) {
-      throw new Error(`NodeRegistry: duplicate kind "${schema.kind}"`);
+    if (
+      process.env.NODE_ENV !== "production" &&
+      this.byKind.has(schema.kind)
+    ) {
+      console.debug(
+        `[NodeRegistry] HMR re-registration of kind "${schema.kind}" (replacing prior schema)`,
+      );
     }
     this.byKind.set(schema.kind, schema as NodeSchema);
   }

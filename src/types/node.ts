@@ -109,13 +109,135 @@ export interface NodeSchema<TConfig = unknown> {
    * Execution function. Optional in Slice 1 because Text/Image are reactive
    * and the run engine (Slice 3) is not built yet. Becomes required once the
    * engine ships.
+   *
+   * Return shapes (both supported, picked based on whether the node wants
+   * to report usage):
+   *   - `StandardizedOutput | StandardizedOutput[]` — legacy/simple. Used
+   *     by reactive nodes and any executable that has no cost story.
+   *   - `{ output, usage? }` — rich. Used by LLM / image-gen nodes to
+   *     report cost / token counts / model id alongside the output. The
+   *     runner extracts both and stores `usage` in the ExecutionRecord
+   *     so the Queue panel can surface it without each node having to
+   *     hand-roll its own side channel.
    */
-  execute?: (ctx: ExecContext<TConfig>) => Promise<
-    StandardizedOutput | StandardizedOutput[]
-  >;
+  execute?: (ctx: ExecContext<TConfig>) => Promise<NodeExecuteResult>;
   /** React component rendered inside the BaseNode card. */
   Body: ComponentType<NodeBodyProps<TConfig>>;
+  /**
+   * Optional settings affordance, surfaced as a standardized `⋯` (three-dot)
+   * trigger in the top-right of the BaseNode header — opposite side of the
+   * node title — that opens a Popover with `Content`. Provide this when a
+   * node grows knobs the user might want to tune without bloating the body
+   * for the 80% case who never touch them (temperature / max tokens /
+   * reasoning on LLM Text, sampler / steps on future image-gen nodes, etc.).
+   *
+   * `Content` is a React component receiving the same `NodeBodyProps` as
+   * `Body`, so settings UIs can share helpers freely. `hasOverrides`
+   * (optional) drives the accent dot indicator on the trigger — when it
+   * returns true, the user sees at a glance that the node has something
+   * non-default set without opening the popover.
+   *
+   * The trigger placement + icon + popover wrapper are owned by BaseNode
+   * (ADR-0027) so every settings-capable node reads identically in the
+   * canvas — only the popover *content* changes per node kind.
+   */
+  settings?: {
+    Content: ComponentType<NodeBodyProps<TConfig>>;
+    hasOverrides?: (config: TConfig) => boolean;
+  };
+  /**
+   * Optional sizing contract for the node card (ADR-0028). When omitted,
+   * the node is purely content-driven with no min/max and no user resize.
+   *
+   * Provide this for any node whose body can grow unbounded with content
+   * (LLM Text output, Text textarea, Image preview, future video preview…)
+   * — `defaultWidth` + `maxWidth` cap the silhouette so a long LLM response
+   * doesn't stretch the node across the canvas; `resizable` opts in to the
+   * standardized bottom-right drag handle so the user can grow the card
+   * for better readability when they want to.
+   *
+   * Min/max constraints apply to both the content-driven natural size and
+   * the user-resized size (NodeResizeControl honors them too), so the
+   * silhouette stays within the design bounds either way.
+   */
+  size?: NodeSizeSchema;
 }
+
+/**
+ * Per-axis or both-axis resize affordance, declared by `NodeSchema.size`.
+ *
+ * - `"none"` (default if `size` is omitted entirely) — fixed, content-driven.
+ * - `"horizontal"` — user can drag the right edge handle to change width.
+ * - `"vertical"` — user can drag the bottom edge handle to change height.
+ * - `"both"` — user can drag the bottom-right corner handle to change both.
+ */
+export type NodeResizable = "none" | "horizontal" | "vertical" | "both";
+
+/**
+ * Sizing contract for a node kind (ADR-0028).
+ *
+ * Every field is optional so a node can opt in to *just* the constraints it
+ * cares about. The most common combo is `defaultWidth` + `maxWidth` + a
+ * scrollable body section (so a long output never blows up the silhouette).
+ *
+ * `default*` is the initial size when the user has never resized. Once the
+ * user drags the resize handle, `NodeInstance.size` overrides it for that
+ * instance only.
+ */
+export interface NodeSizeSchema {
+  /** Initial width before any user resize. Unset = content-driven (CSS auto). */
+  defaultWidth?: number;
+  /** Initial height before any user resize. Unset = content-driven. */
+  defaultHeight?: number;
+  /** Floor for both content-driven and user-resized width. */
+  minWidth?: number;
+  /** Ceiling for both content-driven and user-resized width. */
+  maxWidth?: number;
+  /** Floor for both content-driven and user-resized height. */
+  minHeight?: number;
+  /** Ceiling for both content-driven and user-resized height. */
+  maxHeight?: number;
+  /**
+   * Whether the user can manually resize the node and along which axis.
+   * Default: `"none"`. When set, BaseNode renders a standardized drag
+   * handle (`"both"` → bottom-right corner; `"horizontal"` → right edge;
+   * `"vertical"` → bottom edge) bound to React Flow's NodeResizeControl
+   * with the schema's min/max as the drag bounds.
+   */
+  resizable?: NodeResizable;
+}
+
+/**
+ * Optional usage block a node can attach to its execution result. Every
+ * field is optional so partial reporting works (e.g. a future audio node
+ * that only knows duration but not cost). Lives in `ExecutionRecord.usage`
+ * after the runner extracts it.
+ */
+export interface NodeUsage {
+  /** USD as reported by the upstream provider. */
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  /**
+   * The model that actually ran. Useful when the user picked one model
+   * and the provider re-routed (Fal OpenRouter does this occasionally
+   * during rate-limited periods) — surfacing it in the queue keeps the
+   * billing surface honest.
+   */
+  model?: string;
+}
+
+/** Rich form an `execute()` can return when it wants to report usage. */
+export interface NodeOutputWithUsage {
+  output: StandardizedOutput | StandardizedOutput[];
+  usage?: NodeUsage;
+}
+
+/** What an `execute()` may return — either the simple output or the rich shape. */
+export type NodeExecuteResult =
+  | StandardizedOutput
+  | StandardizedOutput[]
+  | NodeOutputWithUsage;
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Runtime                                                                    */
@@ -140,6 +262,22 @@ export interface NodeInstance<TConfig = unknown> {
   kind: string;
   position: { x: number; y: number };
   config: TConfig;
+  /**
+   * Optional per-instance label. When set, overrides `schema.title` in the
+   * node header — useful for distinguishing multiple nodes of the same kind
+   * in a recipe ("Subject", "Mood", "Background", …). Edited inline via
+   * double-click on the header title. Empty / undefined falls back to the
+   * schema title so wiping the label restores the default.
+   */
+  label?: string;
+  /**
+   * Per-instance dimensions set by the user via the resize handle (ADR-0028).
+   * When present, overrides `schema.size.defaultWidth` / `defaultHeight` for
+   * this node only. Both axes optional so a node can be widened without
+   * forcing a height, or vice versa. React Flow honors these via the node's
+   * `width` / `height` props; the schema's `min*` / `max*` still clamp.
+   */
+  size?: { width?: number; height?: number };
 }
 
 export interface WorkflowEdge {
@@ -148,4 +286,59 @@ export interface WorkflowEdge {
   sourceHandle: string;
   target: string;
   targetHandle: string;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Execution                                                                  */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Per-node execution status during (and after) a run.
+ *
+ * - `idle`: never run yet, or `clearRun()` since the last run.
+ * - `pending`: in the current run's topological order, not yet started.
+ * - `running`: `execute()` is in flight.
+ * - `done`: completed this run; output stored.
+ * - `cached`: skipped because the cache key matched a previous run's output;
+ *   `output` is populated from the cache. We surface this separately from
+ *   `done` so the UI can hint "this was free" and so the cost preview can
+ *   exclude it from the total.
+ * - `error`: `execute()` threw; downstream nodes stay `pending`.
+ * - `cancelled`: the run was aborted (user re-clicked Run, navigated away,
+ *   etc.) before this node finished.
+ */
+export type ExecutionStatus =
+  | "idle"
+  | "pending"
+  | "running"
+  | "done"
+  | "cached"
+  | "error"
+  | "cancelled";
+
+/**
+ * Live record the execution store keeps per node id during + after a run.
+ *
+ * `hash` is the cache key derived from `{ kind, config, upstream hashes }`.
+ * Same hash across runs ⇒ deterministic cache hit; modifying any upstream
+ * node mutates that upstream's hash and propagates through the graph so
+ * everything downstream is re-evaluated automatically.
+ */
+export interface ExecutionRecord {
+  status: ExecutionStatus;
+  output?: StandardizedOutput | StandardizedOutput[];
+  /** Last error message — populated only when `status === "error"`. */
+  error?: string;
+  /** ms spent inside `execute()` — undefined for `cached` / `idle`. */
+  elapsedMs?: number;
+  /** Stable content hash used as the cache key for this node + inputs. */
+  hash?: string;
+  /**
+   * Provider-reported usage (cost, tokens, actual model id). Present for
+   * nodes that opt in via the `{ output, usage }` return shape; absent
+   * for reactive / cost-free nodes (Text, Image, …). Survives a `cached`
+   * hit so the queue can still credit "saved X" against the cumulative
+   * run total.
+   */
+  usage?: NodeUsage;
 }

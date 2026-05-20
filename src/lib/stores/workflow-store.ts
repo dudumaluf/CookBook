@@ -19,6 +19,7 @@ export interface WorkflowState {
   nodes: NodeInstance[];
   edges: WorkflowEdge[];
   selectedNodeIds: string[];
+  selectedEdgeIds: string[];
 
   /**
    * Add a node of the given kind at a canvas position. Returns the new id.
@@ -38,16 +39,52 @@ export interface WorkflowState {
     update: Partial<TConfig>,
   ) => void;
   moveNode: (id: string, position: { x: number; y: number }) => void;
+  /**
+   * Set or clear a node's per-instance label.
+   * - Trimmed non-empty string → stored as the label.
+   * - Empty / whitespace-only / `undefined` → clears the label so the
+   *   header falls back to the schema title.
+   */
+  renameNode: (id: string, label: string | undefined) => void;
+  /**
+   * Persist user-set dimensions for a node (ADR-0028 — bottom-right drag
+   * handle). `size = undefined` (or both fields undefined) clears the
+   * per-instance override so the schema's `defaultWidth` / `defaultHeight`
+   * take over again. Only fired by canvas-flow's `onNodesChange` when
+   * React Flow reports a `dimensions` change with `setAttributes` truthy
+   * (i.e. the user actively dragged the resize handle — not a passive
+   * content-measurement event).
+   */
+  resizeNode: (
+    id: string,
+    size: { width?: number; height?: number } | undefined,
+  ) => void;
 
   addEdge: (edge: Omit<WorkflowEdge, "id">) => string | undefined;
   removeEdge: (id: string) => void;
 
   setSelectedNodeIds: (ids: string[]) => void;
+  setSelectedEdgeIds: (ids: string[]) => void;
   clear: () => void;
 }
 
 function makeId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Return a NodeInstance with the `size` property removed entirely (vs set
+ * to `undefined`). Keeps the persisted JSON clean when the user resets a
+ * resized node — important because the migration walks every field, and
+ * `{ size: undefined }` would still be in the payload.
+ */
+function stripSize(node: NodeInstance): NodeInstance {
+  if (node.size === undefined) return node;
+  // Explicit destructure rather than rest-spread-omit so the runtime payload
+  // doesn't carry an enumerable `size: undefined` key after the strip.
+  const { size: _stripped, ...rest } = node;
+  void _stripped;
+  return rest;
 }
 
 export const useWorkflowStore = create<WorkflowState>()(
@@ -56,6 +93,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       nodes: [],
       edges: [],
       selectedNodeIds: [],
+      selectedEdgeIds: [],
 
       addNode: (kind, position, initialConfig) => {
         const schema = nodeRegistry.get(kind);
@@ -81,13 +119,26 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       removeNode: (id) => {
-        set((state) => ({
-          nodes: state.nodes.filter((n) => n.id !== id),
-          edges: state.edges.filter(
-            (e) => e.source !== id && e.target !== id,
-          ),
-          selectedNodeIds: state.selectedNodeIds.filter((nid) => nid !== id),
-        }));
+        set((state) => {
+          // Cascade: edges touching the removed node go too. Capture their
+          // ids first so we can also drop them from `selectedEdgeIds` (or
+          // a deleted node + selected dangling edge would leave a stale
+          // ghost id in selection that the next Backspace would try to
+          // re-remove, no-op-ing the keyboard handler).
+          const cascadingEdgeIds = new Set(
+            state.edges
+              .filter((e) => e.source === id || e.target === id)
+              .map((e) => e.id),
+          );
+          return {
+            nodes: state.nodes.filter((n) => n.id !== id),
+            edges: state.edges.filter((e) => !cascadingEdgeIds.has(e.id)),
+            selectedNodeIds: state.selectedNodeIds.filter((nid) => nid !== id),
+            selectedEdgeIds: state.selectedEdgeIds.filter(
+              (eid) => !cascadingEdgeIds.has(eid),
+            ),
+          };
+        });
       },
 
       updateNodeConfig: (id, update) => {
@@ -105,6 +156,50 @@ export const useWorkflowStore = create<WorkflowState>()(
           nodes: state.nodes.map((n) =>
             n.id === id ? { ...n, position } : n,
           ),
+        }));
+      },
+
+      renameNode: (id, label) => {
+        const trimmed = label?.trim();
+        const next = trimmed && trimmed.length > 0 ? trimmed : undefined;
+        set((state) => ({
+          nodes: state.nodes.map((n) =>
+            n.id === id ? { ...n, label: next } : n,
+          ),
+        }));
+      },
+
+      resizeNode: (id, size) => {
+        // Normalise: an all-undefined size is the same as no size at all —
+        // strip the field entirely so the rehydrated state stays clean.
+        // We round to integer px (NodeResizeControl emits floats during a
+        // drag) so the persisted state isn't churned by sub-pixel jitter
+        // and so the rehydrated value reads cleanly in devtools.
+        const next =
+          size && (size.width !== undefined || size.height !== undefined)
+            ? {
+                ...(size.width !== undefined
+                  ? { width: Math.round(size.width) }
+                  : {}),
+                ...(size.height !== undefined
+                  ? { height: Math.round(size.height) }
+                  : {}),
+              }
+            : undefined;
+        set((state) => ({
+          nodes: state.nodes.map((n) => {
+            if (n.id !== id) return n;
+            // Skip if nothing actually changed — avoids a no-op render
+            // when React Flow re-emits the same dimensions (it does this
+            // on every drag move, even when the rounded value is stable).
+            if (
+              (n.size?.width ?? undefined) === (next?.width ?? undefined) &&
+              (n.size?.height ?? undefined) === (next?.height ?? undefined)
+            ) {
+              return n;
+            }
+            return next === undefined ? stripSize(n) : { ...n, size: next };
+          }),
         }));
       },
 
@@ -135,32 +230,130 @@ export const useWorkflowStore = create<WorkflowState>()(
       },
 
       removeEdge: (id) => {
-        set((state) => ({ edges: state.edges.filter((e) => e.id !== id) }));
+        set((state) => ({
+          edges: state.edges.filter((e) => e.id !== id),
+          // Same defensive cleanup as removeNode: keep the selection set
+          // free of dangling ids so the keyboard delete path stays honest.
+          selectedEdgeIds: state.selectedEdgeIds.filter((eid) => eid !== id),
+        }));
       },
 
       setSelectedNodeIds: (ids) => {
         set({ selectedNodeIds: ids });
       },
 
+      setSelectedEdgeIds: (ids) => {
+        set({ selectedEdgeIds: ids });
+      },
+
       clear: () => {
-        set({ nodes: [], edges: [], selectedNodeIds: [] });
+        set({
+          nodes: [],
+          edges: [],
+          selectedNodeIds: [],
+          selectedEdgeIds: [],
+        });
       },
     }),
     {
       name: "cookbook.workflow",
       storage: createJSONStorage(() => localStorage),
-      // v2 (no schema change vs v1): bumped during Slice 1 polish for a dev
-      // wipe; v1 and v2 share the same shape, so `migrate` is a pass-through.
-      // Future *schema* changes should bump the version AND add a real
-      // case here that transforms the persisted state.
-      version: 2,
-      migrate: (persistedState, version) => {
-        // v1 → v2: shape unchanged. Just pass through so existing user data
-        // is preserved instead of being silently discarded.
-        if (version === 1) {
-          return persistedState as Partial<WorkflowState>;
-        }
-        return persistedState as Partial<WorkflowState>;
+      // v6: NodeInstance gained an optional `size: { width?, height? }` for
+      // user-resized nodes (ADR-0028). Additive — no existing payload
+      // breaks; the migrate just sanitises any pre-existing `size` to a
+      // legal shape (positive finite numbers) so a hand-edited localStorage
+      // value can't crash React Flow with NaN dimensions.
+      // v5: LLM Text gained optional `temperature`, `maxTokens`, `reasoning`
+      // (ADR-0026 settings popover). All optional → no destructive change to
+      // existing v4 configs; the migrate just sanitises any pre-existing
+      // fields (e.g. someone hand-editing localStorage) to valid shapes.
+      // v4: LLM Text moved user/system off the node body (now input handles
+      // only) so its config collapsed to `{ model }` (ADR-0022 properties
+      // panel redesign). Migration discards any prior inline user/system
+      // values — they were going to vanish from the UI either way; users
+      // can re-wire them with Text nodes.
+      // v3: LLMTextNodeConfig renamed `prompt` → `user` and added `system`.
+      // v2: dev wipe; shape unchanged vs v1.
+      version: 6,
+      migrate: (persistedState) => {
+        // Walk every node and patch any llm-text configs in place. Idempotent
+        // and tolerant of partial shapes from any prior version. The whole
+        // migrate funnels every legacy llm-text config (with `prompt`, with
+        // `user`/`system`, or just `model`) down to the v5 shape:
+        //   { model, temperature?, maxTokens?, reasoning? }
+        // — preserving any v5-format optional fields if they're already
+        // present and within range, otherwise stripping them.
+        // v6 adds an optional top-level `size` on every node (regardless of
+        // kind) — handled at the end of the walk so all node kinds get the
+        // sanitisation, not just llm-text.
+        const state = (persistedState ?? {}) as Partial<WorkflowState>;
+        if (!state.nodes) return state;
+        const migratedNodes = state.nodes.map((nRaw) => {
+          let n = nRaw;
+          if (n.kind === "llm-text") {
+            const old = (n.config ?? {}) as Record<string, unknown>;
+            const next: Record<string, unknown> = {
+              model:
+                typeof old.model === "string"
+                  ? (old.model as string)
+                  : "anthropic/claude-sonnet-4.5",
+            };
+            // Pass through `temperature` only if it's a finite number in
+            // [0, 2]. Anything else is silently dropped so we don't carry
+            // garbage that the server's Zod would reject mid-run.
+            if (
+              typeof old.temperature === "number" &&
+              Number.isFinite(old.temperature) &&
+              old.temperature >= 0 &&
+              old.temperature <= 2
+            ) {
+              next.temperature = old.temperature;
+            }
+            // Pass through `maxTokens` only if positive integer.
+            if (
+              typeof old.maxTokens === "number" &&
+              Number.isInteger(old.maxTokens) &&
+              old.maxTokens > 0
+            ) {
+              next.maxTokens = old.maxTokens;
+            }
+            if (typeof old.reasoning === "boolean") {
+              next.reasoning = old.reasoning;
+            }
+            n = { ...n, config: next };
+          }
+          // v6 size sanitisation — applies to every node kind. Width / height
+          // must be finite positive numbers; anything else is stripped so a
+          // bogus persisted value can't make NodeResizeControl emit NaN or
+          // freeze React Flow's measurement loop. Rounds to integer (matches
+          // the rounding `resizeNode()` already does on writes).
+          const rawSize = (n as Partial<NodeInstance>).size as
+            | { width?: unknown; height?: unknown }
+            | undefined;
+          if (rawSize !== undefined) {
+            const cleaned: { width?: number; height?: number } = {};
+            if (
+              typeof rawSize.width === "number" &&
+              Number.isFinite(rawSize.width) &&
+              rawSize.width > 0
+            ) {
+              cleaned.width = Math.round(rawSize.width);
+            }
+            if (
+              typeof rawSize.height === "number" &&
+              Number.isFinite(rawSize.height) &&
+              rawSize.height > 0
+            ) {
+              cleaned.height = Math.round(rawSize.height);
+            }
+            n =
+              cleaned.width !== undefined || cleaned.height !== undefined
+                ? { ...n, size: cleaned }
+                : stripSize(n);
+          }
+          return n;
+        });
+        return { ...state, nodes: migratedNodes };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

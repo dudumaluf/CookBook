@@ -2,6 +2,8 @@
 
 This folder is the **single source of truth** for the project. Every architectural decision, milestone, convention, and lesson learned lives here. If something important is decided in chat, it gets distilled into one of these docs before the chat is closed.
 
+> **New agent / fresh chat?** Don't start here — start at [`/AGENTS.md`](../AGENTS.md) (the project-root landing page). It tells you which of these docs to read in what order, what the current state is, and what the next task is. This file is just the index.
+
 ## Reading order (newcomers)
 
 1. **[VISION.md](./VISION.md)** — why this exists, who it's for, what it is and isn't.
@@ -19,7 +21,8 @@ This folder is the **single source of truth** for the project. Every architectur
 End-of-slice and end-of-milestone snapshots. Read the latest one if you're picking up the project after a context flip — they're the single source of truth for "where are we, exactly".
 
 - **[STATE-AFTER-M0a-slice1.md](./STATE-AFTER-M0a-slice1.md)** — schema engine + canvas + Text/Image nodes.
-- **[STATE-AFTER-M0a-slice2.md](./STATE-AFTER-M0a-slice2.md)** — Library + Asset abstraction + drag-to-canvas (current).
+- **[STATE-AFTER-M0a-slice2.md](./STATE-AFTER-M0a-slice2.md)** — Library + Asset abstraction + drag-to-canvas.
+- **[STATE-AFTER-M0a-slice3.md](./STATE-AFTER-M0a-slice3.md)** — Run engine + LLM Text + Queue panel + settings popover (3.1 → 3.4) + standardised settings affordance (ADR-0027) + node sizing contract (ADR-0028) (current).
 
 ## Maintenance rules (the contract)
 

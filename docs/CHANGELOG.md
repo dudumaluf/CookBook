@@ -2,6 +2,499 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-20 — Node sizing contract: schema min/max + per-instance drag-resize (ADR-0028)
+
+Right after ADR-0027 landed, the user wired Text → LLM Text and ran a prompt for three story variants. The LLM came back with a long multi-paragraph response and the LLM Text node stretched across most of the canvas — output had no bounds. User feedback: *"we need a maximum width for the nodes … also height should have it … unless the user wants to drag the bottom right edge to resize to a custom size so the output can be better visualized if needed … make sure to add this to any future node that makes sense to have ( custom resize ability, and max width and height to control when content gets populated it doesn't look huge, unless the user needs it )."* Same shape of problem ADR-0027 solved: chrome that every body-can-grow node will hit the same way. So the fix lives at the chrome level.
+
+Schema + types:
+
+- **`NodeSchema.size?: NodeSizeSchema`** in `src/types/node.ts`: `defaultWidth`, `defaultHeight`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `resizable: "none" | "horizontal" | "vertical" | "both"` (default `"none"`). Every field optional so a node opts in to just the constraints it cares about.
+- **`NodeInstance.size?: { width?: number; height?: number }`** for user-resized dimensions, per axis. Default-undefined means the schema's `default*` applies; setting one axis without the other is legal (horizontal-only resize on Image leaves height undefined).
+
+Workflow store (`src/lib/stores/workflow-store.ts`):
+
+- **`resizeNode(id, size)`** action — accepts a partial size (one or both axes), rounds to integer px (NodeResizeControl emits floats during a drag), de-dupes when the rounded value matches the existing one (avoids render churn on every `onNodesChange` tick), and strips the field entirely when both axes are undefined.
+- **Migration v5 → v6**: walks every node (regardless of kind) and sanitises `size` to legal shapes (positive finite integers per axis). All-bad → field stripped. Backward-compatible — every v5 payload survives untouched because the new field is optional everywhere.
+
+Canvas wiring (`src/components/canvas/canvas-flow.tsx`):
+
+- `toFlowNode` forwards `instance.size` into `data.size` so GenericNode can compose the BaseNode size slot.
+- `GenericNode` builds a `sizeSlot` from `schema.size + data.size` (per-instance wins; schema falls back) and passes it to BaseNode.
+- `onNodesChange` handles `c.type === "dimensions" && c.setAttributes && c.dimensions` — only persists user-initiated resizes (React Flow's `setAttributes` signal), not passive content-measurement events. `setAttributes === "width"` / `"height"` axis-locks the persisted update so a horizontal-resize doesn't accidentally also overwrite height.
+
+BaseNode (`src/components/nodes/base-node.tsx`):
+
+- New `size?: BaseNodeSize` prop applies all CSS dim constraints as inline `style`. Default min-width falls back to the legacy 240 px so every pre-ADR-0028 node renders pixel-identical to before.
+- Body wrapper becomes `flex-1 min-h-0` *only* when an explicit height is set (so content-driven cards don't collapse against `min-h-0`); otherwise the wrapper is a plain block. One rule, both modes correct.
+- Header gets `shrink-0` so a flex-fill body can't squish it.
+- New `NodeBodyResizeHandle` component wraps React Flow's `NodeResizeControl` with custom chrome: a 10×10 SVG "two diagonal lines" mark in the bottom-right (the canonical macOS / GTK / browser-textarea corner-resize affordance) for `both`; a short vertical grip line on the right edge for `horizontal`; a short horizontal grip line on the bottom for `vertical`. Subtle by default (40 % muted-foreground), brighter on group-hover for discoverability. `aria-hidden` + `pointer-events-none` on the inner visual so React Flow's drag wrapper owns the pointer. `data-testid="node-resize-handle"` + `data-direction` for test selectors.
+
+Node bodies (each one declares `schema.size`):
+
+- **LLM Text** (`src/components/nodes/node-llm-text.tsx`): output container becomes `flex-1 overflow-y-auto` + `nowheel` class so a long LLM response scrolls *inside* the card without zooming the canvas. Schema: `{ defaultWidth: 380, minWidth: 280, maxWidth: 720, minHeight: 100, maxHeight: 520, resizable: "both" }`.
+- **Text** (`src/components/nodes/node-text.tsx`): textarea becomes `flex-1 min-h-0` + `nowheel` so it fills any user-resized height. Schema: `{ defaultWidth: 240, minWidth: 200, maxWidth: 520, minHeight: 100, maxHeight: 420, resizable: "both" }`.
+- **Image** (`src/components/nodes/node-image.tsx`): schema declares `{ defaultWidth: 240, minWidth: 200, maxWidth: 480, resizable: "horizontal" }` — body unchanged because the `aspect-square` preview already does the right thing under a width change (height auto-follows).
+
+Tests (29 files, 263 → 290 tests, +27):
+
+- `tests/component/nodes/base-node.test.tsx` — new "size + resize slot (ADR-0028)" block: 8 cases (legacy 240 fallback when no size slot; min/max width + height land as inline style; explicit width / height from instance.size lands as CSS dimensions; no handle when resizable omitted / "none"; bottom-right corner handle for "both" with `data-direction`; right-edge handle for "horizontal"; bottom-edge handle for "vertical"; body wrapper switches to flex-fill min-h-0 only when explicit height set).
+- `tests/component/nodes/node-llm-text.test.tsx` — new `schema.size` block (4 cases): declares bidirectional resize; width range 280–720; maxHeight 520; defaultWidth 380 but defaultHeight undefined.
+- `tests/component/nodes/node-text.test.tsx` — new `schema.size` block (3 cases): declares bidirectional resize; caps width 520 / height 420; defaultWidth matches legacy 240 px so existing canvases look unchanged.
+- `tests/component/nodes/node-image.test.tsx` — new `schema.size` block (2 cases): horizontal-only resize because preview is `aspect-square`; width range 200–480.
+- `tests/unit/stores/workflow-store.test.ts` — new `resizeNode` block (6 cases): width + height rounded to int; axis-locked width-only / height-only; undefined / empty-{} both strip the field; same-dims is a no-op (preserves referential equality); missing id is no-op. New `v6 migrate` block (3 cases): preserves valid size rounded to int; strips invalid (zero / negative / NaN / Infinity / non-number) per axis; idempotent on a clean v6 payload.
+
+Verified locally: 290 passing tests, `npm run lint` and `tsc --noEmit` clean, `npm run docs:check` clean. Browser smoke: the bottom-right resize handle is visible on every Text + LLM Text + Image card; settings popover still opens correctly from the new chrome; typing 25 lines into a Text node leaves the silhouette compact (the textarea scrolls internally at its rows={4} natural height).
+
+## 2026-05-20 — Settings affordance standardised on BaseNode (`⋯` trigger in header top-right) (ADR-0027)
+
+Refactor of Slice 3.4's settings popover after the user's standardisation feedback: *"settings button for any node that will need some sort of settings could be a 3 dots icon on the top right of the node on the other (OPPOSITE SIDE OF THE NODE title) … keep a minimalistic look and standardized layout for some things that are repeatable."* Cog moved out of the body row and into a chrome-level slot on BaseNode that every future settings-capable node inherits for free.
+
+Schema + chrome:
+
+- **`NodeSchema` gains an optional `settings: { Content; hasOverrides? }` slot** in `src/types/node.ts`. `Content` is a React component receiving the same `NodeBodyProps` as `Body`; `hasOverrides` is a pure predicate over `config` that drives the accent dot. Both optional at the slot level — schemas that omit `settings` render zero settings chrome (Text, Image, Number unchanged).
+- **`BaseNode` gains a `settings` prop** (`{ content; hasOverrides?; ariaLabel? }`) and a new internal `NodeSettingsTrigger` component. When `settings` is provided, the trigger renders in the rightmost header slot — opposite the node title, after the status chip — as a 24 px ghost `Button` with the lucide `MoreHorizontal` (`⋯`) icon. Wrapped in `Tooltip` + `Popover` (`@base-ui/react`, 280 px, `align="end"`); accent dot in the trigger's top-right corner when `hasOverrides === true`. Test selectors: `data-testid="node-settings-trigger"` + `data-testid="node-settings-dot"`.
+- **`GenericNode` in `src/components/canvas/canvas-flow.tsx`** reads `schema.settings`, instantiates `Content` with the live `nodeId / config / updateConfig / selected`, and forwards everything to BaseNode. Default `ariaLabel` is `"${schema.title} settings"` so screen readers say "LLM Text settings" without each node spelling it out.
+
+LLM Text refactor (no UX change to the popover content):
+
+- `SettingsButton` deleted — BaseNode owns the trigger now. `SettingsContent` renamed to `LLMTextSettingsContent` and exported. `hasSettingsOverrides(config)` extracted as a tiny pure helper (returns true iff `temperature !== undefined || maxTokens !== undefined || reasoning === true`).
+- Schema wires `settings: { Content: LLMTextSettingsContent, hasOverrides: hasSettingsOverrides }`. The body row now contains only the model chip (inner flex wrapper removed) — the body reads even calmer.
+
+Tests (29 files, 251 → 263 tests, +12):
+
+- `tests/component/nodes/base-node.test.tsx` — new "settings slot (ADR-0027)" block: 7 cases (no trigger when slot omitted; trigger renders + has correct aria-label; per-node ariaLabel honored; click opens popover with supplied content; accent dot hidden when hasOverrides false/undefined; accent dot shown when hasOverrides true; trigger uses the three-dot ellipsis icon — regression guard against a future swap back to a cog).
+- `tests/component/nodes/node-llm-text.tsx` — settings popover tests rewritten to render `LLMTextSettingsContent` directly (responsibility boundary: BaseNode owns the trigger; LLM Text owns the popover content). New `schema.settings` block (6 cases) covers the slot wiring + `hasOverrides` predicate combos. Trigger-UX tests deleted from the LLM Text suite since they now belong to BaseNode.
+
+Verified locally: 263 passing tests, `npm run lint` and `tsc --noEmit` clean, `npm run docs:check` clean. Browser smoke test confirmed end-to-end: `⋯` trigger renders in the top-right of both LLM Text nodes, clicking it expands the popover with all three controls + the reasoning hint for Gemini 2.5 Pro; toggling reasoning flips the checkbox and replaces the warning text. (The dev server still ships the same pre-existing Next 16 hydration warning from an unrelated UI Button — surface unchanged by this slice.)
+
+## 2026-05-20 — M0a Slice 3.4: LLM Text settings popover (temperature, max tokens, reasoning); Gemini 2.5 Pro restored (ADR-0026)
+
+Closes the loop ADR-0023 opened: the LLM Text node finally has somewhere to put per-call generation knobs without polluting the body for the 80% case. Same slice unlocks Gemini 2.5 Pro again — it was dropped in 3.2 because Fal's router rejects it without `reasoning: true` and we had no UI to opt in.
+
+Config + schema:
+
+- **`LLMTextNodeConfig` gains `temperature?: number`, `maxTokens?: number`, `reasoning?: boolean`** — all optional. `undefined` defers to the provider default; we never seed a value at node creation time. Lives in `src/components/nodes/node-llm-text.tsx`.
+- **`llmRequestSchema` (Zod) gains the same three fields** in `src/lib/llm/types.ts` — single source of truth between server validation and client typing. `temperature` is range-checked 0–2; `maxTokens` is positive integer; `reasoning` is boolean.
+- **`MODEL_OPTIONS` gets `google/gemini-2.5-pro` back** with a new `reasoningRequired: true` flag. `modelRequiresReasoning(modelId)` reads the flag from the curated list — used by the popover to surface a warning when Pro is selected without reasoning ticked.
+
+Server + client plumbing:
+
+- **`callFalOpenRouter` (server wrapper)** conditionally spreads each setting into the Fal `subscribe` input (`...(args.temperature !== undefined ? { temperature: args.temperature } : {})`), on both `openrouter/router` and `openrouter/router/vision`. Fal is strict about null fields on some models — pass only when defined.
+- **`callOpenRouter` (client wrapper)** required no changes — it spreads the request body, so adding fields to the schema is enough.
+- **`node-llm-text.tsx::execute()`** passes `config.temperature`, `config.maxTokens`, `config.reasoning` through to `callOpenRouter`. Cache key naturally re-keys when any of these change (already hashed via `config`).
+
+UI — `SettingsButton` + `SettingsContent` (new sections in `node-llm-text.tsx`):
+
+- **`SettingsButton`**: 24 px ghost cog (`Settings2` icon) anchored to the right of the model chip. Opens a Popover (`@base-ui/react`, 280 px wide, portalled). Renders an `accent`-coloured dot in the corner when *any* setting is non-default — so the "this node has overrides" signal is visible without opening the popover. `data-testid="llm-settings-dot"` for unambiguous test targeting.
+- **`SettingsContent`** renders three controls vertically:
+  - **Temperature**: `<input type="range" min=0 max=2 step=0.1>` + a numeric label that says "default" until the slider is touched. Slider stays at 50 % opacity while at default so "not set" is visually distinct from "set to 0.7". Reset button reverts to `undefined`.
+  - **Max output tokens**: a local-draft `<input type="number">` (`MaxTokensInput`) that commits to the parent only on valid positive integers (or empty → undefined). Keystroke drafts (typing "1500" through 1 → 15 → 150) don't bounce. External resets work via a `key` prop forcing a remount — avoids the React 19 strict-mode-forbidden "setState in useEffect" sync pattern. Reset button.
+  - **Reasoning**: plain `<input type="checkbox">` wrapped in a label. Hint text below reads the generic "Enable for models that need explicit reasoning…" copy or, when `modelRequiresReasoning(config.model) && !config.reasoning`, the accent-coloured warning "This model requires reasoning to be on. Tick the box or the run will fail."
+
+Persistence:
+
+- **`workflow-store` v4 → v5**. The `migrate` walks every `llm-text` config and passes through the three new fields only if they parse to legal values (temperature finite + in [0, 2], maxTokens positive integer, reasoning boolean). Anything else is silently stripped — defensive against hand-edited localStorage and forward-portable when we add more fields later. Idempotent on already-v5 payloads; non-`llm-text` nodes pass through untouched.
+
+Tests (29 files, 228 → 251 tests, +23):
+
+- `tests/component/nodes/node-llm-text.test.tsx` — 4 new `execute()` cases (forwards `temperature`, `maxTokens`, `reasoning`; omits unset optional fields) + 10 new popover cases (renders Settings trigger, slider says "default" when no value, moving slider commits, Reset clears, typing valid integer / empty / zero into max tokens, ticking reasoning, warns when reasoning-required model picked without reasoning, hides warning once reasoning is enabled, shows accent dot when any setting is non-default).
+- `tests/unit/llm/route.test.ts` — 2 new cases (`reasoning=true` accepted + forwarded to the wrapper; non-boolean `reasoning` rejected by Zod with 400).
+- `tests/unit/llm/fal-openrouter.test.ts` — 3 new cases (`reasoning: true` forwarded to the vision endpoint, `reasoning: true` forwarded to the text endpoint, omitted entirely when undefined).
+- `tests/unit/stores/workflow-store.test.ts` — 4 new v5-migration cases (preserves valid temperature/maxTokens/reasoning; strips out-of-range temperature; strips non-positive-integer maxTokens; strips non-boolean reasoning).
+
+Verified locally: 251 passing tests, `tsc --noEmit` and `npm run lint` clean. Browser smoke test confirmed: clicking the cog opens the popover; the warning hint shows when switching the model to Gemini 2.5 Pro without reasoning ticked, and disappears once reasoning is enabled. (The popover's checkbox has a transient `pointer-events: none` window during the open/close animation that the cursor-ide-browser MCP tool refuses to click through; verified the underlying behaviour via the component tests instead.)
+
+## 2026-05-20 — M0a Slice 3.3: Usage on ExecutionRecord + Queue panel rows + cost rollup (ADR-0025)
+
+The Queue panel stops being a stub. Every executed node now appears as a row with model · elapsed · cost + a text preview, and the footer totals the run's spend. The Fal route already reported `costUsd` / `inputTokens` / `outputTokens` in Slice 3.2; this slice plumbs that data through the engine and surfaces it.
+
+Types + engine:
+
+- **`NodeUsage`**, **`NodeOutputWithUsage`**, **`NodeExecuteResult`** added to `src/types/node.ts`. `execute()` may now return either a plain `StandardizedOutput` / array (legacy, unchanged) or `{ output, usage? }` (rich) — recognised structurally at the runner boundary, no constructor / brand required.
+- **`ExecutionRecord.usage?`** carries the optional `{ costUsd?, inputTokens?, outputTokens?, model? }` block. Persists across cache hits so re-runs credit the original cost exactly.
+- **`ExecutionCacheEntry = { output, usage? }`** — the cache value type. Old `Map<hash, output>` shape replaced (caches are session-lived only, no migration concern). `normalizeExecuteResult()` in `run-workflow.ts` is the single place that collapses the three legal return shapes into the same `{ output, usage? }` pair, with a defensive throw for unrecognised shapes so node-author bugs surface immediately instead of silently dropping outputs.
+
+LLM Text node:
+
+- `execute()` returns the rich shape now — `{ output: { type: "text", value: result.text }, usage: { costUsd, inputTokens, outputTokens, model } }`.
+- Model echoed from Fal (which may differ from the requested model if Fal re-routes) is the one we record in usage, so the queue surfaces what actually ran (not what we asked for) — keeps the billing surface honest.
+
+Queue panel (`src/components/layout/queue-panel.tsx`):
+
+- Rewrote the body. One row per ExecutionRecord (preserving engine emission order = topological run order). Each row: icon · per-instance label (or schema title) · status chip, plus a meta line (`provider-stripped-model · elapsed · cost` — only the fields that exist), plus a 2-line text preview for `done`/`cached` (truncated at 120 chars) or a destructive-tinted `role="alert"` pill for `error` rows.
+- Header rollup picks the two leading non-zero status counts ("1 running · 3 done") so it stays glanceable at any run size.
+- Footer rollup totals `costUsd` across the records; auto-hides on $0 (pure-reactive runs). Shows "still running" when `isRunning` so the total reads as "so far".
+- Empty state copy now points at the Run button instead of just saying "nothing here".
+- Pure helpers (`computeSummary`, `buildRows`, `formatCost`, `formatElapsed`) exported so the unit tests don't have to render the whole panel.
+- Defensive `(deleted)` label on rows whose node was removed mid-run (engine still emits the record; we'd rather show the row than swallow it silently).
+
+Tests (28 → 29 files, 202 → 228 tests):
+
+- `tests/unit/engine/run-workflow.test.ts` — 5 new cases: usage extraction from the rich return, regression for the bare `StandardizedOutput` return, regression for the array return, cache hit replays original usage, defensive throw on garbage returns.
+- `tests/component/layout/queue-panel.test.tsx` — 18 new cases: `formatCost` precision tiers including `<$0.0001`, `formatElapsed` tiers, summary counts + cost summing + label truncation to two parts, `buildRows` order + label fallback + `(deleted)` + text-preview extraction + truncation + non-text exclusion, plus integration tests for the panel itself (empty state copy, populated rows, meta line composition, inline error rendering, footer present/absent on cost > 0).
+- `tests/component/nodes/node-llm-text.test.tsx` — updated the `execute()` happy-path test to assert the new rich return shape (output + usage forwarded from the wrapper response).
+
+Verified locally: all 228 tests pass, `tsc --noEmit` and `npm run lint` clean. Smoke test in the browser with a real Fal call (`Gemini 2.5 Flash` joke prompt) produces a queue row reading `LLM Text · gemini-2.5-flash · 2.1 s · <$0.0001` with the joke as the output preview, sitting under two Text rows (one with content + 11 ms, one empty + 6 ms from an earlier popover misclick).
+
+## 2026-05-20 — M0a Slice 3.2: LLM Text wired to Fal OpenRouter (real calls, vision-aware, cancellable) (ADR-0024)
+
+The Slice 3.1 stub is gone — the LLM Text node now hits a real model on Run. Four-file shape:
+
+- **`src/lib/llm/types.ts`** — `llmRequestSchema` (Zod) + `LlmSuccessResponse` / `LlmErrorResponse`. Single source of truth shared by the route validator and the client typing.
+- **`src/lib/llm/fal-openrouter.ts`** — server-only (`import "server-only"`) wrapper around `@fal-ai/client`. Lazy-configures `FAL_KEY`, dispatches to `openrouter/router` (text) or `openrouter/router/vision` (when `images.length > 0`), races `fal.subscribe` against the engine's `AbortSignal` so cancelled runs reject immediately, and annotates errors with a discriminating `code` (`missing_key`, `upstream_error`).
+- **`src/app/api/fal/openrouter/route.ts`** — POST handler. JSON parse → Zod validate → call the wrapper → map errors to HTTP. `200 → { text, model, costUsd?, inputTokens?, outputTokens? }`, `400 → invalid_request`, `499 → aborted`, `500 → missing_key | unknown`, `502 → upstream_error`. `dynamic = "force-dynamic"`, `runtime = "nodejs"`. Generic 500 messages don't leak server stack details; the server logs the raw error to the Next terminal.
+- **`src/lib/llm/call-openrouter.ts`** — browser-side fetch wrapper. POSTs the body, returns `LlmSuccessResponse`, normalises non-OK responses into `LlmCallError(code)`, re-throws `AbortError` unchanged on local abort + maps server-side 499 to `AbortError` too so the engine settles cancelled runs into the `cancelled` status (not `error`).
+
+LLM Text `execute()` updated:
+
+- Stub timer + `[stub ...]` placeholder deleted.
+- Collects `user` (joined multi-edge with blank lines), `system` (single), and `images` (URLs extracted from upstream `image` refs) and calls `callOpenRouter({ model, user, system?, images?, signal })`.
+- Returns `{ type: "text", value: result.text }`. Engine cache key (already keyed on config + upstream hashes) keeps re-runs free for identical inputs; cancellation continues to work end-to-end.
+
+Tests (28 → 28 files, 196 → 226 tests):
+
+- `tests/unit/llm/fal-openrouter.test.ts` — 11 cases: lazy config + caching, text vs vision dispatch, optional-key omission, success shape, structured upstream errors, empty output, already-aborted signal, mid-flight abort race.
+- `tests/unit/llm/route.test.ts` — 9 cases: invalid JSON, missing fields (with field-path-prefixed error message), empty user, invalid image URL, happy path with all fields forwarded, AbortError → 499, missing_key → 500, upstream_error → 502, unknown → 500 (generic message + console.error spy).
+- `tests/unit/llm/call-openrouter.test.ts` — 9 cases: POST body shape with signal stripped, image-URL forwarding, success parse, structured error parse, non-JSON error fallback, 499 → AbortError translation, fetch-level AbortError preservation, network errors → `LlmCallError("network")`, `instanceof LlmCallError` discipline.
+- `tests/component/nodes/node-llm-text.test.tsx` — `execute()` cases rewritten to mock `callOpenRouter` (no real network) and assert the request shape + result mapping. Body tests unchanged from Slice 3.1d.
+
+Plumbing:
+
+- `npm install @fal-ai/client@^1.10.1` (same version Prism is on).
+- `vitest.config.ts` aliases `server-only` to a no-op shim at `tests/shims/server-only.ts` so server-only modules can be imported in unit tests without tripping the build-time guard.
+
+Verified locally: all 226 tests pass, `tsc --noEmit` and `npm run lint` clean. Smoke test with the dev server hitting Fal returns real Claude / Gemini text in the LLM Text body within a couple of seconds; cancellation rejects mid-flight; cache prevents re-billing identical runs.
+
+Smoke-test discoveries (rolled into this slice):
+
+- **Inline error rendering in the LLM Text body.** When a run errors, the body now shows the error message in a destructive-tinted alert pill (with `role="alert"`) instead of falling back to the "Connect user…" placeholder. The status chip's tooltip already had the text, but the chip is 12 px and forcing a hover to find out what broke is the wrong friction surface for an error state. Selectable so the message can be copy-pasted into a bug report.
+- **`google/gemini-2.5-pro` swapped for `google/gemini-2.5-flash`** in `MODEL_OPTIONS`. Fal's `openrouter/router` rejects Pro with "Reasoning is mandatory for this endpoint and cannot be disabled" — Pro is a reasoning-by-default model and our route doesn't expose `reasoning: true` yet. Flash works without the flag, costs ~10× less, and matches Fal's own docs example. Persisted configs that already had Pro show up as "google/gemini-2.5-pro (custom)" in the dropdown — the value round-trips harmlessly, just doesn't match a curated label. We'll re-add Pro when the settings popover (ADR-0023's deferred work) wires `reasoning?: boolean`.
+
+What's intentionally NOT in this slice:
+
+- Streaming. `fal.subscribe` is single-response; SSE / token-by-token rendering is a Slice 3.3 polish.
+- Cost / token surfacing in the UI. The data is returned by the route and discarded by the node body for now — adding a per-run cost badge + queue rollup is its own slice.
+- Temperature / max-tokens / top-p / reasoning UI. The route accepts them; nothing in the node exposes them yet (ADR-0023 deferred until "settings are real").
+
+## 2026-05-20 — M0a Slice 3.1d: Properties panel removed; model picker is an in-body chip; uniform port visuals (ADR-0023, supersedes ADR-0022)
+
+User feedback minutes after 3.1c shipped:
+
+> "i see you decided to create a properties panel, not sure we needed it … we decided before in the beginning not to have unless is needed … find a place on the node for the user to choose the llm … why the llm text node is not outputing the output … and why the inputs sockets look diferent then the output or other ports … these should all look similar, besides the colors that inform already what kinda of input is expected"
+
+Three reversals, one slice. The "output is missing" was the panel literally covering the node body on selection — moving the model picker into the body fixes that structurally.
+
+Removed (ADR-0022 chrome):
+- **`NodePropertiesPanel`** (`src/components/layout/node-properties-panel.tsx`) — deleted.
+- **`useSelectedNodeWithProperties` hook** (`src/lib/hooks/use-selected-node-with-properties.ts`) — deleted (no remaining callers).
+- **`Properties?: ComponentType<NodeBodyProps>` slot** on `NodeSchema` (`src/types/node.ts`) — removed. Nodes have one rendering surface again: the Body.
+- **QueuePanel selection-aware hide** — reverted. The queue button renders unconditionally per ADR-0015.
+- **Shell wiring** — `<NodePropertiesPanel />` import + render + the right-edge coordination comment all gone.
+
+Replaced with (ADR-0023):
+- **In-body model chip** (`node-llm-text.tsx` body). Small pill at the top-left of the body (`self-start`) showing the curated label + chevron; click anywhere opens the native `<select>` — same MODEL_OPTIONS catalog. Always visible (idle + post-run) so changing the model and re-running is one click no matter the node state. Custom model ids show as the raw id (chip) + `(custom)` suffix (dropdown option).
+- **Body layout: `[model chip] [output-or-placeholder]`** — two short rows. The output area renders the executed text (selectable, wraps, monospace-friendly leading) when `record.status === "done" | "cached"`; otherwise a one-line "Connect user on the left then click Run." placeholder.
+
+Removed (ADR-0022 visual):
+- **Multi-handle outer ring** on `DotHandle`. The shadow halo + `data-multiple` attribute + "· multi" tooltip suffix are all gone. Every port now looks identical except for the color (datatype). Multi-edge keeps working at the engine level — the runner's per-handle aggregation (`run-workflow.ts:252–274`) hasn't moved; users discover the capability by trying.
+- **`multiple` prop pass-through** in `BaseNode` → `DotHandle`. The schema still declares `multiple:true`, just nothing visualizes it.
+
+Tests (168 total, –12 vs 3.1c after deleting the panel suite):
+- `tests/component/layout/node-properties-panel.test.tsx` — **deleted**.
+- `tests/component/nodes/node-llm-text.test.tsx` — rewritten for the in-body chip: schema asserts no `Properties` slot, body shows the chip with curated label, custom-id fallback, chip persists in the output state too, no inline textareas, execute-time multi / image / abort behavior preserved.
+- `tests/component/nodes/handle-dot.test.tsx` — rewritten as a regression guard: a vanilla DotHandle has no shadow ring, no `data-multiple` attribute, no inline label text (tooltip-only).
+
+Browser verified: clicking the LLM Text node now does NOT spawn a panel; the body shows the model chip ("Claude Sonnet 4.5 ▾") above the output line; opening the chip swaps models and updating re-runs through the existing Run button. Every input / output dot reads as the same shape — only the color varies.
+
+## 2026-05-20 — M0a Slice 3.1c: LLM Text becomes output-only + properties panel + image input + multi-edge handles (ADR-0022)
+
+User pivot mid-iteration:
+
+> "our [LLM node doesn't] need to have user prompt and system prompt inside the node — we use the inputs for this with text nodes — so the llm text node focus[es] on to display the output … I'm also missing the image input … and we need a logic to add more then one input if we want — we either add a new one when a current one gets connected or we add a button somewhere to add it." Plus a Weavy reference ("not for design or colors but how things are positioned") for the model-in-a-properties-panel pattern.
+
+Cleanest move: keep the engine (which already aggregates multi-edge inputs into arrays), drop the inline editors, and move settings off the canvas.
+
+LLM Text refactor (`src/components/nodes/node-llm-text.tsx`):
+- **Body is output-only.** When `record.status === "done" | "cached"` the executed text renders; otherwise a one-line "Connect `user` on the left then click Run" placeholder with the configured model name underneath. No textareas, no model picker. The node now carries one thing — its evidence — and nothing else.
+- **Inputs**: `user` (text, `multiple:true`), `system` (text, single), `image` (image, `multiple:true`). The runner concatenates multi-`user` chunks with blank lines so a prompt can be assembled from many sources; the stub echoes image count so wiring is verifiable end-to-end. System stays single — one system prompt per call.
+- **Config collapses to `{ model }`.** Future temperature / top-p / stop sequences land here as Slice 3.2 wires Fal-OpenRouter.
+- **New `Properties` component** carries the model dropdown (curated `MODEL_OPTIONS` + a "(custom)" row for non-listed ids), plus a one-liner explaining what else will live there next slice.
+
+Schema (`src/types/node.ts`):
+- **`NodeSchema` gains `Properties?: ComponentType<NodeBodyProps<TConfig>>`.** Same props shape as `Body` so nodes can share rendering helpers between the two surfaces. Optional — Text / Image still don't have one (nothing earns off-node display today).
+
+Multi-edge dot visual (`src/components/nodes/handle-dot.tsx` + `base-node.tsx`):
+- **Outer ring on `multiple:true` dots** via a stacked `box-shadow` in the datatype color. Click target unchanged. Tooltip suffixes "· multi" so the label reads it too. Tells you at a glance which ports accept more than one wire — no node-geometry reshape, no "+" button, no auto-spawn surprises.
+- `BaseNode` threads `io.multiple` into the DotHandle for both left and right rails.
+
+NodePropertiesPanel (`src/components/layout/node-properties-panel.tsx` + `src/lib/hooks/use-selected-node-with-properties.ts`):
+- **New right-edge floating panel.** Geometry mirrors Library / Queue (320 px wide, vertically centered, max 70 vh; same `bg-popover/95` / `rounded-2xl` / soft shadow chrome).
+- **Auto-shows iff exactly one node is selected AND its schema declares a `Properties` component.** Otherwise renders nothing — no empty-state placeholder. The user's "no empty properties panel" rule from ADR-0012 holds.
+- **QueuePanel auto-steps-aside** when properties takes the slot (shared `useSelectedNodeWithProperties` hook). Deselecting brings the queue back; selection is the single source of truth for which right-edge surface is showing.
+- Close button = deselect the node (no separate panel-open flag to keep in sync).
+- Re-mounts the Properties component on `key={node.id}` so transient state doesn't bleed between nodes when you click around.
+
+Persisted-state migration v3 → v4 (`src/lib/stores/workflow-store.ts`):
+- `LLMTextNodeConfig` collapses `{ user, system, model }` → `{ model }`. Migrate funnels v1 (`{ prompt, model }`), v2, and v3 (`{ user, system, model }`) all down to `{ model }`, defaulting missing models to canonical sonnet. Idempotent on already-v4 payloads. Pre-existing inline `user`/`system` strings are intentionally discarded — they were going to vanish from the UI either way, and re-wiring them with a Text node takes seconds.
+
+Tests (180 total, +19 vs 3.1b):
+- `tests/component/nodes/node-llm-text.test.tsx` rewritten end-to-end for the new shape (schema assertions, output-only body, model picker in Properties, multi-edge user concatenation, image-count echo, empty-input throw, abort handling).
+- `tests/component/nodes/handle-dot.test.tsx` (new): the multi-handle outer ring shows up for `multiple:true` and is absent for single handles.
+- `tests/component/layout/node-properties-panel.test.tsx` (new): panel auto-shows / auto-hides per selection rules, close-button deselects, `updateConfig` writes through to the workflow store, per-instance labels render in the header, QueuePanel coexistence (hides when properties takes over, returns on deselect or selection of a no-properties node).
+- `tests/unit/stores/workflow-store.test.ts` migrate-block rewritten for v4: strips `prompt`/`user`/`system` from any prior llm-text config, idempotent on already-v4, defaults missing model.
+
+Browser verified: select an LLM Text node → properties panel slides in on the right with the model dropdown; deselect → queue button comes back. Multi handles on the LLM Text node carry a visible outer ring. Connecting two Text nodes to `user` runs the engine with both concatenated.
+
+## 2026-05-20 — M0a Slice 3.1b: Handle spacing + edge selection + shift-drag selection box
+
+Three direct follow-ups from the user testing 3.1a in the browser:
+
+> "arent the inputs to close from each other on the llm text node ? also clicking the connection between nodes should cancel the connection or ? holding shift to create a selection box works well when going from left to right ..from right to left makes the boxes move and resize somehow"
+
+Fixes:
+
+- **Handle rail spacing** (`src/components/nodes/base-node.tsx`): switched from `flex justify-center gap-1` to `flex justify-around` and gave each dot a fixed `h-6` row. Multi-input nodes (LLM Text with `user` + `system`) no longer look like one fat dot — the two ports spread across the card height and, because LLM Text is tall, they end up roughly aligned with the user/system textareas in the body. Happy side-effect: handles on every node now scale gracefully as the body grows or shrinks (`justify-around` means N inputs always get equal share of the card height).
+- **Edge selection + keyboard delete** (`src/components/canvas/canvas-flow.tsx`, `src/lib/stores/workflow-store.ts`, `tryHandleDeleteKey`): click an edge → it highlights in the accent colour (thicker stroke). Backspace / Delete removes selected edges the same way it removes selected nodes; shift-click stacks edges into the selection so you can drop several with one keystroke. Implementation mirrors the existing node-selection plumbing exactly:
+  - `WorkflowState` gains `selectedEdgeIds: string[]` + `setSelectedEdgeIds`.
+  - `removeEdge` / `removeNode` defensively clean cascading edge ids out of `selectedEdgeIds` so a Backspace never tries to re-remove a ghost.
+  - `toFlowEdge(e, selectedIds)` writes the `selected` flag into the React Flow edge + applies the accent style.
+  - `onEdgesChange` walks the batch the same way `onNodesChange` does — incremental add/remove per `select` event so shift-click and empty-canvas deselect both behave.
+  - `tryHandleDeleteKey` widened to delete both nodes and edges in one keystroke (covered by tests for each path independently + the combined case).
+- **Shift-drag = selection box regardless of where it starts** (`canvas-flow.tsx`): added a `shiftHeld` flag (synced from `keydown` / `keyup` on document plus a `blur` clear on window) and pass `nodesDraggable={!shiftHeld}` to React Flow. Pre-fix, starting a shift-drag inside a node turned into a node-move because the node "claimed" the mousedown event (which was why L→R worked but R→L felt like "the boxes move and resize"). With nodes locked while Shift is held, the drag always falls through to RF's selection-box mode no matter the direction.
+
+Tests (161 total, +7 vs 3.1a):
+- `tests/unit/canvas/delete-key-handler.test.ts` widened: every existing case threads the new `selectedEdgeIds` / `removeEdge` fields through a `mockState()` helper, plus two new tests (edge-only delete, combined node+edge delete).
+- `tests/unit/stores/workflow-store.test.ts` gains 4 `edge selection` describe-block tests: `setSelectedEdgeIds` round-trip, `removeEdge` clears the id from selection, `removeNode` cascade also scrubs cascading edge ids from selection, `clear()` resets both selection sets.
+- `tests/component/nodes/base-node.test.tsx` gains 1 regression guard: the handle rail uses `justify-around` and never reverts to the old crowding combo `justify-center + gap-1`.
+
+Browser verified: hover and click a curved edge between two nodes → it lights up in accent; Backspace removes it without touching either node. Shift-drag from the right side of a node toward the left now draws a selection box that picks up everything it crosses. LLM Text's two input dots sit at clearly separate heights instead of stacking on top of each other.
+
+## 2026-05-20 — M0a Slice 3.1a: Node chrome redesign + LLM Text restructure
+
+User feedback the moment 3.1 shipped: "the llm selection should be a dropdown … input should be user prompt and system prompt … the output should be on the node itself … no system or out is needed (those labels can appear if we hover the inputs/outputs ports with the mouse, as a tooltip) … no lines underneath … the text area can be bigger and not have a different color than the node … the margin between the edges of the node and the text area can be smaller, almost close to the edge". All applied; the result is a single-surface chrome that drops every divider it doesn't earn and lets bodies go flush to the card edge.
+
+BaseNode (`src/components/nodes/base-node.tsx`):
+- **Header is one row, no `border-b`** — icon · editable title · status chip. The body now flows visually out of it instead of stacking under a divider.
+- **Footer with handle labels deleted entirely.** Handle labels live in the dot's hover tooltip (see `DotHandle` below). Saves real estate + removes the noise.
+- **Body wrapper has zero padding.** Each node body owns its own spacing so it can sit flush against the card edge when the design calls for it (textareas, image previews). Bodies that want breathing room add `px-3 py-…` themselves.
+- Default min-width 220 → **240 px** so textareas have a touch more breathing room without us shrinking the type.
+
+DotHandle (`src/components/nodes/handle-dot.tsx`):
+- **Tooltip on hover replaces inline labels.** The label is still part of the `NodeIO` schema; it's just disclosed on hover via the Radix tooltip (a11y + keyboard friendly via the same primitive we already use elsewhere).
+- Inline `<span>` label rendering removed; the wrapper `<div>` with the gap is gone — the handle dot itself is now the tooltip trigger.
+
+Node bodies — new shared grammar:
+- **Same bg as the card** (transparent / `bg-foreground/5` for focus washes). Never `bg-background/60` boxes inside the card any more.
+- **No borders on inline inputs.** Focus state is a faint background wash, not a coloured border.
+- **Section dividers are hair-thin (`bg-border/30`)** and inset by the body's horizontal padding so they don't touch the card edge.
+
+Text node (`src/components/nodes/node-text.tsx`):
+- Textarea is now flush, transparent, borderless, 4 rows by default, with `text-sm` (was `text-xs`). Wraps the bottom corners of the card so the typing area extends edge-to-edge.
+
+LLM Text (`src/components/nodes/node-llm-text.tsx`) — major restructure:
+- **Schema**: two text input handles now (`user` + `system`). Config gains `system: string`, renames the old `prompt` to `user`. Default model unchanged (`anthropic/claude-sonnet-4.5`).
+- **Body**: model dropdown (native `<select>` over a curated list of OpenRouter ids; styled flush with a chevron suffix; custom configs / migrated ids render as `… (custom)`) · `user` textarea (primary, 3 rows) · `system` textarea (smaller, muted, 2 rows) · output preview that only renders when `record.status === "done" || "cached"`.
+- **Execute**: upstream-wins-over-config for both `user` and `system` (empty upstream is treated as actually empty; only `undefined` from an unconnected handle falls back to the inline config). Throws a friendly "User prompt is empty — type one inline or wire a Text node into the `user` handle." when neither path provides a value. Stub latency + AbortError plumbing unchanged.
+
+Image node (`src/components/nodes/node-image.tsx`):
+- Body wrapper now owns the new flush padding. Sub-chrome (link chip, URL input) repainted in the new grammar (transparent / soft-tinted, borderless). Upload zone keeps its dashed `border-border/40` boundary on purpose — it's a distinct affordance where the explicit "drop here" perimeter pulls its weight.
+
+Persisted-state migration (`src/lib/stores/workflow-store.ts`):
+- **`version` bumped 2 → 3** with a real `migrate` that walks every node and rewrites any `llm-text` config from `{ prompt, model }` → `{ user, system, model }`. Tolerant: re-running against already-migrated configs preserves them; missing `model` defaults to canonical sonnet; non-`llm-text` nodes pass through untouched. No saved canvas loses its prompt.
+
+Tests (154 total, +11 vs 3.1):
+- **Updated** `tests/component/nodes/node-llm-text.test.tsx` (9 tests, was 5): post-redesign schema shape (inputs = user+system, config = user+system+model); body renders model dropdown + user/system textareas + onChange firing; custom-model option appears when the config's model id isn't in the curated list; output preview renders for done/cached records; output preview hidden for idle; execute prefers upstream user over inline config; execute falls back to inline when upstream unconnected; execute prefers upstream system over inline system; execute throws when both upstream and inline user are empty; execute aborts on signal.
+- **Added** to `tests/component/nodes/base-node.test.tsx` (2 tests, was 11): regression guards that no handle label text renders inline on the body, and no `<footer>` element exists.
+- **Added** to `tests/unit/stores/workflow-store.test.ts` (4 tests): v2→v3 migrate renames `prompt`→`user` + seeds empty `system`; tolerates already-migrated payloads (idempotent); defaults missing `model`; tolerates a payload with no nodes at all.
+
+Docs: ADR-0021 records the chrome decision (problem + options + decision + the new body grammar all spelled out). CHANGELOG entry (this). GLOSSARY entries for the new vocabulary land alongside.
+
+Browser verified: existing canvases migrate cleanly (open the page → an old llm-text node with `prompt: "write a haiku"` becomes a Text node body with the same content in the user field). Run still cascades the chip lifecycle and the output text now renders below the system field in the LLM Text body itself. Hover any handle dot → label tooltip pops out away from the card.
+
+## 2026-05-19 — M0a Slice 3.1: Run engine + LLMText stub + status chip + Run button
+
+User push: "sure lets do it." First slice of the M0a Slice 3 ("Run engine + first executable node") work, scoped to stay zero-spend — every API call is stubbed for now; real Fal-OpenRouter wiring is Slice 3.2.
+
+Engine (new `src/lib/engine/run-workflow.ts` + `src/lib/engine/hash.ts`):
+- **`runWorkflow({ nodes, edges, registry, cache, signal, onProgress })`** — strict-topological serial evaluator. Emits a `pending` record for every node up-front so the UI paints the run shape immediately, then walks the graph: collect upstream outputs by handle, derive a stable content hash, check the cache, hit → emit `cached`; miss → emit `running` → await `execute()` → emit `done` with `elapsedMs`. Throws stop the run; everything still pending becomes `cancelled`. Aborts mid-execute become `cancelled` (not `error`) so the user can tell intentional cancel apart from real failures.
+- **`computeNodeHash(node, upstreamHashesByTargetHandle)`** — `fnv1a_64(stableStringify({ kind, config, deps }))`. `deps` is sorted by `(handle, sourceHash)` so swapping which input a value feeds (e.g. moving an edge from `system` to `user`) busts the cache, and multi-input handles hash independently of edge-draw order.
+- **`topologicalSort(nodes, edges)`** — Kahn's, stable tie-break by original node order. Returns `{ order, hasCycle }`; cycles emit an `error` record on every node with `"Cycle detected in workflow"`.
+- **`hashString` + `stableStringify`** — tiny FNV-1a + recursive key-sorted JSON. Same input → same 16-char hex, no external deps, no BigInt. Doc-comments explicitly forbid mixing the two from anywhere else.
+
+Execution store (new `src/lib/stores/execution-store.ts`):
+- **Zustand store, in-memory only** (no persist — stale "running" records on reload would lie). Holds `{ runId, isRunning, records: Map<nodeId, ExecutionRecord> }`. `getRecord(id)` returns the current record or `undefined` (= implicit `idle`).
+- **`startRun()`** — preempts any in-flight run (`runId` guard drops late progress callbacks from the dead run), creates a new `AbortController`, calls `runWorkflow` against the live `workflow-store` snapshot, mutates `records` on each progress event (clones the Map for Zustand subscription correctness).
+- **`cancelRun()`** — aborts the active controller. UX-coupled to the Run-button cancel state.
+- **`clearRun()`** — wipes records, keeps the cache (next run is instant). **`clearCache()`** — drops the cache (next run re-executes everything).
+- **Session cache** lives at module scope (not in Zustand) so the engine can mutate it inline during a run without forcing a Map-clone on every cache write.
+
+New executable node — `src/components/nodes/node-llm-text.tsx`:
+- **Schema**: `kind: "llm-text"`, category `ai-text`, one `text` input (`system`), one `text` output (`out`), config `{ prompt: string, model: string }` defaulting to `anthropic/claude-sonnet-4.5` (matches the Prism env default so behaviour is identical when Slice 3.2 flips the stub off).
+- **Body**: prompt `<textarea>` + model `<input>`, both with `stopPropagation` on pointer down so typing doesn't move the node.
+- **Stubbed `execute()`**: 800 ms abortable sleep → returns `{ type: "text", value: "[stub <model>] system=\"…\" user=\"…\"" }` — deterministic so the cache is observable end-to-end, with truncation so long prompts stay readable.
+- Registered in `all-nodes.ts`; shows up under "AI · Text" in the AddNode popover.
+
+Per-node status chip (new `src/components/nodes/status-chip.tsx`):
+- Lives in the BaseNode header slot Slice 2.4 vacated. Subscribes narrowly to `useExecutionStore((s) => s.records.get(nodeId))` so unrelated nodes don't re-render on every progress emit.
+- Six visuals (idle = render nothing): pending (dashed circle, muted), running (spinner, accent), done (check, emerald), cached (lightning, muted-emerald), error (alert, destructive), cancelled (minus, muted). Tooltip surfaces the precise hint — done shows `elapsedMs`, error shows the message text, cached explains "from cache — inputs unchanged".
+- `aria-label` mirrors the tooltip for screen readers; `role="status"` so it announces transitions.
+
+Run button (new `src/components/layout/run-button.tsx`):
+- Top-right chrome cluster is now **`Gallery · Run · AddNode`** — reads left-to-right as "look-at-past-work → kick-off-current → extend-current". Slice 3.1's first chrome addition since 2.4.
+- Two states: idle (Play icon, accent-filled, disabled when the graph is empty) and running (spinner + Square + "Cancel" label — same hit target so a misclick mid-run is recoverable).
+
+Types (`src/types/node.ts`):
+- **`ExecutionStatus`** — the seven-state union above. **`ExecutionRecord`** — `{ status, output?, error?, elapsedMs?, hash? }`. Both consumed by the engine, the store, and the chip.
+
+BaseNode (`src/components/nodes/base-node.tsx`):
+- New required prop `nodeId: string` so the header can mount `<NodeStatusChip nodeId={nodeId} />`. `canvas-flow.tsx` already passed `id` through, so no caller churn.
+
+Tests (143 total, +38 vs 2.4):
+- **NEW** `tests/unit/engine/hash.test.ts` (7 tests): hash determinism + 16-char hex shape + collision sanity; `stableStringify` key-order insensitivity at any depth + array order preserved + primitives.
+- **NEW** `tests/unit/engine/run-workflow.test.ts` (15 tests): topo linear + cycle detection + dangling-edge tolerance; `computeNodeHash` stability + config-sensitivity + upstream-hash-sensitivity + handle-sensitivity + multi-input-order independence; `runWorkflow` happy path + cache hit on identical re-run + invalidation on upstream change + error halts the run + downstream becomes `cancelled` + cycle → error on every node + `pending` emitted before any `running` + AbortSignal mid-execute → `cancelled`.
+- **NEW** `tests/unit/stores/execution-store.test.ts` (6 tests): one-node happy path + cache hit on identical re-run + invalidation on `updateNodeConfig` + `clearRun` preserves cache + `clearCache` forces re-execute + `getRecord` returns `undefined` for unknown ids.
+- **NEW** `tests/component/nodes/node-llm-text.test.tsx` (5 tests): schema shape + body renders + `execute` returns deterministic stub mentioning model + prompt + incorporates system input + rejects with `AbortError` on signal.
+- **NEW** `tests/component/nodes/status-chip.test.tsx` (5 tests): renders nothing for idle + renders nothing for explicitly-idle + renders correct badge with `data-status` for each non-idle status + done surfaces `elapsedMs` in aria-label + error surfaces message in aria-label.
+
+Docs: ADR-0019 (run engine + cache + status model + failure semantics + hash recipe spelled out literally) and ADR-0020 (chip placement rationale). GLOSSARY entries for the new vocabulary. `STATE-AFTER-M0a-slice3.md` skeleton (will be filled in as 3.2 + 3.3 land).
+
+Browser verified: add Text("haiku about lisbon") → drag edge into LLMText → Run pill in top-right → spinner appears in the LLMText header → ~800 ms later it flips to a green check, output is `[stub anthropic/claude-sonnet-4.5] user="haiku about lisbon"`. Click Run again → both chips flip to the cached lightning bolt immediately. Edit the Text upstream → click Run → Text re-runs `done`, LLMText re-runs `done` with the new content (cache invalidated as designed).
+
+## 2026-05-19 — Slice 2.4: Keyboard-delete + double-click-to-rename on nodes
+
+User push: "why our nodes have a trash icon... we should be able to delete it by clicking the delete on the keyboard or? and that place we can leave for other things... also double clicking the nodes title should allow us to quickly rename it." Both standard for every node-graph editor (Figma, Blender, ComfyUI); the trash icon was a Slice 1 expedient that had outlived its usefulness.
+
+Node chrome:
+- **Trash icon removed from BaseNode header.** Keyboard `Backspace` or `Delete` deletes the selected node(s) via a document-level handler we install ourselves (see "Keyboard plumbing" below). The freed header space is reserved for Slice 3's per-node status chips (cached / running / error).
+- **`onDelete` prop dropped from BaseNode**; `canvas-flow.tsx` no longer threads it through.
+- **Double-click the node title → inline rename.** Title becomes an autofocused input pre-filled with the current custom label (blank if the node still has the schema default — placeholder hints the default). Enter or blur commits; Escape cancels and reverts. Submitting empty clears the per-instance label so the header falls back to the schema title.
+- The title is intentionally a plain `<span>` (no `role="button"`, no `tabIndex`) — critical because keyboard delete handlers (ours, React Flow's, anyone's) typically ignore key presses while focus is on a button/input. Making the title focusable would silently break Backspace/Delete on selected nodes. Single-click bubbles through to React Flow's node-selection logic instead.
+- The rename input opts out of React Flow drag/pan via `stopPropagation` + the `data-nodrag` convention so the node doesn't slide around while you're typing.
+
+Keyboard plumbing (in `canvas-flow.tsx`):
+- **`tryHandleDeleteKey(event, getState)`** — pure helper, exported for unit tests. Detects Backspace/Delete, bails out for editable targets (`INPUT` / `TEXTAREA` / `SELECT` / `contentEditable`), then calls `removeNode` for each id in `selectedNodeIds`.
+- Installed via a document-level `keydown` listener in `CanvasFlowInner`. We deliberately set `deleteKeyCode={null}` on `ReactFlow` so RF's built-in handler stays out of our way — RF reads selection from its INTERNAL store which lags one render behind our props, making "click + immediately press Delete" flaky. Doing it ourselves with the workflow store as the only source of truth keeps things consistent and trivially testable.
+- **Selection mirror fix.** `toFlowNode` now sets `selected: selectedIdSet.has(n.id)` so React Flow's visual selection (the accent ring) actually shows. Without this, controlled-mode RF doesn't know which nodes are selected even though our store does. Was a pre-existing latent bug surfaced by removing the trash button (selection didn't *visibly matter* before).
+- **Selection-merge fix.** `onNodesChange` now applies select changes incrementally on top of the current set instead of overwriting with only the `selected:true` ones. Shift-click multi-select and empty-canvas deselect both work correctly now.
+
+Data model:
+- **`NodeInstance.label?: string`** — optional per-instance label. Persisted via the workflow store (no version bump needed; field is additive and undefined falls back gracefully).
+- **`renameNode(id, label?)`** action: trims the input, normalizes empty/whitespace/undefined to a cleared label. Missing-id calls are a no-op.
+
+Tests (105 total, +22 vs 2.3):
+- **NEW** `tests/component/nodes/base-node.test.tsx` (11 tests): renders schema title vs custom label, no Delete button, double-click → autofocused input with the right initial value, Enter/blur commits, Escape cancels, empty submit clears, title is a plain non-focusable span (regression guard for keyboard-delete), when `onRename` is omitted the title is read-only.
+- **NEW** `tests/unit/canvas/delete-key-handler.test.ts` (8 tests): non-delete keys ignored, no-selection no-op, Backspace + Delete both fire `removeNode` for each selected id, `INPUT` / `TEXTAREA` / `SELECT` / `contentEditable` targets are ignored so typing doesn't wipe the canvas.
+- Added to `tests/unit/stores/workflow-store.test.ts` (3 tests): renameNode trims + sets, clears for empty/whitespace/undefined, no-op on missing id.
+
+Docs: GLOSSARY entry on the node chrome conventions.
+
+Browser verified: spawn Text node → click footer to select → Backspace removes node; double-click title → input opens with focus + placeholder → type new label → Enter persists.
+
+## 2026-05-19 — Slice 2.3 follow-up: fix env-var bug breaking real file uploads
+
+User report after testing Slice 2.3 with an actual file from disk: the file picker opened, OS gave us the file, and then a toast: "logo.png: Supabase env vars are not set." Even though `.env.local` was loaded by Next at server start ("Environments: .env.local" in the dev log) and unit tests + the smoke-upload Node script both worked.
+
+Root cause: `src/lib/supabase/client.ts` was wrapping its env reads in a tiny `readEnv(name)` helper that did `process.env[name]` — a **dynamic** indexed lookup. Next.js / Turbopack only statically inline `process.env.NEXT_PUBLIC_*` accesses at build time when they're **literal** property accesses. A dynamic indexed lookup stays as a runtime read against `{}` in the browser bundle, so the values come back `undefined` no matter what's in `.env.local`. The Node-side smoke script and the unit tests pass because in those environments `process.env` is the real Node env and the dynamic lookup works fine — the bug is browser-bundle-specific.
+
+Fix:
+- `getSupabaseClient`, `isSupabaseConfigured`, and `getAssetsBucket` now read each env var as a literal `process.env.NEXT_PUBLIC_*` access. Verified by grepping the rebuilt static chunk for the project URL + anon key — both inlined as plain strings.
+- A big doc comment on the module spells out the gotcha so the next person doesn't get clever with a helper again.
+- Error message updated to remind: "…then restart `npm run dev` so the new env gets baked into the bundle."
+
+Regression test:
+- **NEW** `tests/unit/supabase/client-static-env-access.test.ts` (2 tests). Reads the supabase client source as text and fails the build if any `process.env[` dynamic lookup gets reintroduced, and asserts each required env var name appears as a literal `process.env.NAME` access. Strips comments before scanning so the explanatory doc doesn't trip the regex.
+
+Tests now 83 (+2). Lint + tsc clean. Dev server restarted with `rm -rf .next` to force a fresh compile that sees the fixed module.
+
+## 2026-05-19 — M0a Slice 2.3: Upload-first UX polish (no popover middleman + node upload zone)
+
+User push, right after 2.2 shipped: "should just clicking the plus already prompt a window for me to choose a file from the disk? and the image node is not yet the final solution or? since its still only able to input a url?" Both diagnoses spot-on — the popover sat in front of the OS picker for the 99% path, and the Image node's empty state still asked for a URL even though disk-upload now works everywhere else.
+
+Library header:
+- **`+` now fires the OS file picker directly.** No popover, no two-click middleman. While uploading, the button swaps to a spinner with an inline "Uploading…" copy so the user sees progress without anything obstructing the panel.
+- **New tiny link-icon button** next to `+` opens a stripped-down URL-only popover (260 px wide, single field + submit). The URL path is rare enough that giving it its own affordance keeps the primary uncluttered.
+- `NewAssetPopover.tsx` deleted; replaced by `library-actions.tsx` exporting `UploadAssetButton` + `AddAssetUrlButton`.
+- Empty-state CTA copy updated to match ("Click + to upload from disk, or drop images right here").
+
+Image node:
+- **Empty state is now an upload zone** (dashed-border square with Upload icon + "Upload or drop image" / "or drag from Library" copy). Click → OS picker; drop OS files → straight through the same `importImageFiles` pipeline as the Library. The first uploaded file auto-links this node (and lands in the Library as a reusable asset); extras stay in the Library, surfaced through a single batched toast.
+- **URL paste demoted to a tiny "Or paste a URL ▾" disclosure** below the upload zone — same secondary-action pattern as the Library header.
+- **Free-URL preview gets a corner ✕ Clear button** on hover so the user can roll back to the upload-zone empty state without hunting for an input field.
+- Linked-asset semantics unchanged (Unlink still preserves the URL).
+
+Tests (81 total, +5 vs 2.2):
+- **NEW** `tests/component/library/library-actions.test.tsx` (5 tests): Plus button has no popover; file picker selection triggers upload; spinner shown while in-flight; URL popover stays closed by default + submits as `url`-source.
+- Rewrote `tests/component/nodes/node-image.test.tsx` for the upload-first empty state: upload zone rendered by default, OS drop + file picker both upload+auto-link, paste disclosure expands, free-URL Clear button works, linked nodes don't get a Clear button.
+- Deleted `tests/component/library/new-asset-popover.test.tsx`.
+
+Docs: GLOSSARY refreshed to describe the split-action header and upload-zone Image node body.
+
+## 2026-05-19 — M0a Slice 2.2: Cloud-canonical assets (Supabase Storage)
+
+User push: "if you want then we can create a supabase if this is too hard to make it local... how we did in prism? to be able to generate some images where I added something from the computer as input reference?" Right diagnosis — `blob:` URLs from Slice 2.1 are browser-session-local; remote inference APIs (Fal, Higgsfield) can't fetch them. Going cloud-canonical now unblocks Slice 4's image gen and removes the whole "local-only bytes can't ride downstream" footgun.
+
+Storage:
+- **Existing CookBook Supabase project** (`bnstnamdtlveluavjkcy`, sa-east-1) adopted; we don't touch the legacy `models`/`generations`/`generated_textures`/`reference-images` buckets from a previous app.
+- **New `cookbook-assets` bucket** provisioned via `cookbook_assets_bucket` migration: `public: true`, 30 MB server-side cap, MIME-allowlisted to `png/jpeg/webp/gif`. Permissive MVP RLS policies (`cookbook_assets_anon_select/insert/delete`) — anyone with the publishable key can do anything inside this bucket. Will tighten with GitHub auth + per-user prefixes when multi-user lands.
+- **`src/lib/supabase/client.ts`** — singleton browser client. Reads `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from env, throws a clear actionable error if either is missing. `auth: { persistSession: false }` because we have no auth yet.
+- **`src/lib/library/upload-asset.ts`** — `uploadImageAsset(file)` builds an `images/<8-hex>/<safe-filename>` key (collision-proof + dashboard-browseable), uploads with `upsert: false` + 1y cache header, returns `{ bucket, key, url, mime, sizeBytes }`. `deleteAssetObject(bucket, key)` is best-effort (logs but doesn't throw on Supabase errors so UI cleanup never strands).
+- `.env.example` committed; `.env.local` gitignored.
+
+Type system:
+- **`ImageAssetSource` flipped to `remote` + `url`** (was `blob` + `url`). Remote carries `{ bucket, key, url, mime, sizeBytes }`. `url` stays for the paste-a-URL escape hatch. Future `signed` variant slots in alongside without breaking anyone.
+- **v2 → v3 migrate** drops orphaned `blob` shapes (their bytes lived only in IndexedDB which we no longer write — re-uploading is the only honest recovery).
+
+Store + consumers:
+- `asset-store.createImageAssetFromFile` is the same name but now uploads to Supabase *first*, only commits the metadata record if the upload returns a URL. If the network drops, no half-built rows. `removeAsset` is still async; now deletes the storage object for `remote` sources.
+- IDB blob layer + `useImageAssetUrl` hook + their tests all **deleted**. `fake-indexeddb` devDep removed. `AssetCard` / `node-image` body / `asset-to-node` all read `source.url` directly — sync, no async dance. The Image node's Unlink action now always preserves the URL because every source has one.
+
+UI:
+- `NewAssetPopover` keeps the upload-first layout; adds an in-flight "Uploading…" copy + disables the drop zone while a batch is uploading so the user doesn't re-trigger.
+
+Tests (76 total, up from 71):
+- **NEW** `tests/unit/library/upload-asset.test.ts` (10 tests): key sanitization (path-traversal, diacritics, repeated separators, fallback-to-`upload`), upload happy-path round-trip, error message propagation, missing public-URL guard, MIME fallback, idempotent delete.
+- Rewritten `tests/unit/stores/asset-store.test.ts` for the cloud-backed path (with mocked uploader): no-half-records-on-upload-failure, remove deletes from Supabase, url-source bypasses upload.
+- Rewritten `tests/component/library/{asset-card,new-asset-popover}.test.tsx`: thumbnails render from `source.url` for both source kinds; popover shows "Uploading…" during in-flight upload.
+- Rewritten `tests/component/nodes/node-image.test.tsx`: Unlink preserves the asset URL (uniform behaviour now that every source has a real URL); execute pulls from the linked asset's URL.
+- Deleted `tests/unit/library/asset-blobs.test.ts` (module is gone).
+
+Docs: ADR-0018b (cloud-canonical storage + permissive MVP policies + post-mortem on the IDB detour); GLOSSARY refreshed; ROADMAP / STATE marked Slice 2.2 shipped.
+
+## 2026-05-19 — M0a Slice 2.1: Library upload-first (IndexedDB blobs)
+
+User correction immediately after Slice 2 shipped: "the way to add images wouldn't be to paste a URL — it would be uploading from the computer, less likely to add by URL." Upload-from-disk becomes the primary path; URL paste is demoted to a secondary disclosure for the rare case where the user already has a public URL.
+
+Storage:
+- **Asset blob store** (`src/lib/library/asset-blobs.ts`): IndexedDB wrapper (`putBlob` / `getBlob` / `removeBlob` / `getBlobUrl` / `revokeBlobUrl`). Blob bytes live in IDB keyed 1:1 with `asset.id`; metadata stays in localStorage. `getBlobUrl` mints + caches a session-local `blob:` URL per asset; `revokeBlobUrl` cleans up. The on-disk record is `{ type, bytes: Uint8Array }` so Blob round-trips work in every env (browsers + happy-dom + fake-indexeddb).
+- **`ImageAssetSource` discriminator** (`src/types/asset.ts`): `Asset` no longer carries `url` directly. `source: { type: "blob"; mime; sizeBytes } | { type: "url"; url }`. Cloud sync later slots in a `remote` variant without touching consumers. v1→v2 migrate flattens the old `{ url }` shape into `{ source: { type: "url", url } }`.
+- **Per-component URL resolution** (`src/lib/library/use-image-asset-url.ts`): `useImageAssetUrl(assetId)` returns the renderable URL — sync for `url`-source (via derivation, no effect cascades), async for `blob`-source (effect-populated state). All thumbnails (AssetCard, Image node body) go through it.
+
+Store API:
+- `createImageAssetFromFile(file, params?)` is the new primary entry: writes the blob to IDB first (atomic — never end up with an asset record pointing at a missing blob), then commits the metadata. Returns the asset id, which doubles as the blob key.
+- `createImageAssetFromUrl({ url, name?, tags?, scope? })` is the secondary path, kept for the URL paste flow.
+- `removeAsset` now async and cleans the IDB blob + revokes the cached object URL for blob-source assets.
+
+Import pipeline:
+- `src/lib/library/import-files.ts` — single chokepoint for "import these files" used by both the popover's file picker / drop zone and the Library panel's surface drop zone. Enforces image-only MIME + 25 MB per-file cap; returns a batched `{ created, errors, ids }` so the caller can toast once.
+
+UI:
+- **`NewAssetPopover`**: upload-first. Top section is a big "Choose files or drop here" zone wired to a hidden multi-file input; secondary disclosure ("Or add an image URL ▾") collapses the URL paste form by default. One click → OS picker; pick N files → N assets in one go with a single batched toast.
+- **`LibraryPanel` doubles as a drop target**: drop OS files anywhere on the panel body → assets. Drag-over highlight only triggers for `Files` (never for the in-app asset drag MIME, which targets the canvas).
+- **`AssetCard`** reads thumbnails through `useImageAssetUrl`, so URL-source and blob-source assets render identically.
+- **Image node**: linked-mode body reads URL through the same hook; execute() routes through the blob URL helper for blob-source links. Unlinking a *blob-source* link blanks `config.url` too (blob URLs are session-local — keeping a dead one would mislead). Unlinking a *url-source* link preserves the URL so the node stays standalone.
+- **`asset-to-node`** spawn rule denormalizes the URL only for url-source assets; blob-source nodes spawn with empty `url` and resolve at render time.
+
+Tests (20 new, total 71):
+- `tests/unit/library/asset-blobs.test.ts` — put/get/remove round-trip; getBlobUrl caching; revoke side-effects.
+- `tests/unit/library/import-files.test.ts` — accepts images, rejects non-images, enforces 25 MB cap, partial success.
+- `tests/unit/library/asset-to-node.test.ts` — distinct spawn rules for url-source vs blob-source.
+- `tests/unit/stores/asset-store.test.ts` — both creators, removeAsset cleans IDB + revokes URL, url-source bypasses IDB.
+- `tests/component/library/asset-card.test.tsx` — async thumbnail resolution + empty-source placeholder + delete.
+- `tests/component/library/new-asset-popover.test.tsx` — file input path, drop zone path, URL disclosure stays collapsed by default, expanded URL form creates url-source asset.
+- `tests/component/nodes/node-image.test.tsx` — body url-mode + linked url-source + linked blob-source Unlink behaviour + execute precedence (linked url > stale config.url; blob link → blob: URL; missing → fallback).
+
+Docs: ADR-0018 extended with the source-discriminator + IDB rationale; GLOSSARY updated.
+
 ## 2026-05-19 — M0a Slice 2: Library + Asset abstraction + drag-to-canvas
 
 First real reason to open the Library: it now holds typed `Asset`s and dragging one onto the canvas spawns the matching node already linked to the asset. Pure local persistence; Drizzle/SQLite swaps in for the same store API in Slice 5.

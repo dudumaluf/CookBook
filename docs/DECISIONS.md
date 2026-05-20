@@ -130,6 +130,44 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Floating panels overlap canvas content on very narrow viewports (<1024px); the prompt bar respects panel widths via CSS padding, but the welcome content does not yet. Acceptable for Day 1 — M0a's React Flow canvas pans freely so overlap stops mattering.
   - Right-click context menu is a simple in-place menu in Day 1 (no positional node picker). M0a upgrades it to a coordinate-anchored picker.
 
+## ADR-0018b — Cloud-canonical asset storage (Supabase) supersedes the IDB blob detour
+
+- **Date**: 2026-05-19 (M0a Slice 2.2; supersedes 0018a's storage choice)
+- **Context**: 0018a put uploaded bytes in IndexedDB and minted session-local `blob:` URLs for previews. That works for the UI but breaks the *actual goal* — Fal/Higgsfield/etc. can't fetch a `blob:` from your browser session. User flagged it immediately ("how we did in prism? to be able to generate some images where I added something from the computer as input reference") and we agreed to swap before the dust settled.
+- **Decision**:
+  1. **`ImageAssetSource` becomes `remote | url`**, no `blob`. `remote` carries `{ bucket, key, url, mime, sizeBytes }`. The `url` is a Supabase Storage public URL — fetchable from anywhere on the public internet, ready for any inference API to pull.
+  2. **Bytes live in Supabase Storage**, bucket `cookbook-assets`, public, MIME-allowlisted to `image/*`, 30 MB server-side cap (client checks 25 MB for headroom). Provisioned via the `cookbook_assets_bucket` migration; permissive RLS policies (`anon` can SELECT/INSERT/DELETE inside this bucket) are the explicit MVP shortcut and will be tightened once GitHub auth lands.
+  3. **`asset.id` is no longer the storage key.** Keys are `images/<8-hex>/<safe-filename>` — random prefix gives collision resistance with zero coordination, filename tail keeps the dashboard browseable. `asset.source.key` carries the storage key so `removeAsset` can delete it.
+  4. **Upload is atomic**: `createImageAssetFromFile` calls `uploadImageAsset` first; only commits a metadata record if Supabase returns a URL. A failed network mid-batch leaves the store unchanged for that file (the import pipeline surfaces a toast and keeps going for the rest).
+  5. **No client-side cache**. The Supabase CDN + the browser's HTTP cache do the heavy lifting. After the first paint a URL is effectively instant. Saves us from a write-through cache that would just complicate cleanup.
+  6. **`useImageAssetUrl` is gone** and `AssetCard` / Image node body read `source.url` directly. Async hook only made sense for the IDB indirection; with cloud URLs everything is sync.
+  7. **Migration v2 → v3 drops `blob`-source rows** since their bytes were never anywhere but local IDB (which we no longer write). Re-uploading is the only honest recovery; warning the user is the responsibility of whatever consumer reads the asset list (today: nothing — the list just stops including those rows).
+- **Why supersede instead of layer**: The IDB-then-upload-on-execute design (write-through cache, lazy lift) would have given us a brief offline window for previews — at the cost of two storage backends, dual cleanup, and a "the URL the API sees is different from what the preview saw" footgun. Cloud-canonical from the start eliminates the entire class of bugs and matches what we'd want for cloud sync anyway.
+- **Why not Fal's own `fal.storage.upload`**: zero infra but Fal-only — Higgsfield (and any future API) would need a parallel pipeline. Supabase gives us one URL that works everywhere.
+- **What we kept from Slice 2.1**: the `source` discriminator (small change to swap variants), the import pipeline (file picker + drop zone + MIME/size policy), the upload-first popover UI, the per-file batched error toasts. The bones of the Library survived; only the bytes-storage backend swapped.
+
+## ADR-0018a — Image source split (`blob` vs `url`) + IndexedDB for bytes
+
+- **Date**: 2026-05-19 (M0a Slice 2.1; supersedes the storage half of 0018)
+- **Context**: Slice 2 shipped with URL paste as the only image-import path. User correction: "the way to add images wouldn't be to paste a URL, it would be uploading from the computer." 99% of real flows are local files (own photoshoot, references, products). URL paste survives as an escape hatch for the rare known-public-URL case.
+- **Decision**:
+  1. **`ImageAssetSource` discriminator** lives on the asset:
+     - `{ type: "blob"; mime: string; sizeBytes: number }` — bytes in IndexedDB.
+     - `{ type: "url"; url: string }` — bytes behind a remote URL, no local storage.
+     A future `{ type: "remote"; key }` (Supabase Storage signed URL) slots in alongside without touching the rest of the system.
+  2. **Bytes live in IndexedDB**, not localStorage. The 5–10 MB localStorage cap a single phone photo blows trivially. `src/lib/library/asset-blobs.ts` is the wrapper (`putBlob` / `getBlob` / `removeBlob` / `getBlobUrl` / `revokeBlobUrl`). Metadata still goes through `localStorage` via Zustand `persist`.
+  3. **On-disk shape is `{ type, bytes: Uint8Array }`**, not a raw `Blob`. Blob serialization across structured-clone boundaries is environment-dependent (notably: happy-dom + fake-indexeddb drops the bytes leaving `{ type }` only, and some older Firefox versions had quirks). Storing a `Uint8Array` round-trips cleanly everywhere. Cost: one extra `arrayBuffer()` copy per write/read — acceptable for the volumes we deal with.
+  4. **Blob keys ARE asset ids** (1:1). Lets the Slice 5 Drizzle/SQLite swap stay a single FK relationship; no separate `blobId` field on the asset.
+  5. **URLs are session-local**: `getBlobUrl(assetId)` mints + caches a `blob:` URL per asset. They're not persisted anywhere because they're invalidated on reload. Consumers go through `useImageAssetUrl(assetId)` which renders sync for `url`-source and async for `blob`-source.
+  6. **Atomic asset creation**: `createImageAssetFromFile` writes the blob to IDB *before* committing the metadata. If IDB throws, the asset record is never created → no dangling references.
+  7. **Image node semantics for the new world**:
+     - Linked + url-source: `config.url` is denormalized at drag time and kept as a standalone fallback. Unlinking keeps it.
+     - Linked + blob-source: `config.url = ""` at drag time (no stable URL exists outside the session). Unlinking blanks it too — keeping a dead `blob:…` would mislead.
+     - `execute()` always re-resolves via the asset store when linked, regardless of source.
+- **Why not `OPFS` / `Filesystem Access API`**: OPFS is fine but adds a second persistence model (in addition to IDB metadata pattern); Filesystem Access requires explicit user grant and breaks the "local-first MVP, frictionless" feel. IDB is the path of least resistance and the same API surface we'd need anyway for a future offline cache.
+- **Why not `idb` wrapper**: 5 KB but adds a dependency for ~50 lines of trivial wrapping. Native IDB is fine here.
+- **Why the 25 MB per-file cap**: arbitrary but defensible — keeps writes fast, prevents a runaway photo from blowing the per-origin quota, easy to relax once we add image-resize on import (later slice).
+
 ## ADR-0018 — Asset model: discriminated union + scope + asset↔node spawn map
 
 - **Date**: 2026-05-19 (M0a Slice 2)
@@ -253,3 +291,414 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Trade-offs accepted**:
   - On very wide viewports the title pill sits visually high (compared to a top bar). Acceptable.
   - The Run button isn't visible on Day 1 — that's intentional (nothing to run yet). M0a restores it where it makes sense.
+
+## ADR-0019 — Run engine: topological + serial + hash-keyed output cache (M0a Slice 3.1)
+
+- **Date**: 2026-05-19
+- **Context**: M0a Slice 3 introduces the first executable node (LLMText). Before we can wire it to a real API in 3.2, we need a runtime that turns the static graph in `workflow-store` into actual `execute()` calls in the right order, threading outputs through edges, with predictable behaviour around re-runs (so the user doesn't pay twice for the same prompt) and cancellation (so a misclick mid-run is recoverable). The slice must remain a "no spend" milestone — every API call in 3.1 is stubbed.
+- **Options**:
+  - (a) **Parallel scheduler with a worker pool**. Maximum throughput, but the only nodes that benefit from parallelism are siblings under a fan-out, which we don't even have in M0a. Adds complexity (back-pressure, partial-failure semantics, ordering of progress callbacks) we can't justify yet.
+  - (b) **React-like reactive evaluator**. Every reactive node auto-updates on upstream change; executables run on demand. Elegant, but conflates "the graph state changed" with "the user asked for a run" — easy to invoke expensive nodes by accident when the user just adjusts a slider upstream.
+  - (c) **Strict-topological, serial, run-on-demand**. One pass per Run click. Cache keyed by `hash({ kind, config, sortedUpstreamHashes })` so re-runs of unchanged subgraphs are instant. Stops on first error; downstream becomes `cancelled`.
+- **Decision**: (c).
+- **Why**:
+  - Mirrors how every well-behaved node graph (Houdini, Blender, ComfyUI, GH) actually evaluates. The cost discipline ADR-0004 mandates (reactive vs executable) is preserved by tagging each schema with `reactive`; the engine uses the same uniform `execute()` call for both, and the *cost preview* + *approval gate* (Slice 3.3) decide when to actually run executable nodes.
+  - The hash cache is the smallest useful primitive that makes editing upstream nodes cheap. As long as the hash recipe stays stable across the codebase (FNV-1a over `stableStringify` — see `src/lib/engine/hash.ts`), the cache key is reproducible and we can later persist it (Slice 5 + SQLite).
+  - Serial keeps progress callbacks linear and the UI mental model trivial: one chip moves through `pending → running → done` at a time. Slice 3.x can re-introduce parallel execution surgically if (when) it becomes a bottleneck.
+  - Cancellation via a single `AbortController` per run lets the same plumbing serve both the user's Cancel click and Slice 3.2's network aborts.
+- **Hash recipe** (kept literal here because changing it silently busts every cached output):
+
+  ```
+  nodeHash = fnv1a_64(stableStringify({
+    kind:   node.kind,
+    config: node.config,
+    deps:   [ { handle, sourceHash } sorted by (handle, sourceHash) ]
+  }))
+  ```
+
+  `stableStringify` sorts object keys recursively. Array order is preserved (semantically significant). Within a single handle, upstream hashes are sorted so multi-input handles (iterators, future fan-ins) hash deterministically regardless of edge-draw order. *Across* handles, deps are sorted by `(handle, sourceHash)` so swapping which input a value feeds (e.g. moving an edge from `system` to `user`) busts the cache.
+- **Status model**: `idle | pending | running | done | cached | error | cancelled`. `cached` is distinct from `done` so the UI can communicate "this was free" (relevant once 3.3 ships the cost preview) and so the cost calculator can exclude it from totals.
+- **Failure model**: a single thrown `execute()` stops the run; everything still `pending` flips to `cancelled` (not `error`) so the user can tell what failed vs what simply didn't run. The store also exposes `failedNodeId` so the chrome can scroll the failing node into view in a later slice.
+- **Cache scope**: in-memory, session-lived (`Map<hash, output>` in module scope of `execution-store`). Slice 5 will persist it alongside the workflow itself in SQLite. We deliberately don't put the cache in Zustand state — the engine mutates it inline during a run, and rebuilding the Map on every cache write would defeat its purpose.
+- **Consequences**:
+  - One place (`src/lib/engine/run-workflow.ts`) for "how does a run actually happen". Adding parallelism, retries, partial re-runs, or cost-preview hooks all happen here.
+  - Reactive nodes (Text, Image) inherit the cache mechanism for free — their hash depends only on `config` so editing one bumps it and propagates downstream. No separate eager-eval path needed.
+  - The `LLMText` stub in 3.1 returns `{ type: "text", value: "[stub <model>] user=\"...\" }"` after an 800 ms abortable sleep. Same `execute()` signature the real version (Slice 3.2) will use → the engine integration stays unchanged when we flip the stub off.
+- **Trade-offs accepted**:
+  - Slow whole-graph re-runs if a single node *just* below the root changes (because every downstream node's hash invalidates). True today; mitigated by the fact our graphs are tiny and re-running is what the cache exists to make cheap.
+  - No "Run from this node downstream" yet. Will earn its keep when real users start having long graphs; cache invalidation already does the right thing for "edit upstream + Run all" so this is purely an ergonomics issue, not a correctness one.
+
+## ADR-0020 — Per-node status chip in the BaseNode header (M0a Slice 3.1)
+
+- **Date**: 2026-05-19
+- **Context**: The engine now emits per-node status events during a run. The UI needs to surface them without adding new chrome. Slice 2.4 freed the right-of-title slot in the BaseNode header (trash icon removed in favour of keyboard delete) precisely so this could land here.
+- **Options**:
+  - (a) **Floating progress bar / queue panel** at the bottom of the canvas. Centralized but disconnects status from the node it describes.
+  - (b) **Color the node's border** by status. Subtle, but error vs cached vs running all map awkwardly to the same border treatment, and breaks the existing selected-state border accent.
+  - (c) **Tiny status chip in the node header**, self-hiding when idle.
+- **Decision**: (c). One small `lucide` icon in accent/emerald/destructive, tooltip on hover with the precise hint ("Done in 124 ms", "From cache — inputs unchanged…", error message text). Idle = render nothing (no clutter pre-run).
+- **Consequences**:
+  - Re-renders are bounded by `useExecutionStore((s) => s.records.get(nodeId))` — only the nodes whose record actually changes re-render. Confirmed in the component tests + visual smoke.
+  - The chip uses the same Tooltip primitive as every other piece of chrome, so accessibility (aria-label fallback when no pointer device) comes for free.
+  - When Slice 3.3 lands the cost preview, the chip can grow a "$0.012" badge variant; the API surface (one record per node) doesn't need to change.
+- **Trade-offs accepted**:
+  - On very dense graphs the chip might compete visually with the node title. Mitigated by the auto-hide on idle and a deliberately small (h-3 / w-3) footprint. Will revisit if real workflows surface a problem.
+
+## ADR-0021 — Slim node chrome: one-row header, no footer, flush bodies, tooltip-only handle labels (M0a Slice 3.1a)
+
+- **Date**: 2026-05-20
+- **Context**: User feedback the moment Slice 3.1 shipped: "we need a node redesign in general for all nodes we have and future ones … no system or out is needed (which I guess are labels for the inputs and outputs ports or) … those labels can appear if we hover the inputs or outputs ports with the mouse, as a tooltip … I don't think we need the lines underneath and the text area can be bigger and not have a different color then the node … the margin between the edges of the node and the text area can be smaller, almost close to the edge". For the LLM Text node specifically: model = dropdown, body fields = user prompt + system prompt, output = on the node itself.
+- **Problem the prior chrome had**:
+  - Three visually separated panels (header / body / footer) with two internal `border-b` dividers made every node look like a stack of forms instead of a single object on the canvas.
+  - The footer band restated handle labels (`system · out`) that were already implied by the dots — pure visual noise.
+  - Bodies used a deeper-than-card background (`bg-background/60`) with a border for inputs and textareas. The card → body → input nested-shell aesthetic felt over-articulated for the lego mental model the user wants.
+  - The textarea padding inside the body padding made the typing area feel small relative to the node footprint.
+- **Options**:
+  - (a) **Soften only**: keep all three panels, but lighten dividers + bg tints. Doesn't address the visual-density complaint at the root.
+  - (b) **Single-surface chrome**: drop dividers, drop the footer, let the body flow flush from the header. Handle labels become hover tooltips on the dot itself.
+  - (c) **Full custom-per-node chrome**: scrap BaseNode, let each node draw its own card. Maximum flexibility, worst consistency, much more work each time we add a node.
+- **Decision**: (b). One shared chrome that does less:
+  - `<header>` is a single row: icon · editable title · status chip. **No `border-b`.**
+  - `<footer>` deleted entirely.
+  - The body wrapper has zero padding; each node body owns its own `px-3 py-…` so it can go literally flush against the card edge when the design calls for it (large image previews, edge-to-edge textareas).
+  - Default minimum width bumped 220 → 240 px so textareas have a bit more breathing room without us shrinking the type.
+  - Handle labels (`user`, `system`, `out`, …) move to a `Tooltip` on the dot itself. The label is still part of `NodeIO` — it's just rendered on hover rather than always-on. This keeps the schema author's intent for the label intact and gives keyboard / a11y users hover-equivalent disclosure through the Radix tooltip semantics.
+- **Body grammar (applies to every current and future node)**:
+  - Same bg as the card (transparent / `bg-foreground/5` for focus highlights only). Never a `bg-background/60` square inside the card.
+  - No borders on inline inputs. Focus state is a faint `bg-foreground/5` wash — visible but not boxy.
+  - Inline section dividers are a single-pixel `bg-border/30` line inset by the body's horizontal padding so the line never touches the card edge.
+- **LLM Text concrete consequences** (the canonical example of the new grammar):
+  - Two `text` input handles: `user` + `system`. Inline textareas in the body act as fallbacks when the handles are unconnected. Upstream always wins when both are present — composition is the natural way to build prompts, with the inline fields as the "single-node convenience" path.
+  - Model picker is a native `<select>` styled flush to match (no Shadcn dependency added — `appearance-none` + a chevron suffix is plenty). Curated starter list of OpenRouter model ids in `MODEL_OPTIONS`; if a config carries a non-listed id (custom config, migration, manual edit), a `<option value="…">… (custom)</option>` is appended so the dropdown can still represent it without losing the value.
+  - Output preview lives in the body itself, gated on `record.status === "done" || "cached"`. The node carries its own evidence. Subscribing narrowly via `useExecutionStore((s) => s.records.get(nodeId))` keeps re-renders local.
+- **Persisted-state migration**:
+  - `LLMTextNodeConfig` changed from `{ prompt, model }` to `{ user, system, model }`. Workflow-store `version` bumped 2 → 3 with a real migrate: any `llm-text` node config's `prompt` field becomes `user`, `system` is seeded `""`, missing `model` defaults to canonical sonnet. Already-migrated payloads pass through (tolerant migrate so re-runs are safe).
+- **Trade-offs accepted**:
+  - Permanent-visible labels are gone — discoverability of handle names now requires a hover. Mitigated by the dot's colour (datatype) already telegraphing compatibility, the schema description being one click away via the AddNode popover, and the LLM Text body inputs being labelled inline (so "user" and "system" handles map obviously onto the visible textareas).
+  - The `<select>` is native; styling fidelity vs the Shadcn primitives is slightly lower (the dropdown menu uses the OS chrome). Acceptable for MVP; we can swap to a Shadcn Select when we add async loading or search.
+  - Sub-chrome inside the Image node (link chip, URL input) was nudged toward the new grammar but the upload zone kept its dashed border — it's a distinct affordance that benefits from the explicit "drop here" boundary. Will revisit if it ever competes for attention.
+
+## ADR-0022 — ~~LLM Text body is output-only; model + settings live in a floating Properties panel; multi inputs telegraph via outer-ring dots~~ (M0a Slice 3.1c) — **SUPERSEDED by ADR-0023**
+
+- **Date**: 2026-05-20
+- **Context**: Continued node-redesign feedback right after ADR-0021 landed: "our [LLM node doesn't] need to have user prompt and system prompt inside the node — we use the inputs for this with text nodes — so the llm text node focus[es] on to display the output … I'm also missing the image input … and we need a logic to add more then one input if we want — we either add a new one when a current one gets connected or we add a button somewhere to add it." Referenced Weavy ("not for design or colors but how things are positioned") as inspiration for a properties-panel pattern where the model picker / temperature etc. live off-node.
+- **What the prior chrome got wrong (per the user)**:
+  - Inline `user` + `system` textareas inside the body duplicated wiring: you could connect a Text node to the `user` handle OR type inline; the precedence rules ("upstream wins, inline is fallback") were our convenience, not the user's mental model. The user's grammar is "compose with nodes" — inline editors muddy that.
+  - Model picker on the body wastes one of the most expensive UI bands (the always-on canvas surface) on a setting most users tweak once and never again.
+  - Image input was absent — the LLM node is meant to be vision-capable, but you couldn't even wire an image at the schema level.
+  - No way to pass more than one user prompt or reference image to a single LLM call without ballooning the schema with `user1`, `user2`, … inputs.
+- **Options**:
+  - (a) Add a "+ Add input" button per multi-capable port that spawns extra handles dynamically. Explicit, but doubles the schema mental model (static vs dynamic ports), bloats serialization (per-instance port lists), and gives every node author a footgun.
+  - (b) Auto-grow: render an extra empty port the moment a port gets connected. Elegant on first use, surprising on every later one (the node geometry reshapes whenever you wire), and forces us to garbage-collect orphan ports on disconnect.
+  - (c) **Single dot per handle, `multiple: true` accepts N edges**. The engine has supported this from Slice 3.1 day one (see `run-workflow.ts` aggregation) — only the dot needed a visual that telegraphs "more than one fits here". Zero schema churn, zero serialization changes, matches ComfyUI / TouchDesigner / Houdini precedent.
+  - For settings: a floating panel that surfaces only when one node is selected, mirroring the Library/Queue chrome family.
+- **Decision**: (c) + properties panel.
+  - **LLM Text body** is output-only. When the node has a `done` or `cached` record it renders the executed text; otherwise a one-line placeholder hinting the wire-then-Run flow + the configured model. No inline editors of any kind.
+  - **LLM Text inputs**: `user` (text, `multiple:true`), `system` (text, single), `image` (image, `multiple:true`). The runner concatenates multi-user chunks with blank lines so a prompt can be assembled from many sources (instructions + context snippets). System stays single — only one system prompt makes sense per call.
+  - **LLM Text config collapses to `{ model }`**. Future settings (temperature, top-p, stop, max tokens) land here as the Fal-OpenRouter route comes online in Slice 3.2.
+  - **NodeSchema gains `Properties?: ComponentType<NodeBodyProps>`**. Same props shape as `Body` so nodes can share rendering helpers between the two surfaces with no plumbing. Optional — Text / Image still have no properties panel because they have nothing to expose off-node.
+  - **NodePropertiesPanel** is a new right-edge floating panel (geometry mirrors Library/Queue): vertically centered, 320 px wide, max 70 vh. Auto-shows iff exactly one node is selected AND its schema declares a `Properties` component. Auto-hides otherwise. Empty selection / multi-select / nodes without properties = panel never appears (the user's "no empty properties panel" rule from ADR-0012).
+  - **QueuePanel auto-steps-aside** when the properties panel takes over. Both live at the right edge and would otherwise collide; selection becomes the single source of truth for which surface is showing.
+  - **Multi-input dot visual**: same dot, plus an outer halo ring drawn via box-shadow in the datatype color. Click target unchanged. Tooltip suffixes "· multi" so the label says it too.
+- **Why a single dot for multi-edges (not "+" buttons or auto-spawn)**:
+  - **Zero engine work** — the aggregation path already exists (`run-workflow.ts:252–274` joins per-handle inputs into arrays when `multiple:true`). Verified by the new test "concatenates multiple user upstreams".
+  - **Stable node geometry**. The node doesn't reshape as you wire, so the canvas layout you laid out is the canvas layout that ships.
+  - **Industry convention**. Most node-graph tools (ComfyUI, TD, Houdini, Blender) use multi-edge-into-one-port for this.
+  - **The user's two suggestions both have failure modes** (port explosion / surprise reshape) that this option dodges entirely. Will revisit if the multi affordance proves not discoverable enough.
+- **Persisted-state migration v3 → v4**:
+  - `LLMTextNodeConfig` collapsed `{ user, system, model }` → `{ model }`. The migrate funnels v1 (`{ prompt, model }`), v2, and v3 (`{ user, system, model }`) all down to `{ model }`, defaulting a missing `model` to canonical sonnet. Idempotent on already-v4 payloads.
+  - Pre-existing inline `user`/`system` strings are intentionally discarded — they were never going to survive the UI removal anyway, and re-wiring them with a Text node takes seconds. We elect explicit loss over silent retention of data that has nowhere to render.
+- **What this does NOT change**:
+  - Edge selection + Backspace-to-delete from Slice 3.1b. Already in place.
+  - The Run button, status chip, cache hashing — engine-side everything keeps working.
+  - Text + Image nodes — neither declares Properties yet because nothing earns off-node display today.
+- **Trade-offs accepted**:
+  - Quick "test a prompt without wiring a Text node" workflow is gone — you now always need a Text node upstream. This is the user's stated grammar; we follow it. We'll add an LLM Assistant DSL action in Slice 4 that auto-spawns the Text node so the friction surface is composition-time, not iteration-time.
+  - Properties panel competes with the Queue button for the same right-edge real estate. We resolve via mutual exclusion driven by selection, not user toggling. The "no empty panel" rule means there's no third state to be confused by.
+  - The multi-edge outer ring is the only visual hint that a port accepts multiples — beyond hover-tooltip text. If discoverability proves weak we can layer a small "+" badge or a count of currently-connected edges on top, without changing the data model.
+  - Image inputs in Slice 3.1c are still stubbed (count echoed in the placeholder response). Real vision dispatch lands in Slice 3.2 with the Fal-OpenRouter route.
+
+## ADR-0023 — Node-only model picker (no Properties panel); uniform port visuals; multi-edge stays invisible (M0a Slice 3.1d, supersedes ADR-0022)
+
+- **Date**: 2026-05-20
+- **Context**: The ADR-0022 design (output-only body + floating Properties panel + outer-ring multi dots) shipped and the user tested it the same evening. Three pieces of feedback came back at once:
+  > "i see you decided to create a properties panel, not sure we needed it … we decided before in the beginning not to have unless is needed which I think we could avoid and find a solution that involves finding a place on the node for the user to choose the llm to be used. maybe can be next to the title, or on the bottom of the node maybe. … also why the llm text node is not outputing the output … and why the inputs sockets look diferent then the output or other ports … these should all look similar, besides the colors that inform already what kinda of input is expected"
+
+  In other words: the panel was a violation of the ADR-0012 "no panel unless it earns its keep" rule (one control = one chip, not a whole floating surface); the panel *was visually covering the body* on selection so the output looked invisible; and the multi outer-ring broke port uniformity.
+- **Decision**: undo the three ADR-0022 affordances and replace each with a smaller, in-node solution.
+  - **Properties panel is removed entirely** (`NodePropertiesPanel`, the `useSelectedNodeWithProperties` hook, and the `Properties?` slot on `NodeSchema` all go). The QueuePanel stops checking selection and renders at the right edge unconditionally. Shell.tsx returns to its ADR-0013 / ADR-0015 layout.
+  - **Model picker moves into the LLM Text body** as a small inline chip pinned to the top of the body (above the output area). Always visible — both pre- and post-run — so changing the model and re-running is one click no matter the node state. The chip displays the curated label ("Claude Sonnet 4.5") with a `▾` chevron; click anywhere on the chip opens the native `<select>` (same MODEL_OPTIONS catalog). Not next-to-title (the title row already carries icon + editable label + status chip, and adding a control there fights the rename-on-double-click affordance) and not a footer (ADR-0021 already deleted footers). The body is now `[chip] [output-or-placeholder]` — two rows, both informative, neither speculative chrome.
+  - **All handle dots look identical except for the color**. The `multiple` outer ring is removed from `DotHandle`; the tooltip drops the "· multi" suffix; the engine still supports `multiple:true` (aggregation in `run-workflow.ts:252–274` is unchanged). Users discover multi-edge by trying — same convention as the rest of the rule of least surprise across our chrome ("you can just connect it").
+- **Why no panel at all (vs a smaller / dismissible panel)**:
+  - Repeats the ADR-0012 rule. We already rejected an always-empty Properties panel for that reason; bringing one back for one node (LLM Text) that has exactly one knob (model) was over-built. We pay the chrome cost (a whole floating surface, mutual-exclusion logic with the Queue, a hook to coordinate them, a re-render path on every selection change) for one dropdown.
+  - The panel was literally occluding the output on a node positioned anywhere right-of-center: select → panel slides in → body is hidden under it → user reports "why isn't it outputting?". Symptom of the panel design, not a separate bug. Moving the chip into the body makes the output structurally un-coverable.
+- **Why the body chip (vs header / footer)**:
+  - **Header** has three jobs already (identify, rename, status). A fourth role (model picker click target) fights the title's double-click-rename: any click overlap is a UX gotcha and shrinking the title to make room hurts long renames ("Mood prompt for villa shoot").
+  - **Footer** was deleted by ADR-0021 to make every node a single uninterrupted surface. Re-adding one for the LLM Text alone breaks the "all nodes share the same chrome grammar" promise.
+  - **Body, top of body, left-aligned** keeps the chip at the eye-line that immediately follows the header — natural reading order ("identify the node → pick the model → see what came out"). The chip uses `self-start` so it doesn't take the full body width.
+- **Why no visual for multi-edge handles**:
+  - The user's mental model is "color = datatype; everything else is uniform". Any decoration breaks that read.
+  - The engine *already* supports multi-edge transparently. Discoverability cost is one failed-then-succeeded connection attempt, which is the lowest-stakes feedback loop we have.
+  - If discoverability proves to be a real problem (users repeatedly bouncing off a single-port assumption), the future fix is contextual — e.g. a "+" hint above the dot when one edge is already attached *to that handle*, not a permanent decoration. Cheaper to add than to remove.
+- **What this does NOT change**:
+  - The LLM Text schema (inputs `user` multi / `system` / `image` multi; outputs `out`; config `{ model }`).
+  - Workflow-store v4 migration (config still collapses to `{ model }`, same migrate function).
+  - The engine's multi-edge aggregation, status chip, edge selection, shift-drag fixes, etc.
+- **Trade-offs accepted**:
+  - Future settings (temperature, top-p, stop sequences, max tokens) need a home that isn't a panel. Plan: a small "⋯" trigger added next to the model chip when those settings actually exist (Slice 3.2), opening a popover with the extra params. Speculative chrome is deferred until the settings are real.
+  - The model chip occupies one row in the body of every LLM Text instance, even if a graph has dozens of them. Acceptable because the chip is < 24 px tall and immediately answers "which model is this node using?" without a click; reads as part of the node's identity at a glance.
+  - The multi-edge mechanism is now invisible. Mitigated by the fact that every node-graph tool the user has used (ComfyUI, Prism's prior tool, etc.) treats multi-edge the same way; revisit if user testing surfaces actual confusion.
+
+## ADR-0024 — LLM Text wired to Fal OpenRouter through a server route (M0a Slice 3.2)
+
+- **Date**: 2026-05-20
+- **Context**: ADR-0022/0023 nailed the UI surface but the engine path was still the 800 ms placeholder from Slice 3.1. Slice 3.2 has one job — flip the stub off and call a real LLM — without changing any UX the user already approved. Two constraints framed the design:
+  1. `FAL_KEY` must never reach the browser bundle (the obvious "embed in a `NEXT_PUBLIC_*` var" shortcut would defeat the entire reason this project even has a key-bearing backend at all).
+  2. The two relevant Fal endpoints — text-only `openrouter/router` and vision-aware `openrouter/router/vision` — accept the same option subset but expect a different input shape (`image_urls` only on the vision one). Dispatch needs to be invisible to the node author and to the engine.
+- **Options considered for the secret-handling boundary**:
+  - **(a) Call `@fal-ai/client` directly from the LLM node** in the browser. Rejected — embedding `FAL_KEY` in the client bundle is a non-starter; even with a "dev only" excuse the discipline doesn't survive a future hosted version of Cookbook.
+  - **(b) A Next.js API route under `src/app/api/fal/openrouter/route.ts`** that owns the SDK call. The browser hits `/api/fal/openrouter`. Picked.
+  - **(c) A separate Express / Hono service.** Premature for a single greenfield app that already ships its own backend (Next.js). The route is two files; standing up a sidecar would need a Procfile, separate deploy, etc. — over-engineered for the v1 use case.
+- **Options considered for endpoint dispatch (text vs vision)**:
+  - **(a) Two separate routes (`/api/fal/openrouter/text` + `/api/fal/openrouter/vision`)** and let the node pick. Rejected — pushes endpoint knowledge into the UI layer for no gain, and means every new vision-capable node has to remember to switch routes.
+  - **(b) Single route, server picks based on `images.length`.** Picked. Nodes always call `/api/fal/openrouter`; the server reads `images?` from the body and routes to vision when ≥1 image is supplied. The client lib doesn't know there are two endpoints, and the node doesn't either. Adding new fields (audio, video) follows the same pattern — server-side detection on the payload.
+- **Options considered for cancellation**:
+  - **(a) Ignore the engine's `AbortSignal`** and let unbuilt completions cost money. Rejected — Slice 3.1's Run/Cancel UX is real and the user will use it; the engine already plumbs the signal end-to-end.
+  - **(b) Pass `signal` to `fetch()` on the client and propagate through `request.signal` on the server.** Picked. `fetch` honors `AbortSignal` natively; Next 16 forwards client disconnect to `request.signal`; we race the `fal.subscribe` call against the signal so the server-side handler rejects with `AbortError` even though the Fal SDK v1.10 has no native abort surface.
+  - **(c) Polling-based cancellation (engine writes a "cancelled" sentinel into a queue).** Over-engineered for the v1 problem; revisit when concurrent runs land (Slice 3.3+).
+- **Decision** (the four-file shape that landed):
+  - **`src/lib/llm/types.ts`** — shared Zod schema (`llmRequestSchema`) + the `LlmSuccessResponse` / `LlmErrorResponse` types. Single source of truth so server validation and client typing can't drift.
+  - **`src/lib/llm/fal-openrouter.ts`** — server-only (guarded by `import "server-only"`) wrapper around `@fal-ai/client`. Owns endpoint dispatch, FAL_KEY config caching, error-code annotation, and the abort race.
+  - **`src/app/api/fal/openrouter/route.ts`** — POST handler. Body parse + Zod validate + call the wrapper + map errors to HTTP. Returns `{ text, model, costUsd?, inputTokens?, outputTokens? }` on 200, `{ error, code }` on 400/499/500/502.
+  - **`src/lib/llm/call-openrouter.ts`** — browser-side `fetch` wrapper. Posts the body, returns the parsed success, normalises errors into `LlmCallError` (with a discriminating `code`), and re-throws `AbortError` unchanged so the engine routes cancelled runs into the `cancelled` status (not `error`).
+  - **`node-llm-text.tsx::execute()`** — collects `user` (joined multi), `system`, `images` from inputs and calls `callOpenRouter`. Stub deleted.
+- **Why a thin client wrapper (vs `fetch` directly in the node `execute`)**:
+  - Future LLM-capable nodes (`LLMVision`, `LLMAssistant`, `PromptRewriter`, etc.) all need the same fetch + normalise + abort dance. One shared wrapper keeps that dance in one place; nodes only know about `{ text, costUsd? }`.
+  - The wrapper is the one place where `499 → AbortError` and `5xx → LlmCallError(code)` translation happens. Pushing that into every node duplicates the most error-prone code in the path.
+- **Why a thin server wrapper (vs all logic in `route.ts`)**:
+  - The wrapper is where the actual SDK-typed `fal.subscribe(...)` calls live. Keeping the route file at the "HTTP shape ↔ business call" layer means the route can be tested by mocking the wrapper, and the wrapper can be tested by mocking `@fal-ai/client` — without test code spinning up a Next.js request lifecycle.
+  - The wrapper owns the strongly-typed input branches (vision input shape vs text input shape) because the Fal SDK has distinct types per endpoint. Splitting two `fal.subscribe(...)` calls inline is cleaner than spreading a generic `Record<string, unknown>` and losing the per-endpoint type checks.
+- **Why structured error codes (vs free-form error strings)**:
+  - The UI distinguishes "cancelled" from "errored" — the engine's status chip already has separate states. The client wrapper has to map server errors back into one of those states; using a discriminator (`code`) is more robust than string-matching messages.
+  - `missing_key` lets the UI surface a "FAL_KEY missing — check .env.local" affordance later without parsing free-form text. `rate_limited`, `quota_exhausted`, etc. can join the union as we encounter them.
+- **What this does NOT change**:
+  - UI surface (ADR-0023): same in-body chip, same output area, same uniform handles. The user can't tell from looking that the call is real now — exactly the point.
+  - Engine contract: `execute()` still returns `{ type: "text", value: string }`. Cache hashing, status transitions, cancellation, etc. all work as in Slice 3.1.
+  - Workflow-store v4: config shape unchanged (`{ model }`), no new migration needed.
+- **Trade-offs accepted**:
+  - **No streaming**. Fal exposes an OpenAI-compatible endpoint that supports SSE, but `fal.subscribe` (sub-30s polling) is simpler, matches Prism's working pattern, and keeps the engine's "one result per execute" contract honest. Streaming is a Slice 3.3 polish (token-by-token display in the body, partial cache entries, etc.).
+  - **Cost/token data is collected server-side but not surfaced in the UI yet**. The route returns `{ costUsd, inputTokens, outputTokens }`, but the LLM Text node only renders the text. Adding a per-run cost badge / queue panel cost rollup is its own slice (3.3) — keeping 3.2 to "real call, no extra UI" makes each change reviewable in isolation.
+  - **AbortSignal race "leaks" the in-flight `subscribe`**. When the client cancels, the wrapper rejects immediately, but the underlying `fal.subscribe` may still resolve in the background server-side (wasted spend). Acceptable for v1: cancellation rate is low, and a cleaner fix needs SDK-level abort support (or the OpenAI-compat endpoint with native fetch abort).
+  - **Test-time `server-only` shim**. The `import "server-only"` guard breaks Vitest because the package only exports useful symbols inside a Next.js build. We alias `server-only` to an empty module in `vitest.config.ts` so server modules can be imported in unit tests. Future server-only modules get the alias for free.
+  - **`google/gemini-2.5-pro` is dropped from the curated MODEL_OPTIONS list** until reasoning is exposed. Fal's `openrouter/router` rejects Pro with "Reasoning is mandatory for this endpoint and cannot be disabled" — Pro is a reasoning-by-default model and we don't pass `reasoning: true` (and have no UI yet to let the user opt in). Substituted with `gemini-2.5-flash` which matches Fal's own docs example, costs an order of magnitude less, and works without the flag. Persisted configs that already had Pro fall back to the "(custom)" dropdown row so the value round-trips harmlessly until the settings popover lands. Caught during the slice's own smoke test — exactly the kind of paper-cut a stub would hide.
+  - **Error text now renders inline in the LLM Text body** (added during smoke test as well) instead of being available only via the status chip's hover tooltip. Same destructive-tinted alert pill grammar, `role="alert"` for AT, selectable so users can copy-paste. Trade-off: the LLM Text node loses one row of vertical breathing room when in error state. Worth it — discovering "what went wrong" should not require hovering a 12 px chip.
+
+## ADR-0025 — Usage on the ExecutionRecord; per-run rows in the Queue panel (M0a Slice 3.3)
+
+- **Date**: 2026-05-20
+- **Context**: Slice 3.2 ended with the Fal route already returning `{ costUsd, inputTokens, outputTokens }` per call, but the LLM Text node just dropped that on the floor — the engine had no place to put it, and the only UI surface for "what just happened in a run" was the per-node status chip (great for "did this node succeed" — useless for "what did this run cost me, and what came out"). The Queue panel itself was a stub from Day 1, still printing "No executions yet" no matter how many runs you fired.
+- **What we needed**:
+  1. A typed channel for nodes to report cost / tokens / actual-model alongside their `StandardizedOutput`, without breaking the existing simple-return contract that Text and Image (and every future reactive node) rely on.
+  2. A way for the cache to replay that usage on a hit — otherwise re-running an LLM call would credit "free" against the run total, which lies about what the workflow would have cost without the cache (and breaks the upcoming cost-preview / approval-gate UX).
+  3. A queue surface that turns those records into a glanceable run history: one row per executed node, with model, elapsed, cost, and an output preview, plus a footer rollup of total spend.
+- **Options considered for the "usage" channel**:
+  - **(a) Mutate the record from inside `execute()` via a side channel on `ExecContext`** (e.g. `ctx.reportUsage({ costUsd })`). Engine-side mutation feels right at first — the engine owns the record. But it forces every executor to pass `ctx` through multiple await points before the data is even known, and prevents `execute()` from being a pure async function returning a value. Rejected.
+  - **(b) Add a parallel `executeUsage()` schema slot returning just the usage block.** Splits one logical call into two contracts; nothing in the SDK ever does this. Rejected.
+  - **(c) Let `execute()` return one of two shapes — `StandardizedOutput` (simple) or `{ output, usage? }` (rich) — recognised structurally at the runner boundary.** Picked. Backwards compatible (every existing node keeps working unchanged), additive (only the nodes that *have* a cost story opt in), and keeps `execute()` a pure value-returning async function.
+- **Options considered for where to surface usage**:
+  - **(a) Per-node badge** (a tiny "$0.0001 · 2 s" pill below the status chip on the node header). Distracting on canvases with many nodes; competes with the node title for the most expensive band.
+  - **(b) Tooltip-only via the existing status chip.** Already where we put "Done in 124 ms" — easy to add cost too, but invisible until hover. Doesn't address "what's this run costing me right now".
+  - **(c) Queue panel: one row per executed node + footer rollup.** Centralised, glanceable, doesn't fight node chrome, scales to many nodes naturally. Picked. The Queue panel was already a planned right-edge surface (ADR-0011 / 0013); this is the M0a-realisation of it.
+- **Decision** (the shape that landed):
+  - **`NodeUsage`** + **`NodeOutputWithUsage`** types in `src/types/node.ts`. `NodeUsage = { costUsd?; inputTokens?; outputTokens?; model? }` — every field optional so a future audio node that only knows duration can still partially report. `NodeOutputWithUsage = { output, usage? }` — the rich shape.
+  - **`NodeExecuteResult = StandardizedOutput | StandardizedOutput[] | NodeOutputWithUsage`**. The schema's `execute` field types as this; the runner accepts either.
+  - **`ExecutionRecord.usage?`** carries the optional block. Persists across cache hits (see below).
+  - **Runner normalisation** (`normalizeExecuteResult`): array → simple multi-output; object with a `type` string field → single StandardizedOutput (the existing discriminator); object with an `output` field → rich form; anything else → throw with a clear "unrecognised result shape" error so a node author's bug surfaces immediately instead of silently storing nothing.
+  - **`ExecutionCache` shape change**: `Map<hash, StandardizedOutput | StandardizedOutput[]>` → `Map<hash, { output, usage? }>`. Cache hits replay the original `usage` into the new record so the queue's per-run cost total credits the cached saving exactly as the original run would have spent it.
+  - **LLM Text execute** returns `{ output, usage }` where `usage` carries the Fal-reported `costUsd`, `inputTokens`, `outputTokens`, and `model` (which may differ from `config.model` if Fal re-routed — surfacing that keeps the billing surface honest).
+  - **QueuePanel** subscribes to the entire records map + workflow nodes. Renders one row per record in insertion order (≈ topo order, which matches the run order the user just kicked off). Each row: `[icon · label · status chip]` + meta line `provider-stripped-model · elapsed · cost` (only fields that exist) + a 2-line text preview (or error message for errored nodes). Footer rollups total cost when > 0, plus a "still running" hint while the run is in flight. Empty state copy guides toward the Run button.
+- **Why "cache replays usage" (vs treating cached runs as free)**:
+  - The future cost preview / approval gate will compare "this run, with current cache state" against "this run, fresh" — both numbers should be honest. If cache hits credit zero, the preview shows wildly underestimated totals for the cached case and confuses what you actually saved.
+  - Re-runs with the same inputs across a session should *look* identical to the user — same cost line, same model line, same preview — instead of "the second time you ran it, it was free".
+  - Cost of the change: a single struct in the cache (already a `Map`, so memory cost is one extra pointer per entry).
+- **Why the structural duck-type for execute results (vs a tag / brand)**:
+  - Lets node authors return a plain object literal `{ output, usage }` without importing any helper or wrapping in a constructor — the friction is zero, which is the point. The runner check is two `in` operators and a `typeof` — same cost as a tag check.
+  - The `type` field on `StandardizedOutput` is a stable discriminator (it's the union tag the entire codebase uses). Checking that first means a future `StandardizedOutput` variant that *also* happens to spell a field `output` (unlikely but possible) wouldn't be misclassified as the rich form.
+- **Why "one row per executed node, preserve engine emission order"**:
+  - Records are emitted in topological order (the engine seeds every node `pending` up-front in topo order, then walks the same order to execute). Top-to-bottom in the queue maps onto "earliest to latest in the run", which is the mental model the user already has from the canvas left-to-right flow.
+  - Sorting by status (running first) was tempting but reshuffles the queue mid-run — every progress event would re-sort. Stable order = no jitter.
+  - We considered a "currently running" pinned section + completed list. Real graphs have at most a handful of nodes; the extra mode is over-organisation. Revisit if M0c brings 20+ node recipes.
+- **Why footer-only cost rollup (vs header chip)**:
+  - The header already shows a status rollup ("3 done · 1 running") — adding cost there would compete for the same line. The footer is unused otherwise; making it the spend surface gives it a job and respects the panel's vertical reading order: "what state are we in" (header) → "what happened" (rows) → "what did it cost" (footer).
+  - Footer auto-hides when total is $0 (pure-reactive runs over Text / Image) — no chrome for nothing.
+- **What this does NOT change**:
+  - UI surface of existing nodes (Text, Image, LLM Text body). The model chip, status chip, edge selection — all untouched.
+  - Engine contracts: existing `execute()` returning a `StandardizedOutput` directly still works. We added a third allowed return shape; we removed nothing.
+  - Workflow-store version (still v4). No persisted config changes.
+- **Trade-offs accepted**:
+  - **Whole-records-map subscription causes the queue panel to re-render on every progress event.** Graphs are tiny (single-digit nodes in M0a, low-double-digit in M0b/c). Measured re-render cost negligible. If profiling later flags it, the obvious fix is a derived "for the queue" selector keyed by node id list — but that's premature today.
+  - **Cache layout is a breaking change** (cache value type went from `output` to `{ output, usage? }`). Persistent caching doesn't ship until Slice 5; in-memory caches reset every page load anyway. Migrating an in-memory map across a hot reload is a non-issue (HMR resets module-scope state).
+  - **Cost formatter shows `<$0.0001` for anything sub-precision** rather than $0.0000 (which would lie). Acceptable; users wanting the exact tokens can read the tokens shown in the meta line.
+  - **No per-token cost breakdown in the row** (input vs output tokens). We collect them (`inputTokens`, `outputTokens` on usage); we render only the total cost. Adds clutter today, lands trivially when the settings popover (Slice 3.4) ships and surfaces them as a hover-only detail.
+  - **No "Clear queue" button**. `startRun()` wipes records by design — re-running clears the queue. A dedicated clear feels right once the queue grows long across multiple runs (post-MVP polish, not now).
+
+## ADR-0026 — LLM Text settings popover (temperature, max tokens, reasoning); Gemini 2.5 Pro restored (M0a Slice 3.4)
+
+- **Date**: 2026-05-20
+- **Context**: ADR-0023's "settings live in a `⋯` popover attached to the model chip" plan was deferred past 3.2 because no settings actually existed yet. Slice 3.4 makes the settings real (temperature, max output tokens, reasoning) and lands the popover that hosts them. The trigger is Gemini 2.5 Pro: ADR-0024 dropped it from the curated dropdown because Fal's `openrouter/router` rejects Pro with "Reasoning is mandatory for this endpoint and cannot be disabled" — and we had no UI for the user to opt in to `reasoning: true`. Slice 3.3 shipped the queue-side cost-rollup that would benefit most from per-call knobs; this slice closes the loop so Pro (and the other reasoning-first models that ship later) are first-class options without ambushing the user mid-run.
+- **What we needed**:
+  1. A place to attach optional per-call generation settings to an LLM Text node without bloating the node body for the 80% case (users who only pick a model).
+  2. End-to-end wiring of three settings (`temperature`, `maxTokens`, `reasoning`) through `LLMTextNodeConfig` → `callOpenRouter` → server route → Fal SDK — including the workflow-store migration so existing canvases don't break.
+  3. A UX-level safety net for reasoning-mandatory models so the user discovers the requirement at config time, not when the run fails three seconds in with an upstream `400`.
+- **Options considered for the settings surface**:
+  - **(a) Inline accordion in the LLM Text body** ("▾ Settings" disclosure that expands the body vertically). Rejected — every LLM Text instance pays vertical height even when settings are at default; collapsing the disclosure leaves an extra row of chrome that doesn't earn its keep. Three settings on a wide range of models means most users never touch them.
+  - **(b) Right-edge floating "Properties panel"** (the original ADR-0022 panel we explicitly killed in ADR-0023). Rejected on the same principle: the user told us "no panel unless it earns its keep", and a once-per-session settings flip doesn't.
+  - **(c) Popover anchored to a small `⋯` trigger next to the model chip.** Picked. Trigger is invisible weight (`24×24` ghost button); popover opens on demand, closes on outside-click, sits in a portal so it never occludes other nodes, and goes away the moment the user pans the canvas.
+- **Options considered for the trigger affordance**:
+  - **(a) Always-visible label** ("Settings"). Too noisy; competes with the model chip for the eye.
+  - **(b) Settings cog only when a setting is non-default.** Discoverability tax — first-time users would never see the trigger. Rejected.
+  - **(c) Always-visible cog icon; accent dot in the corner when *any* setting is non-default.** Picked. Cog is universally legible, the dot is the "you have something set here" cue without occupying any layout width.
+- **Options considered for the "reasoning required" affordance**:
+  - **(a) Auto-flip `reasoning: true` when the model is selected.** Rejected — reasoning adds cost; doing it silently violates the approval-gate spirit (ADR-0011's "we ask before spending money") and confuses users wondering why their next run cost 3× more.
+  - **(b) Validate on Run; block the run with a toast if reasoning is missing.** Better than failing mid-call but the friction lands in the wrong place. The user already pressed Run.
+  - **(c) Inline hint inside the popover when the selected model is reasoning-required and the box is unchecked.** Picked. The hint reads "This model requires reasoning to be on. Tick the box or the run will fail." in accent (the same colour as the Run button — visually links the cause and the consequence). Disappears when reasoning is ticked.
+- **Decision** (the shape that landed):
+  - **`LLMTextNodeConfig` gains three optional fields**: `temperature?: number` (range 0–2, server-validated), `maxTokens?: number` (positive integer, server-validated), `reasoning?: boolean`. All optional — `undefined` defers to the provider default. No defaults seeded on node creation; the chip / popover render "default" labels until the user opts in.
+  - **`llmRequestSchema` (Zod) gains the same three fields** in `src/lib/llm/types.ts`. Single source of truth between client typing + server validation.
+  - **Server wrapper `callFalOpenRouter`** spreads each setting into the Fal `subscribe` input only when defined, on both `openrouter/router` and `openrouter/router/vision`. Fal is strict about null fields on some models — `...(args.temperature !== undefined ? { temperature: args.temperature } : {})` is the pattern.
+  - **Client wrapper `callOpenRouter`** forwards them transparently — already passes `...args` to fetch, so adding fields to the schema is enough.
+  - **`MODEL_OPTIONS` gets `google/gemini-2.5-pro` back** with `reasoningRequired: true` (a new optional flag on the entry). `modelRequiresReasoning(modelId)` reads the flag; the popover's hint uses it.
+  - **`SettingsButton` (ghost cog button, accent dot when any field set)** + `Popover` (`@base-ui/react`, 280 px wide, anchored under the cog). Wraps:
+    - **Temperature** — `<input type="range" min=0 max=2 step=0.1>` + numeric label that reads "default" until the slider is touched, then the value. Reset button reverts to `undefined`. Slider is rendered at 50% opacity while at default so the "not-set" state is visually distinct from "set to 0.7".
+    - **Max output tokens** — local-draft `<input type="number">` (`MaxTokensInput`) that commits to the parent only on valid positive integers (or empty → undefined). Keystroke drafts (e.g. typing "1500" char by char) don't bounce through 1, 15, 150. External resets are handled via a `key` prop on the input forcing a remount — avoids the strict-mode-forbidden "setState in useEffect" sync pattern.
+    - **Reasoning** — plain `<input type="checkbox">` wrapped in a label. Hint text below either reads the helpful generic copy ("Enable for models that need explicit reasoning…") or, when `modelRequiresReasoning(config.model) && !config.reasoning`, the accent-coloured warning.
+  - **Workflow store `version: 4 → 5`**. The `migrate` walks every `llm-text` config and passes through the three new fields only if they parse to legal values (temperature in [0, 2], maxTokens positive integer, reasoning boolean). Anything else is silently stripped — defensive against hand-edited localStorage and forward-portable when we add more fields later.
+- **Why a popover (vs an accordion in the body)**:
+  - Already mostly covered above (vertical real estate, calm node header). Worth restating: a node graph with eight LLM Text instances should look like *eight model chips*, not eight accordions all primed to expand. The popover keeps the canvas reading silhouette identical whether settings are at default or fully tuned.
+  - Popovers portal to `document.body` so they never get clipped by the React Flow viewport, never extend the node's bounding box (which would shift the canvas geometry mid-edit), and never trigger an unwanted node-resize that would jostle wired edges.
+- **Why three settings, not five**:
+  - `temperature`, `maxTokens`, `reasoning` are the three knobs every LLM provider exposes and that users actually reach for. `top-p`, `frequency_penalty`, `presence_penalty`, `stop` are real but rarely-touched; adding them would crowd the popover for marginal value. Easy to slot in as later additions following the same pattern.
+- **Why a hint-in-popover (vs blocking the Run)**:
+  - Catches the misconfiguration at the moment the user is *thinking about it*: they have the popover open, they're looking at the reasoning checkbox; an inline hint right there is the lowest-friction nudge available.
+  - Blocking the Run is overreach. The user may know what they're doing (e.g. testing what error the model returns); we should warn but never refuse.
+  - The hint stays in addition to whatever the server returns when the call fails — the inline error pill ADR-0024 added still surfaces the upstream message if the user ignored the hint and pressed Run anyway.
+- **Why the workflow-store migration sanitises (vs trusts the stored values)**:
+  - Persisted state can be hand-edited or carry over from older code paths that didn't validate. Trusting an arbitrary `temperature: 5` would surface as a 400 from the server mid-run; stripping it on rehydrate means the field just reverts to "default" and the user can re-set it through the popover. Same conservatism as the v3 → v4 migration that stripped pre-config user/system fields.
+  - The migration is idempotent: re-running it on a v5 payload that has valid fields preserves them, and on one with invalid fields strips them — there's no v6 dance to worry about when we add more fields.
+- **Why "reasoning required" is a model-list flag (vs server-side detection)**:
+  - The hint needs to render *before* the user presses Run; only the client knows what the model is. Putting the flag on the curated `MODEL_OPTIONS` entry keeps the data co-located with the rest of the model metadata and is one line per model.
+  - Server-side, the existing `code: "upstream_error"` already maps the failure into the inline alert pill — that's the second line of defense if the user picked a non-curated reasoning-required id (which won't have the flag set).
+- **What this does NOT change**:
+  - The body grammar (model chip + output area; the cog sits *in* the row that already holds the chip, not below it).
+  - The status chip, edge selection, multi-edge handling, queue panel layout — all untouched.
+  - The execute return shape (still `{ output, usage }` from Slice 3.3; the three new fields don't affect what the engine records).
+- **Trade-offs accepted**:
+  - **Two horizontal slots in the body header row** (chip + cog). On narrow viewports the cog still has space because the chip is small. We accept slight visual asymmetry on very-long custom model ids (the chip wraps before pushing the cog around). Worth it for the "one click → all settings" UX.
+  - **The accent dot can drift out of sync after a migration that strips invalid values** for a single frame on first load (config has the field, store rehydrates, dot disappears). In practice unobservable — rehydration runs once before paint.
+  - **`MaxTokensInput` is not fully controlled by the parent**. It owns a local draft string so intermediate typing isn't snapped (typing "1500" through 1 → 15 → 150 would be jarring otherwise). External resets work via the `key` prop forcing a remount instead of an effect-based sync (which React 19 strict mode forbids). Documented inline; not portable to a generic `<NumberInput>` until we abstract it.
+  - **No streaming token-by-token output yet** — `fal.subscribe` is single-response. Still parked for a future slice (would land alongside SSE on the route + an incrementally-rendered output area on the node body).
+  - **No per-model defaults UI** (e.g. "Reset to Gemini Pro's recommended settings"). Adds a maintenance burden (the defaults drift over time) and isn't asked for. Reset goes to "provider default" instead, which is always honest.
+  - **No popover on the model chip itself** — only on the cog. Considered combining them (popover replaces the native `<select>` so model + settings live in one menu). Rejected for now because the native picker is the fastest way to scan a long list and we don't want to give that up to host settings. Revisit when MODEL_OPTIONS grows past 12 entries or the live-fetched list lands.
+
+## ADR-0027 — Standardised settings affordance on BaseNode (`⋯` trigger in header, schema slot)
+
+- **Date**: 2026-05-20
+- **Context**: Slice 3.4 (ADR-0026) shipped the LLM Text settings popover in the right place *conceptually* but the wrong place *visually*: the cog sat in the body row next to the model chip. Trying it on the canvas immediately surfaced the user's standardisation feedback — *"settings button for any node that will need some sort of settings could be a 3 dots icon on the top right of the node on the other (OPPOSITE SIDE OF THE NODE title) … so we keep a minimalistic look and standardized layout for some things that are repeatable, even though settings from node to node could change, at least the placement and icon to toggle the settings are the same."* This ADR is the chrome-level refactor that makes that pattern enforceable for every settings-capable node now and forever, before a second node grows knobs and inherits the wrong location.
+- **What we needed**:
+  1. A single, pixel-stable location for the settings trigger in every node header — opposite the node title — so the user's eye never has to hunt for it as they scan across the canvas.
+  2. A neutral, universally-legible icon (the `⋯` three-dot ellipsis) that conveys "more options" without committing to "gear / settings / preferences" framing — works for LLM knobs today, equally well for "sampler / steps" on a future image-gen node, "frame rate / codec" on a video node, etc.
+  3. An API that lets each node declare *what* lives in the popover without owning *where* the trigger renders. New settings-capable nodes should be one config-line away ("here's my Content"), with the chrome handed to them for free.
+  4. Backward-compat: every existing node (Text, Image, Number) keeps its current header — *no* empty `⋯` button when a node has no settings.
+- **Options considered for the trigger location**:
+  - **(a) Keep the cog in the body next to the model chip (Slice 3.4 status quo).** Rejected — the user explicitly asked for the opposite side of the title, the body is node-specific real estate (model chip on LLM Text, textarea on Text, image preview on Image), and pinning settings there means every future node has to relitigate placement.
+  - **(b) Floating absolute-positioned button outside the card.** Rejected — breaks the visual containment of the node and complicates hover/selection states; React Flow's selection rectangle would also need to include the floating chrome.
+  - **(c) Header rightmost slot, after the status chip, anchored.** Picked. Header is already chrome, already shared across nodes, already reads left-to-right as `[icon · title · …spacer… · status · settings]`. Settings stays in the same x position whether the status chip is present (running) or absent (idle), because settings is the *rightmost* slot.
+- **Options considered for the trigger icon**:
+  - **(a) `Settings2` (cog gear)** — the Slice 3.4 choice. Reads as "settings" but visually noisier than `⋯` and implies a single feature ("Settings") rather than the more open "More" framing.
+  - **(b) `MoreVertical` (`⋮`)** — semantically equivalent to `⋯`, but visually fights the horizontal header layout (verticals next to the horizontal title bar create a small clash).
+  - **(c) `MoreHorizontal` (`⋯`)** — picked. Universal "more options" affordance (Material Design, iOS, GitHub PRs, etc.), zero visual weight, reads horizontally to match the header band.
+- **Options considered for the API shape**:
+  - **(a) BaseNode prop (`settings: { content: ReactNode; hasOverrides?: boolean; ariaLabel?: string }`) and let each node body wire it up imperatively.** Forces every node body to pass through both `config` *and* its own settings content to BaseNode — boilerplate that multiplies with every settings-capable node.
+  - **(b) NodeSchema field (`settings?: { Content: ComponentType<NodeBodyProps<TConfig>>; hasOverrides?: (config) => boolean }`) and let `GenericNode` in canvas-flow.tsx wire it.** Picked. Schema-level is the right elevation — it's a structural property of the node kind, not the instance. Existing `Body` lives there; settings lives next to it. New nodes get the trigger by adding a `settings` block to their schema and nothing else.
+- **Options considered for the override indicator**:
+  - **(a) Drop the accent dot entirely.** Simpler chrome but loses the "you have non-default settings here" cue that helps explain why two same-named nodes behave differently.
+  - **(b) Keep the dot, drive it from `schema.settings.hasOverrides(config)`.** Picked. The dot is the only at-a-glance signal that this node has been tuned; useful enough to keep. Predicate on the schema lets each node decide what counts as "non-default" (LLM Text checks the three optional fields; a future Sampler node might check just `seed`). Pure function over config = trivially testable, no React state required.
+- **Decision** (the chrome that landed):
+  - **`NodeSchema` gains an optional `settings: { Content; hasOverrides? }` field** in `src/types/node.ts`. `Content` receives the same `NodeBodyProps` as `Body` so settings UIs share helpers freely; `hasOverrides` is a pure predicate over `config`. Both optional at the slot level — `hasOverrides` omitted means the dot never lights.
+  - **`BaseNode` accepts a `settings?: { content; hasOverrides?; ariaLabel? }` prop** and, when present, renders `NodeSettingsTrigger` in the rightmost header slot. Trigger is a `Button` (`variant="ghost"`, `size="icon"`) with a `lucide-react` `MoreHorizontal` icon, wrapped in a `Tooltip` (hover-discoverable) and a `Popover` (`@base-ui/react`, 280 px wide, `align="end"`). Accent dot renders in the top-right corner of the trigger when `hasOverrides === true`. `data-testid="node-settings-trigger"` + `data-testid="node-settings-dot"` for unambiguous test selectors.
+  - **`GenericNode` (canvas-flow.tsx)** reads `schema.settings`, instantiates the `Content` component with the live nodeId + config + updateConfig + selected, and forwards everything to BaseNode under the `settings` prop. The `ariaLabel` defaults to `"${schema.title} settings"` (e.g. "LLM Text settings", "Sampler settings") so screen readers get a meaningful name without each node having to spell it out.
+  - **LLM Text refactor**: `SettingsButton` deleted (BaseNode owns the trigger now). `SettingsContent` renamed to `LLMTextSettingsContent` and exported. `hasSettingsOverrides(config)` extracted as a tiny pure helper. Schema wires `settings: { Content: LLMTextSettingsContent, hasOverrides: hasSettingsOverrides }`. The body row loses its inner `flex` wrapper (only the model chip remains) — the body reads even calmer than in Slice 3.4.
+- **Why a schema-level slot (vs a render-prop hook on Body)**:
+  - Symmetry with `Body`: both are "what does this node show" data. Putting settings beside Body in the schema means a node author reads the schema and sees the whole UI surface at once.
+  - GenericNode does the wiring once. New settings-capable nodes don't touch canvas-flow or BaseNode — they just add `settings: { Content, hasOverrides? }` to their schema export. The "add a new settings-capable node" path is now: write `Content`, drop the slot in the schema, done.
+  - Pure-function `hasOverrides` keeps the indicator deterministic and testable without rendering anything.
+- **Why the trigger sits to the right of the status chip (vs replacing it)**:
+  - Settings is a structural affordance (always available when applicable); status chip is ephemeral (only renders for non-idle states). The structural one anchors the rightmost slot so its x-position is pixel-stable across run states; the ephemeral one pops in/out beside it without shifting it.
+  - Keeps the status chip's existing semantics intact (mid-run feedback) and lets it cohabit with settings without a redesign.
+- **Why we render the accent dot only when `hasOverrides()` returns true (vs always show, faded)**:
+  - The dot is the "this node has been tuned" signal — meaningless if it's always there. A faded-when-false version is just decorative noise the user learns to ignore, defeating the cue.
+  - Cost of rendering it conditionally: a single boolean check per render. Negligible.
+- **What this does NOT change**:
+  - Body grammar (model chip + output area on LLM Text; textarea on Text; image preview on Image). The popover *content* is identical to Slice 3.4 — only the trigger moved.
+  - Execution / engine / cache / queue panel — completely unchanged.
+  - Workflow-store version (still v5). No persisted shape changes; only chrome moved.
+  - Any other node's schema — Text, Image, Number declare no `settings`, so they render exactly as before (no trigger, no chrome difference).
+- **Trade-offs accepted**:
+  - **The accent dot indicator now lives at the chrome level, so its data-testid changed** (`llm-settings-dot` → `node-settings-dot`). Acceptable — only test code references it, and the rename happened in the same commit that moved the chrome. Locked in by the new BaseNode test that asserts the testid is `node-settings-dot`.
+  - **`NodeSchema` grows a new optional field** — a real API surface change. Mitigated by: (a) the field is optional, so existing schemas don't break; (b) the field is declarative (no methods to implement); (c) the change is documented as a glossary entry and tested by the new `schema.settings` block in the LLM Text test.
+  - **The popover wrapper is now owned by BaseNode**, so individual nodes lose the ability to customise popover side / align / width. We accept this cost in exchange for visual consistency — every node's settings popover should look identical for the same reason every node's status chip does. Per-node overrides (if ever needed) can land as additional `settings` fields without breaking the slot.
+  - **One more component re-render per node per workflow-store update** — GenericNode now computes `hasOverrides` on every render. The function is a couple of equality checks; the cost is rounding error compared to the React Flow render cost for the same node.
+  - **Tooltip + Popover both wrap the trigger** (`<Tooltip><Popover><Button /></Popover></Tooltip>`) — three layers of `asChild` indirection through `@base-ui/react`. Works correctly (covered by new BaseNode test for click → popover open), but stacking three primitives means the inner `Button` receives merged props from all three — a quirk to remember when debugging keyboard / hover behaviour on the trigger.
+
+## ADR-0028 — Node sizing contract: schema-declared min/max + per-instance user resize
+
+- **Date**: 2026-05-20
+- **Context**: Right after ADR-0027 landed, the user wired a Text → LLM Text pair and ran a prompt that asked for three story variants. The LLM came back with ~12 paragraphs and the LLM Text node stretched across most of the canvas — the body had no width / height bounds, so the unbounded `<p>` output just kept growing. The user's feedback was clear: *"we need a maximum width for the nodes … also height should have it … unless the user wants to drag the bottom right edge to resize to a custom size so the output can be better visualized if needed … make sure to add this to any future node that makes sense to have ( custom resize ability, and max width and height to control when content gets populated it doesn't look huge, unless the user needs it )."* Same shape of problem as ADR-0027 — chrome that every "body can grow" node will hit the same way — so the fix lives at the chrome level, not in each node.
+- **What we needed**:
+  1. A way for each node kind to declare its silhouette: a default size (so a fresh card reads at a comfortable proportion from drop-in), a min (so it can't shrink past unreadable), and a max (so unbounded body content can't blow it out across the canvas).
+  2. A way for the user to override the max-cap *for that one instance* when they want to see more of a long output without scrolling — a drag handle, in a familiar location, that grows the card up to the max.
+  3. Per-axis flexibility: some nodes only need horizontal resize (Image has `aspect-square` preview so vertical resize would be a no-op), some need both (LLM Text output + Text textarea), some don't need any (Number / status-only nodes once they exist).
+  4. The constraints have to apply to *both* the content-driven natural size *and* the user-resized size, so a user can't accidentally drag a node to 50 × 50 and lose the affordance.
+- **Options considered for the affordance**:
+  - **(a) No drag handle — only schema caps; long content always scrolls inside.** Simplest. Rejected because the user explicitly asked for resize ability; sometimes scrolling a 12-paragraph response paragraph-by-paragraph is the worse UX vs popping the card open once and reading top-to-bottom.
+  - **(b) React Flow's `<NodeResizer />` — 8 handles around the perimeter.** Standard, fully-featured. Rejected as visual overkill — 8 handles on every settings-capable node would make the canvas read like a wireframing tool. We want one handle per node, in the canonical "drag to resize" spot.
+  - **(c) Single `<NodeResizeControl />` at one anchor (bottom-right by default), per-axis options for horizontal / vertical / both.** Picked. Bottom-right is the universal "drag to resize" corner across every desktop OS, browser, and most text-area implementations. Per-axis options let Image opt in to horizontal-only without growing weird vertical handles its `aspect-square` preview can't use.
+- **Options considered for the API shape**:
+  - **(a) Bake the sizing into each node's body component.** Each node hand-rolls its own `style.maxHeight`, its own `overflow-y-auto`, its own resize handle. Rejected — every node would relitigate the same five decisions and visual drift would set in within a sprint.
+  - **(b) `NodeSchema.size?: NodeSizeSchema` slot (constraints + resizable + defaults) parsed by BaseNode / GenericNode.** Picked. Mirrors the ADR-0027 settings slot pattern exactly — schema declares structural facts; chrome handles them. Adding a sized node is one schema block; the chrome wires the rest.
+  - **(c) Two slots — one in schema for constraints, one on `NodeInstance` for user-resized dims.** Picked *together with* (b) — the constraints are kind-level (every Text node has the same min/max); the resize state is instance-level (user resized *this* card, not "every Text node"). Mirrors `config` vs `defaultConfig`.
+- **Options considered for `defaultHeight`**:
+  - **(a) Always set a default height (e.g. 200 px) — every card opens at the same silhouette.** Rejected — a fresh idle LLM Text card with just the model chip + placeholder copy needs ~80 px; forcing 200 leaves dead empty space below the chip that reads as "broken".
+  - **(b) Leave `defaultHeight` undefined when the node hugs its content; only set `maxHeight` so growth is capped.** Picked. Cards stay compact when empty and grow to their natural size until they hit the cap; past the cap, the body scrolls. User-resize then takes over when the user explicitly wants more.
+- **Options considered for the persistence shape**:
+  - **(a) Persist `width` and `height` always (as zero / null when unset).** Rejected — zero is a legal CSS dimension that React Flow would honor and crash the layout; null adds branch noise. The optional pattern reads cleaner everywhere.
+  - **(b) `NodeInstance.size?: { width?, height?, }` — entire field optional, each axis optional.** Picked. Matches the resize semantics (you can resize only width on a horizontal-only node and the height stays content-driven), serializes cleanly, and `resizeNode(id, undefined)` strips the field entirely so it never accumulates noise in localStorage.
+- **Decision** (the contract that landed):
+  - **`NodeSchema.size?: NodeSizeSchema`** in `src/types/node.ts` with optional `defaultWidth`, `defaultHeight`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `resizable: "none" | "horizontal" | "vertical" | "both"` (default `"none"`).
+  - **`NodeInstance.size?: { width?: number; height?: number }`** for user-resized dimensions, per axis. Default-undefined → no override → schema's `default*` applies.
+  - **`useWorkflowStore.resizeNode(id, size)`** action — accepts a partial size (one or both axes), rounds to integer px (NodeResizeControl emits floats during a drag), de-dupes when the new value matches the existing one (avoids render churn on every `onNodesChange` tick), and strips the field entirely when both axes are undefined.
+  - **`canvas-flow.tsx onNodesChange`** handles `c.type === "dimensions" && c.setAttributes && c.dimensions` — only persists user-initiated resizes (React Flow's `setAttributes` signal), not passive content-measurement events. `setAttributes === "width"` / `"height"` axis-locks the persisted update so a horizontal-resize doesn't accidentally also persist height.
+  - **`BaseNode` accepts a `size?: BaseNodeSize` prop**, applies all CSS dim constraints as inline `style`, makes the body wrapper `flex-1 min-h-0` *only* when an explicit height is set (so content-driven cards don't collapse against `min-h-0`), and renders `NodeBodyResizeHandle` (custom-styled `NodeResizeControl`) in the matching position when `resizable !== "none"`.
+  - **`NodeBodyResizeHandle`** ships a 10×10 SVG "two diagonal lines" mark for `both` (the canonical macOS / GTK / browser-textarea corner-resize affordance), a short vertical line for `horizontal` (right edge), and a short horizontal line for `vertical` (bottom edge). `aria-hidden` (mouse-only affordance; keyboard users get sensible defaults), `pointer-events-none` on the inner div so React Flow's resize wrapper owns the drag, `data-testid="node-resize-handle"` + `data-direction` for test selectors.
+  - **LLM Text body refactor**: wrapper becomes `flex-1 overflow-hidden`; output `<p>` lives inside a `flex-1 overflow-y-auto` scroll container with the `nowheel` class + `onWheelCapture stop`, so a long response scrolls *inside* the card without zooming the canvas. Schema: `{ defaultWidth: 380, minWidth: 280, maxWidth: 720, minHeight: 100, maxHeight: 520, resizable: "both" }`.
+  - **Text body refactor**: textarea becomes `flex-1 min-h-0` + `nowheel` so it fills any user-resized height. Schema: `{ defaultWidth: 240, minWidth: 200, maxWidth: 520, minHeight: 100, maxHeight: 420, resizable: "both" }`.
+  - **Image schema** declares `{ defaultWidth: 240, minWidth: 200, maxWidth: 480, resizable: "horizontal" }` — body unchanged because the `aspect-square` preview already does the right thing under a width change.
+  - **Workflow-store v5 → v6 migration**: walks every node (regardless of kind) and sanitises `size` to legal shapes (positive finite integers per axis). All-bad → field stripped. Backward-compatible because the field is optional everywhere; no v5 payload breaks.
+- **Why the body wrapper is conditionally `flex-1 min-h-0`**:
+  - When height is content-driven, BaseNode is sized by its children — a `flex-1 min-h-0` wrapper would let the body shrink to 0 px against the `min-h-0` and collapse the card.
+  - When height is explicit (user-resized), the header is `shrink-0` and the body needs `flex-1 min-h-0` so it (a) takes the remaining vertical space, (b) lets inner `overflow-y-auto` regions actually trigger their scrollbar (without `min-h-0` flex children refuse to shrink below content).
+  - Conditional on `hasExplicitHeight` keeps both modes correct with one rule instead of two parallel code paths.
+- **Why `nowheel` + capture-phase `stopPropagation` on the scroll regions**:
+  - React Flow swallows scroll events on the canvas to drive its pan / zoom. Without `nowheel`, scrolling inside a long LLM response would zoom the canvas instead of scrolling the text.
+  - `onWheelCapture stop` is belt-and-suspenders against React Flow's listener priority — caught in the capture phase before the canvas's native wheel handler ever sees it.
+- **What this does NOT change**:
+  - Execution engine, cache key, queue panel — completely unchanged.
+  - ADR-0027 settings slot — the size slot lives next to it on `NodeSchema`, they're orthogonal.
+  - Existing node behaviour when zoomed or panned — React Flow's NodeResizeControl uses the live transform, so a drag at 200% zoom moves at 200% sensitivity (correct).
+  - Single-source-of-truth for selection / position — still owned by the workflow store; size joined the party as the third per-instance field.
+- **Trade-offs accepted**:
+  - **Workflow-store version bump (v5 → v6)** even though the field is purely additive. We bump anyway so any future field-additions follow the same pattern (and dev environments are forced to re-run the migrate at least once, which catches `size` field-bugs early). Migration is idempotent so a re-run on a v6 payload is a no-op.
+  - **The user's resize handle visual is `aria-hidden`** — keyboard users can't drag-resize. Mitigated by: (a) schema defaults are tuned so the content-driven silhouette is already usable; (b) max-height + body-scroll means long content is always reachable via keyboard scroll inside the body region. Adding a keyboard-accessible resize affordance is non-trivial (would need a "Resize mode" toggle on focus) and not asked for; revisit if/when accessibility audit flags it.
+  - **`NodeResizeControl` renders a 16 × 16 hit area in the corner** even though the visual mark is 10 × 10. We accept the slightly oversized invisible hit zone in exchange for forgiving drag-acquisition — making it smaller meant users with imprecise pointers (laptop trackpads, drawing tablets) had to bullseye a 10 px target.
+  - **Per-instance size is per-canvas-card, not per-recipe-template** — duplicating a node loses the resize. Acceptable for M0a (no "duplicate node" command yet); when duplication lands (M0a Slice 5 or later), the duplicator can choose whether to carry the size or reset.
+  - **Resizable nodes interact with React Flow's `nodesDraggable: true`** — the resize handle has to be `pointer-events-auto` to receive the drag; the inner visual is `pointer-events-none` so it doesn't intercept clicks meant for the card. Verified working in the browser smoke test; locked in by the new BaseNode test for the data-testid.

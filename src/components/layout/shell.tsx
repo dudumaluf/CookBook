@@ -8,6 +8,7 @@ import { QueuePanel } from "./queue-panel";
 import { PromptBar } from "./prompt-bar";
 import { AddNodeButton } from "./add-node-button";
 import { GalleryButton } from "./gallery-button";
+import { RunButton } from "./run-button";
 import { CommandPalette } from "./command-palette";
 import { LogsPanel } from "./logs-panel";
 import { GalleryDrawer } from "./gallery-drawer";
@@ -66,12 +67,14 @@ export function AppShell() {
         </div>
       </div>
 
-      {/* Top-right: gallery + add node (paired pills). Mirrors top-left so
-       *  the four corners feel deliberate. Queue panel below is vertically
-       *  centered → no collision; the add-node popover (z-50) overlays the
-       *  queue when both are open. */}
+      {/* Top-right cluster: Gallery (look at past work) → Run (kick off the
+       *  current graph) → Add Node (extend the graph). Reads left-to-right
+       *  as a workflow sentence. Queue panel below is vertically centered
+       *  → no collision; the add-node popover (z-50) overlays the queue
+       *  when both are open. */}
       <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1.5">
         <GalleryButton />
+        <RunButton />
         <AddNodeButton />
       </div>
 

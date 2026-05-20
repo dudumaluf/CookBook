@@ -40,4 +40,25 @@ describe("textNodeSchema", () => {
     });
     expect(out).toEqual({ type: "text", value: "abc" });
   });
+
+  describe("schema.size — sane defaults + bidirectional resize (ADR-0028)", () => {
+    it("declares a size contract with bidirectional resize", () => {
+      expect(textNodeSchema.size).toBeDefined();
+      expect(textNodeSchema.size?.resizable).toBe("both");
+    });
+
+    it("caps width + height so a long prompt doesn't stretch the card", () => {
+      expect(textNodeSchema.size?.maxWidth).toBe(520);
+      expect(textNodeSchema.size?.maxHeight).toBe(420);
+    });
+
+    it("default width matches the legacy 240 px min so existing canvases look unchanged", () => {
+      // Regression guard: before ADR-0028, BaseNode hard-coded
+      // `min-w-[240px]` for every node. Keeping defaultWidth at 240
+      // means a v5 → v6 migration leaves every text card visually
+      // identical.
+      expect(textNodeSchema.size?.defaultWidth).toBe(240);
+      expect(textNodeSchema.size?.minWidth).toBe(200);
+    });
+  });
 });

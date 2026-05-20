@@ -42,9 +42,38 @@ interface AssetCommon {
   updatedAt: number;
 }
 
+/**
+ * Where an image's bytes actually live.
+ *
+ * - `remote` — the bytes were uploaded by us to Supabase Storage (the
+ *   `cookbook-assets` bucket). `url` is the cached CDN-cacheable public
+ *   URL; `bucket` + `key` are kept so `removeAsset` can delete the object
+ *   and a future "re-issue signed URL" path has what it needs. **Primary
+ *   path** — every file-pick / drop / paste from the user lands here.
+ *
+ * - `url` — an externally hosted image we don't own (paste-a-URL escape
+ *   hatch, generation result whose host URL we trust). No bytes uploaded.
+ *
+ * Every consumer reads `source.url` directly — synchronous, no hook
+ * juggling, because the URL is the URL in both cases.
+ *
+ * A future `{ type: "signed" }` variant for private buckets slots in
+ * alongside these without breaking existing assets. See ADR-0018b.
+ */
+export type ImageAssetSource =
+  | {
+      type: "remote";
+      bucket: string;
+      key: string;
+      url: string;
+      mime: string;
+      sizeBytes: number;
+    }
+  | { type: "url"; url: string };
+
 export interface ImageAsset extends AssetCommon {
   kind: "image";
-  url: string;
+  source: ImageAssetSource;
   width?: number;
   height?: number;
 }

@@ -9,8 +9,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  AddAssetUrlButton,
+  UploadAssetButton,
+} from "@/components/library/library-actions";
 import { LibraryContent } from "@/components/library/library-content";
-import { NewAssetPopover } from "@/components/library/new-asset-popover";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
@@ -54,7 +57,8 @@ export function LibraryPanel() {
           <span>Library</span>
         </div>
         <div className="flex items-center gap-0.5">
-          <NewAssetPopover />
+          <UploadAssetButton />
+          <AddAssetUrlButton />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

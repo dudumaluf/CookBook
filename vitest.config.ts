@@ -7,6 +7,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // `server-only` is a Next.js build-time guard that throws when the
+      // module is imported from the browser bundle. In tests we don't care
+      // about the guard — alias to an empty shim so server modules can
+      // still be imported by unit tests.
+      "server-only": path.resolve(__dirname, "./tests/shims/server-only.ts"),
     },
   },
   test: {

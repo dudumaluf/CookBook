@@ -34,10 +34,17 @@ describe("NodeRegistry", () => {
     expect(reg.list()).toHaveLength(1);
   });
 
-  it("throws on duplicate registration", () => {
+  it("re-registering the same kind is a silent upsert (HMR-safe)", () => {
+    // Turbopack re-imports module side-effect blocks when an upstream
+    // node module hot-reloads. The registry must accept the new schema
+    // (so body / execute changes pick up) instead of throwing. We log
+    // in dev (covered by hand-eye observation, not a test assertion).
     const reg = new NodeRegistry();
-    reg.register(makeSchema("text", "input"));
-    expect(() => reg.register(makeSchema("text", "input"))).toThrow(/duplicate/);
+    const first = makeSchema("text", "input");
+    const second = { ...makeSchema("text", "input"), description: "updated" };
+    reg.register(first);
+    expect(() => reg.register(second)).not.toThrow();
+    expect(reg.get("text")?.description).toBe("updated");
   });
 
   it("groups by category preserving insertion order", () => {

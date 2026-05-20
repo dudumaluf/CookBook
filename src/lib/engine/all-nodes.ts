@@ -1,4 +1,5 @@
 import { imageNodeSchema } from "@/components/nodes/node-image";
+import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { textNodeSchema } from "@/components/nodes/node-text";
 
 import { nodeRegistry } from "./registry";
@@ -23,6 +24,7 @@ export function registerAllNodes(): void {
   if (registered) return;
   nodeRegistry.register(textNodeSchema);
   nodeRegistry.register(imageNodeSchema);
+  nodeRegistry.register(llmTextNodeSchema);
   registered = true;
 }
 

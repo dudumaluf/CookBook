@@ -33,7 +33,7 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 
 ---
 
-## M0a — Soul Image Burst _(in progress — Slices 1 + 2 shipped)_
+## M0a — Soul Image Burst _(in progress — Slices 1 + 2 + 3 shipped)_
 
 The first end-to-end recipe: pick a Soul ID + 1–5 references → get N images of "me" in the referenced contexts.
 
@@ -55,8 +55,35 @@ Broken into 6 vertical slices. Each is independently committable + testable + de
   - `LibraryPanel` rewired: `NewAssetPopover` (URL paste form) + `LibraryContent` (grouped by kind, 2-col grid, draggable `AssetCard`).
   - Image node gains optional `assetId` link → body shows asset name + Unlink chip; `execute()` prefers the linked asset's url so library edits propagate; Unlink keeps the last url for standalone use.
   - 23 new tests (51 total). See ADR-0018.
-  - **Still parked for later slices**: file/disk upload (Slice 3+, needs blob storage), folders/tags UI, multi-select + space-to-compare, hover-to-play video previews, grid density slider, drag-preview ghost styling.
-- **Slice 3 — Run engine + execution store + first executable node** _(next)_: topological sort, hash cache, seed strategy, cost preview modal, LLMText via Fal OpenRouter. Run button reappears in chrome. Local-blob upload likely rides along here.
+- **Slice 2.1 — Library upload-first (IndexedDB blobs)** _(shipped 2026-05-19, superseded by 2.2 the same day)_
+  - User correction: upload-from-disk is the 99% path; URL paste is the escape hatch. Refactor lands immediately.
+  - `ImageAssetSource` discriminator on `Asset` (`blob` | `url`); v1→v2 migrate flattens old `{ url }` shape.
+  - IndexedDB blob store keyed 1:1 with `asset.id`; on-disk shape `{ type, bytes: Uint8Array }` for env-portable round-trip.
+  - `useImageAssetUrl(assetId)` resolves URL/blob sources uniformly for every consumer.
+  - `createImageAssetFromFile` writes blob → commits metadata atomically; `removeAsset` is now async and cleans IDB + revokes object URLs.
+  - `NewAssetPopover` becomes upload-first (drop zone + multi-file picker; URL paste demoted to a collapsed disclosure); `LibraryPanel` surface accepts file drops too; both use the shared `import-files.ts` pipeline (image-only MIME, 25 MB cap, batched toast).
+  - 20 new tests (71 total). See ADR-0018a (superseded by 0018b).
+  - **Replaced by Slice 2.2** because `blob:` URLs are browser-session-local and can't power remote inference. Kept here for the post-mortem; the IDB module + hook + tests are deleted.
+- **Slice 2.2 — Cloud-canonical assets (Supabase Storage)** _(shipped 2026-05-19)_
+  - User push: bring Supabase in early so uploaded images have a real URL that Fal/Higgsfield can fetch.
+  - Adopted existing CookBook Supabase project (`bnstnamdtlveluavjkcy`, sa-east-1); fresh dedicated `cookbook-assets` bucket via `cookbook_assets_bucket` migration. Permissive MVP RLS (`anon` SELECT/INSERT/DELETE inside this bucket only). 30 MB server cap + MIME allowlist.
+  - `@supabase/supabase-js` browser client singleton (`src/lib/supabase/client.ts`); `.env.example` committed, `.env.local` for the keys.
+  - `src/lib/library/upload-asset.ts` — `uploadImageAsset(file)` builds an `images/<8-hex>/<safe-filename>` key, uploads with `upsert: false` + 1y cache, returns the descriptor. `deleteAssetObject` for cleanup.
+  - `ImageAssetSource` flipped to `remote | url`; v2→v3 migrate drops orphaned `blob` rows. `createImageAssetFromFile` uploads first, commits metadata only on success.
+  - IDB + `useImageAssetUrl` + `fake-indexeddb` deleted; consumers read `source.url` directly. Unlink behaviour unified (both source kinds carry a real URL).
+  - `NewAssetPopover` shows a "Uploading…" state during in-flight uploads.
+  - 5 net new tests (76 total). See ADR-0018b.
+  - **Still parked for later slices**: GitHub auth + per-user bucket scoping + tighter RLS, image-resize on import, folders/tags UI, multi-select + space-to-compare, hover-to-play video previews, grid density slider, drag-preview ghost styling, Soul ID grouping flow.
+- **Slice 3 — Run engine + execution store + first executable node** _(shipped 2026-05-20, sub-slices 3.1 → 3.4)_
+  - **3.1 — Engine + chip + Run button + LLM Text stub** _(zero-spend)_: `runWorkflow` (serial topo + hash cache + abort), `execution-store` (Zustand + module-scope cache + `runId` guard), 7-state `NodeStatusChip`, `RunButton` with Cancel state, stubbed LLM Text node returning a deterministic `[stub model]` echo so the cache is observable end-to-end. ADR-0019 (engine) + ADR-0020 (chip placement).
+  - **3.1a / 3.1b / 3.1c / 3.1d — Node chrome iterations**: header / footer cleanup (ADR-0021), edge selection + shift-drag fix, output-only LLM body + properties panel (ADR-0022, **superseded**), in-body model chip + uniform handles (ADR-0023). Persisted-state migrations v2 → v3 → v4 along the way.
+  - **3.2 — Real Fal OpenRouter call**: `POST /api/fal/openrouter` (nodejs runtime, force-dynamic) + server-only `callFalOpenRouter` (FAL_KEY never bundled, text vs vision dispatch on `images.length`, abort race) + client `callOpenRouter` (fetch + `LlmCallError` + 499 → AbortError). LLM Text `execute()` now calls real Fal. Inline error pill in the body. Gemini 2.5 Pro temporarily dropped to Flash (reasoning gap, closed in 3.4). ADR-0024.
+  - **3.3 — Usage + Queue panel**: `NodeUsage` / `NodeOutputWithUsage` / `NodeExecuteResult` typed channel; `ExecutionRecord.usage`; `ExecutionCache` stores `{ output, usage? }` so cache hits replay original cost; Queue panel rewritten with rows + meta line (`model · elapsed · cost`) + text previews + header rollup + footer cost total. LLM Text returns the rich `{ output, usage }` shape. ADR-0025.
+  - **3.4 — Settings popover**: `LLMTextNodeConfig` gains optional `temperature` / `maxTokens` / `reasoning`; `llmRequestSchema` + server wrapper forward each when defined; in-body cog opens a Popover with slider + number input + checkbox (accent dot on the trigger when overrides are set); Gemini 2.5 Pro restored with a `reasoningRequired: true` flag + in-popover warning hint; workflow-store v4 → v5 migration sanitises the new fields. ADR-0026.
+  - **Post-3.4 chrome refactor (ADR-0027)**: settings affordance standardised onto BaseNode — `NodeSchema` gains an optional `settings: { Content; hasOverrides? }` slot; BaseNode renders a `⋯` (three-dot) trigger in the rightmost header slot (opposite the title) when the slot is present, otherwise no chrome change. LLM Text's cog moves out of the body row; new nodes that grow knobs later inherit the trigger placement for free. No surface change for nodes without settings (Text, Image, Number).
+  - **Post-3.4 sizing contract (ADR-0028)**: a multi-paragraph LLM response on the canvas stretched the LLM Text node huge in width and height — the body had no caps. `NodeSchema` gains an optional `size: NodeSizeSchema` slot (defaults + min/max + `resizable: "none" | "horizontal" | "vertical" | "both"`); `NodeInstance` gains an optional `size: { width?, height? }` for per-instance user-resized dims; BaseNode applies the dim constraints as inline style and renders a standardised drag handle (corner / edge with the matching grip mark) when `resizable !== "none"`. LLM Text, Text, and Image all declare size schemas; workflow-store v5 → v6 migration sanitises any pre-existing `size` payload. 240 px legacy min-width preserved as the fallback so nodes without a size slot render pixel-identical.
+  - 290 passing tests (+27 vs the ADR-0027 chrome refactor's 263 for the size + resize block, the resizeNode action, and the v6 migration; +147 vs 2.2's 76). See **[STATE-AFTER-M0a-slice3.md](./STATE-AFTER-M0a-slice3.md)** for the full snapshot.
+  - **Still parked** for later slices: SSE / streaming output, concurrent runs, persistent cache (Slice 5), cost preview / approval gate (Slice 6, assistant DSL).
 - **Slice 4 — Higgsfield + Soul ID + complete recipe**: SoulID, HiggsfieldImageGen, ImageIterator, ArraySplit, Export. Composite "Soul Image Burst" assembled.
 - **Slice 5 — Properties popover + queue thumbnails + save/load**: node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets (the Asset repository abstraction lands here, swapping storage without touching `asset-store`'s public API).
 - **Slice 6 — Assistant DSL + M0a close**: LLM assistant catalog auto-gen, tool calls (createWorkflow / runNodes / getCost), prompt bar wires to assistant.
