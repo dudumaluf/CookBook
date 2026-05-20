@@ -11,6 +11,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AddAssetUrlButton,
+  ImportSoulIdButton,
   UploadAssetButton,
 } from "@/components/library/library-actions";
 import { LibraryContent } from "@/components/library/library-content";
@@ -59,6 +60,7 @@ export function LibraryPanel() {
         <div className="flex items-center gap-0.5">
           <UploadAssetButton />
           <AddAssetUrlButton />
+          <ImportSoulIdButton />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

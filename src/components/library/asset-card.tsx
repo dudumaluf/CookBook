@@ -1,6 +1,6 @@
 "use client";
 
-import { Image as ImageIcon, Trash2 } from "lucide-react";
+import { Image as ImageIcon, Trash2, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import {
   serializeAssetDrag,
 } from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
-import type { Asset, ImageAsset } from "@/types/asset";
+import type { Asset, ImageAsset, SoulIdAsset } from "@/types/asset";
 
 interface AssetCardProps {
   asset: Asset;
@@ -34,8 +34,14 @@ export function AssetCard({ asset }: AssetCardProps) {
   const removeAsset = useAssetStore((s) => s.removeAsset);
   // `source.url` is canonical for both remote-uploaded and free-URL assets —
   // no async resolver needed since we ditched the local IndexedDB blob layer.
+  // For soul-id assets the thumbnail is Higgsfield's cover image.
   const thumbUrl =
-    asset.kind === "image" ? (asset as ImageAsset).source.url : undefined;
+    asset.kind === "image"
+      ? (asset as ImageAsset).source.url
+      : asset.kind === "soul-id"
+        ? ((asset as SoulIdAsset).thumbnailUrl ?? undefined)
+        : undefined;
+  const FallbackIcon = asset.kind === "soul-id" ? User : ImageIcon;
 
   return (
     <div
@@ -50,7 +56,7 @@ export function AssetCard({ asset }: AssetCardProps) {
       className="group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border border-border/60 bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing"
       title={asset.name}
     >
-      {asset.kind === "image" && thumbUrl ? (
+      {thumbUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={thumbUrl}
@@ -64,7 +70,7 @@ export function AssetCard({ asset }: AssetCardProps) {
         />
       ) : (
         <div className="flex aspect-square w-full items-center justify-center rounded-md border border-dashed border-border/40 bg-background/40 text-muted-foreground/50">
-          <ImageIcon className="h-4 w-4" />
+          <FallbackIcon className="h-4 w-4" />
         </div>
       )}
       <p className="truncate px-0.5 text-[10.5px] text-foreground/80">

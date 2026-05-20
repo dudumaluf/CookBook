@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { importImageFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
-import type { ImageAsset } from "@/types/asset";
+import type { ImageAsset, SoulIdAsset } from "@/types/asset";
 
 import { AssetCard } from "./asset-card";
 
@@ -26,6 +26,9 @@ export function LibraryContent() {
 
   const imageAssets = assets.filter(
     (a): a is ImageAsset => a.kind === "image",
+  );
+  const soulIdAssets = assets.filter(
+    (a): a is SoulIdAsset => a.kind === "soul-id",
   );
 
   async function handleDrop(event: React.DragEvent) {
@@ -65,7 +68,7 @@ export function LibraryContent() {
         isDropTarget ? "bg-accent/5" : ""
       }`}
     >
-      {imageAssets.length === 0 ? (
+      {imageAssets.length === 0 && soulIdAssets.length === 0 ? (
         <div className="flex flex-col items-start gap-1.5">
           <p className="text-sm text-foreground/80">No assets yet</p>
           <p className="text-xs leading-relaxed text-muted-foreground">
@@ -75,13 +78,26 @@ export function LibraryContent() {
           </p>
         </div>
       ) : (
-        <Section title="Images" count={imageAssets.length}>
-          <div className="grid grid-cols-2 gap-1.5">
-            {imageAssets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} />
-            ))}
-          </div>
-        </Section>
+        <>
+          {soulIdAssets.length > 0 ? (
+            <Section title="Soul IDs" count={soulIdAssets.length}>
+              <div className="grid grid-cols-2 gap-1.5">
+                {soulIdAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
+              </div>
+            </Section>
+          ) : null}
+          {imageAssets.length > 0 ? (
+            <Section title="Images" count={imageAssets.length}>
+              <div className="grid grid-cols-2 gap-1.5">
+                {imageAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} />
+                ))}
+              </div>
+            </Section>
+          ) : null}
+        </>
       )}
     </div>
   );
