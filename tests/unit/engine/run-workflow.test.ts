@@ -606,3 +606,335 @@ describe("runWorkflow", () => {
     expect(seenPendingBeforeRunning).toHaveBeenCalled();
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────── */
+/* Fan-out (Slice 4.4 / ADR-0030)                                        */
+/* ────────────────────────────────────────────────────────────────────── */
+
+describe("runWorkflow — fan-out", () => {
+  /**
+   * Iterator that emits a fixed-length StandardizedOutput[] of text values.
+   * Marks itself with `iterator: true` so the engine treats array-out into
+   * single-input as a fan-out trigger.
+   */
+  function iteratorTextSchema(items: string[]) {
+    return defineNode({
+      kind: "iterator-text",
+      category: "iterator",
+      title: "Iterator",
+      description: "",
+      icon: Sparkles,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: { items },
+      reactive: true,
+      iterator: true,
+      execute: async ({ config }) =>
+        (config as { items: string[] }).items.map(
+          (v) => ({ type: "text" as const, value: v }),
+        ),
+      Body: EmptyBody as never,
+    });
+  }
+
+  function consumerSchema(opts: {
+    onItem?: (value: string) => void;
+    delayMs?: number;
+    failOn?: string;
+  } = {}) {
+    return defineNode<Record<string, never>>({
+      kind: "consumer",
+      category: "ai-text",
+      title: "Consumer",
+      description: "",
+      icon: Sparkles,
+      inputs: [{ id: "in", label: "in", dataType: "text" }],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: false,
+      execute: async ({ inputs }) => {
+        const v = inputs.in as StandardizedOutput | undefined;
+        const text = v?.type === "text" ? v.value : "";
+        opts.onItem?.(text);
+        if (opts.delayMs) {
+          await new Promise((r) => setTimeout(r, opts.delayMs));
+        }
+        if (opts.failOn !== undefined && text === opts.failOn) {
+          throw new Error(`item ${text} failed`);
+        }
+        return { type: "text" as const, value: `out:${text}` };
+      },
+      Body: EmptyBody as never,
+    });
+  }
+
+  function fanOutRegistry(consumer: ReturnType<typeof consumerSchema>) {
+    const registry = new NodeRegistry();
+    registry.register(iteratorTextSchema(["a", "b", "c", "d"]));
+    registry.register(consumer);
+    return registry;
+  }
+
+  it("dispatches the consumer once per iterator item and aggregates outputs in order", async () => {
+    const seen: string[] = [];
+    const registry = fanOutRegistry(
+      consumerSchema({ onItem: (v) => seen.push(v) }),
+    );
+    const nodes = [
+      node("iter", "iterator-text", { items: ["a", "b", "c", "d"] }),
+      node("c", "consumer", {}),
+    ];
+    const edges = [edge("iter", "c")];
+
+    const records = new Map<string, ExecutionRecord>();
+    const result = await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+    });
+    expect(result.ok).toBe(true);
+
+    const consumerRecord = records.get("c")!;
+    expect(consumerRecord.status).toBe("done");
+    // 4 items in, 4 outputs out, in iterator order.
+    expect(consumerRecord.output).toEqual([
+      { type: "text", value: "out:a" },
+      { type: "text", value: "out:b" },
+      { type: "text", value: "out:c" },
+      { type: "text", value: "out:d" },
+    ]);
+    // Each item was actually executed once (sorted because parallel).
+    expect([...seen].sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("respects maxConcurrent (only N in flight at a time)", async () => {
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const registry = fanOutRegistry(
+      defineNode<Record<string, never>>({
+        kind: "consumer",
+        category: "ai-text",
+        title: "Consumer",
+        description: "",
+        icon: Sparkles,
+        inputs: [{ id: "in", label: "in", dataType: "text" }],
+        outputs: [{ id: "out", label: "out", dataType: "text" }],
+        defaultConfig: {},
+        reactive: false,
+        execute: async ({ inputs }) => {
+          inFlight++;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 25));
+          inFlight--;
+          const v = inputs.in as StandardizedOutput;
+          return { type: "text" as const, value: (v as { value: string }).value };
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    await runWorkflow({
+      nodes: [
+        node("iter", "iterator-text", { items: ["a", "b", "c", "d"] }),
+        node("c", "consumer", {}),
+      ],
+      edges: [edge("iter", "c")],
+      registry,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: () => {},
+      maxConcurrent: 2,
+    });
+    expect(peakInFlight).toBeLessThanOrEqual(2);
+    // Sanity: at least 2 ran concurrently (otherwise we'd be testing the
+    // serial path, not maxConcurrent).
+    expect(peakInFlight).toBe(2);
+  });
+
+  it("emits fanOut progress on the running record", async () => {
+    const progressSnapshots: Array<{ done: number; total: number }> = [];
+    const registry = fanOutRegistry(consumerSchema({ delayMs: 5 }));
+    await runWorkflow({
+      nodes: [
+        node("iter", "iterator-text", { items: ["a", "b", "c", "d"] }),
+        node("c", "consumer", {}),
+      ],
+      edges: [edge("iter", "c")],
+      registry,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => {
+        if (id === "c" && r.status === "running" && r.fanOut) {
+          progressSnapshots.push(r.fanOut);
+        }
+      },
+    });
+    // First emit is { total: 4, done: 0 }; subsequent emits bump done.
+    expect(progressSnapshots[0]).toEqual({ total: 4, done: 0 });
+    expect(progressSnapshots.at(-1)).toEqual({ total: 4, done: 4 });
+    // Monotonically non-decreasing.
+    for (let i = 1; i < progressSnapshots.length; i++) {
+      expect(progressSnapshots[i]!.done).toBeGreaterThanOrEqual(
+        progressSnapshots[i - 1]!.done,
+      );
+    }
+  });
+
+  it("flips to error if any item fails (other items may complete first)", async () => {
+    const registry = fanOutRegistry(consumerSchema({ failOn: "b" }));
+    const records = new Map<string, ExecutionRecord>();
+    const result = await runWorkflow({
+      nodes: [
+        node("iter", "iterator-text", { items: ["a", "b", "c", "d"] }),
+        node("c", "consumer", {}),
+      ],
+      edges: [edge("iter", "c")],
+      registry,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+    });
+    expect(result.ok).toBe(false);
+    expect(records.get("c")?.status).toBe("error");
+    expect(records.get("c")?.error).toMatch(/item b failed/);
+  });
+
+  it("downstream of a failed fan-out node is cancelled", async () => {
+    // iter → c (fan-out, fails) → d (passthrough)
+    const registry = fanOutRegistry(consumerSchema({ failOn: "b" }));
+    registry.register(passthroughSchema("downstream"));
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        node("iter", "iterator-text", { items: ["a", "b"] }),
+        node("c", "consumer", {}),
+        node("d", "downstream", { tag: "D" }),
+      ],
+      edges: [edge("iter", "c"), edge("c", "d")],
+      registry,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+    });
+    expect(records.get("c")?.status).toBe("error");
+    expect(records.get("d")?.status).toBe("cancelled");
+  });
+
+  it("aborts mid-fan-out: consumer that throws AbortError → cancelled", async () => {
+    // Consumer that respects the signal — throws AbortError when cancelled,
+    // matching every real-world async-fetch consumer.
+    const ctrl = new AbortController();
+    const registry = new NodeRegistry();
+    registry.register(iteratorTextSchema(["a", "b", "c", "d"]));
+    registry.register(
+      defineNode<Record<string, never>>({
+        kind: "consumer",
+        category: "ai-text",
+        title: "Consumer",
+        description: "",
+        icon: Sparkles,
+        inputs: [{ id: "in", label: "in", dataType: "text" }],
+        outputs: [{ id: "out", label: "out", dataType: "text" }],
+        defaultConfig: {},
+        reactive: false,
+        execute: async ({ signal }) => {
+          // Trip the abort the first time anyone runs, then throw an
+          // AbortError to mimic fetch-style cancellation.
+          if (!ctrl.signal.aborted) ctrl.abort();
+          await new Promise((resolve, reject) => {
+            // Tiny tick to let the abort propagate.
+            const id = setTimeout(resolve, 5);
+            signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(id);
+                const err = new Error("Aborted");
+                err.name = "AbortError";
+                reject(err);
+              },
+              { once: true },
+            );
+          });
+          // If we somehow get here without aborting, throw AbortError so
+          // the runner classifies it correctly even on flaky timing.
+          const err = new Error("Aborted");
+          err.name = "AbortError";
+          throw err;
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        node("iter", "iterator-text", { items: ["a", "b", "c", "d"] }),
+        node("c", "consumer", {}),
+      ],
+      edges: [edge("iter", "c")],
+      registry,
+      cache: newCache(),
+      signal: ctrl.signal,
+      onProgress: (id, r) => records.set(id, r),
+    });
+    expect(records.get("c")?.status).toBe("cancelled");
+  });
+
+  it("caches the aggregated fan-out output by node hash", async () => {
+    let calls = 0;
+    const consumer = defineNode<Record<string, never>>({
+      kind: "consumer",
+      category: "ai-text",
+      title: "Consumer",
+      description: "",
+      icon: Sparkles,
+      inputs: [{ id: "in", label: "in", dataType: "text" }],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: false,
+      execute: async ({ inputs }) => {
+        calls++;
+        const v = inputs.in as StandardizedOutput;
+        return {
+          type: "text" as const,
+          value: `out:${(v as { value: string }).value}`,
+        };
+      },
+      Body: EmptyBody as never,
+    });
+    const registry = fanOutRegistry(consumer);
+    const nodes = [
+      node("iter", "iterator-text", { items: ["a", "b"] }),
+      node("c", "consumer", {}),
+    ];
+    const edges = [edge("iter", "c")];
+    const cache = newCache();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    });
+    expect(calls).toBe(2); // one per item
+
+    const records2 = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records2.set(id, r),
+    });
+    // Second run: cache hit, no re-execute.
+    expect(calls).toBe(2);
+    expect(records2.get("c")?.status).toBe("cached");
+    expect(records2.get("c")?.output).toEqual([
+      { type: "text", value: "out:a" },
+      { type: "text", value: "out:b" },
+    ]);
+  });
+});

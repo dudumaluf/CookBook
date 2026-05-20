@@ -130,6 +130,18 @@ export interface NodeSchema<TConfig = unknown> {
    */
   reactive?: boolean;
   /**
+   * Iterator nodes emit a `StandardizedOutput[]` whose items are meant to be
+   * **fan-out** to single-input downstream nodes — i.e. the downstream
+   * runs once per iterator item, in parallel (bounded by maxConcurrent).
+   *
+   * Without this flag, an array output feeding a single input only delivers
+   * the first item to the downstream (legacy serial behavior). Setting
+   * `iterator: true` is the explicit opt-in to fan-out.
+   *
+   * See ADR-0030 (M0a Slice 4.4 — fan-out execution).
+   */
+  iterator?: boolean;
+  /**
    * Execution function. Optional in Slice 1 because Text/Image are reactive
    * and the run engine (Slice 3) is not built yet. Becomes required once the
    * engine ships.
@@ -365,4 +377,14 @@ export interface ExecutionRecord {
    * run total.
    */
   usage?: NodeUsage;
+  /**
+   * Fan-out progress (Slice 4.4 / ADR-0030). When the engine is running a
+   * node N times in parallel against an iterator's items, this surfaces
+   * "running 3/8" to the UI without extra subscribe plumbing.
+   *
+   * `total` is the iterator size; `done` is how many child executions
+   * have finished (success OR failure — UI distinguishes via `status`).
+   * Absent when the node isn't a fan-out target.
+   */
+  fanOut?: { total: number; done: number };
 }

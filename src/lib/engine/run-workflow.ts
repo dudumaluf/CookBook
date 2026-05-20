@@ -48,6 +48,12 @@ export interface RunWorkflowOptions {
   onProgress: (nodeId: string, record: ExecutionRecord) => void;
   /** Aborts the run between nodes (and inside `execute()` for nodes that honour it). */
   signal: AbortSignal;
+  /**
+   * Cap for in-flight `execute()` calls during a fan-out. Defaults to
+   * `DEFAULT_MAX_CONCURRENT` (4 — matches Higgsfield's keypair limit).
+   * Bumped via tests / future configurability.
+   */
+  maxConcurrent?: number;
 }
 
 export interface RunWorkflowResult {
@@ -151,35 +157,55 @@ export function computeNodeHash(
 /* ────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Bound for in-flight executions during a fan-out (Slice 4.4 / ADR-0030).
+ * Matches Higgsfield's per-keypair concurrent-requests cap so the engine
+ * never races itself into 429s. Other providers (Fal) tolerate more, but
+ * the iterator-fan-out path is image-gen-shaped today, so 4 is the safe
+ * universal default.
+ */
+export const DEFAULT_MAX_CONCURRENT = 4;
+
+/**
  * Run the workflow once.
  *
- * Slice 3.1 contract:
- *   - Strict topological order, serial execution (no parallelism).
+ * Topological serial walk with one fan-out exception (Slice 4.4):
  *   - Cycles → every node marked `error` with a "cycle detected" message.
  *   - For each node in order:
  *       1. Resolve its inputs by reading the outputs of upstream nodes
  *          (collected from edges). Handles with no incoming edge get
  *          `undefined`. Multi-input handles get an array.
- *       2. Compute a content hash from `{ kind, config, deps }`.
- *       3. If the cache already has that hash, emit `cached` with the
+ *       2. Detect FAN-OUT: when the only upstream feeding a single-input
+ *          handle is a node whose schema declares `iterator: true` AND
+ *          that node emitted an array, the engine runs `execute()` once
+ *          per iterator item, in parallel (bounded by maxConcurrent).
+ *          Outputs are concatenated into a flat array.
+ *       3. Compute a content hash from `{ kind, config, deps }`.
+ *       4. If the cache already has that hash, emit `cached` with the
  *          previous output.
- *       4. Otherwise emit `running`, await `execute()`, store the output
- *          in the cache, emit `done`. Time the call so the UI can show
- *          how long the node took.
- *       5. On `execute()` throw: emit `error` and stop. Downstream nodes
+ *       5. Otherwise emit `running`, await `execute()` (single or fan-out),
+ *          store the output in the cache, emit `done`. Time the call so
+ *          the UI can show how long the node took.
+ *       6. On `execute()` throw: emit `error` and stop. Downstream nodes
  *          stay `pending` (which the store then upgrades to `cancelled`
  *          for clarity in the UI).
  *   - On `signal.aborted` between nodes: stop early; everything not yet
  *     finished becomes `cancelled`.
  *
- * Parallelism, retries, partial re-runs, and persistent caches are all
- * later slices (3.x). Keeping this loop dead simple is the whole point —
- * it's where the most surprises hide.
+ * Persistent caches and the bigger parallelism story (whole-graph
+ * scheduling) are later slices.
  */
 export async function runWorkflow(
   opts: RunWorkflowOptions,
 ): Promise<RunWorkflowResult> {
-  const { nodes, edges, registry, cache, onProgress, signal } = opts;
+  const {
+    nodes,
+    edges,
+    registry,
+    cache,
+    onProgress,
+    signal,
+    maxConcurrent = DEFAULT_MAX_CONCURRENT,
+  } = opts;
   const records = new Map<string, ExecutionRecord>();
 
   function emit(id: string, record: ExecutionRecord) {
@@ -241,25 +267,25 @@ export async function runWorkflow(
     }
 
     // Collect inputs from upstream outputs, grouped by target handle.
+    // Track which (if any) handle is a fan-out source so the runner can
+    // dispatch the iterator branch later.
     const inputs: Record<
       string,
       StandardizedOutput | StandardizedOutput[] | undefined
     > = {};
-    // Upstream hashes per target handle, to feed `computeNodeHash`.
     const upstreamHashesByTargetHandle = new Map<string, string[]>();
+    /** Iterator items keyed by the single-input handle they fan out into. */
+    let fanOut:
+      | { handle: string; items: StandardizedOutput[] }
+      | undefined;
+
     for (const edge of edgesByTarget.get(node.id) ?? []) {
       const upstreamOutput = outputs.get(edge.source);
       const upstreamHash = hashes.get(edge.source);
       if (upstreamOutput === undefined || upstreamHash === undefined) {
-        // Upstream errored / cancelled / not yet run — skip this edge.
-        // Downstream node's execute() will see `undefined` for this handle
-        // and decide whether that's acceptable.
         continue;
       }
       const handleInputs = inputs[edge.targetHandle];
-      // Compose multi-input handles into arrays; single-input keeps the
-      // most recent (the workflow-store rejects 2nd edges into single
-      // inputs, so this branch only matters for `multiple:true` handles).
       const isMulti =
         schema.inputs.find((i) => i.id === edge.targetHandle)?.multiple ??
         false;
@@ -269,14 +295,35 @@ export async function runWorkflow(
           : handleInputs
             ? [handleInputs]
             : [];
-        // The output of an upstream is itself a single or an array; flatten.
         if (Array.isArray(upstreamOutput)) arr.push(...upstreamOutput);
         else arr.push(upstreamOutput);
         inputs[edge.targetHandle] = arr;
       } else {
-        // Single — keep the first upstream encountered (workflow-store
-        // ensures there's only one).
-        inputs[edge.targetHandle] = upstreamOutput;
+        // Single input. Detect fan-out: upstream is iterator-flagged AND
+        // the upstream's output is an array. Fan-out is mutually exclusive
+        // across handles — only the first such handle wins (we never need
+        // a 2D fan-out in the Soul Image Burst recipe; future slices can
+        // generalise).
+        const upstreamSchema = registry.get(
+          nodes.find((n) => n.id === edge.source)?.kind ?? "",
+        );
+        const isIteratorSource =
+          upstreamSchema?.iterator === true && Array.isArray(upstreamOutput);
+        if (isIteratorSource && fanOut === undefined) {
+          fanOut = {
+            handle: edge.targetHandle,
+            items: upstreamOutput as StandardizedOutput[],
+          };
+          // The per-iteration input for this handle is overridden in the
+          // fan-out branch; for now leave inputs[handle] undefined.
+        } else {
+          // Legacy: single input picks the first item if the upstream is
+          // an array (the workflow-store rejects 2nd edges into single
+          // inputs, so this only happens for accidental array shape).
+          inputs[edge.targetHandle] = Array.isArray(upstreamOutput)
+            ? upstreamOutput[0]
+            : upstreamOutput;
+        }
       }
       const hashBucket =
         upstreamHashesByTargetHandle.get(edge.targetHandle) ?? [];
@@ -287,7 +334,8 @@ export async function runWorkflow(
     const nodeHash = computeNodeHash(node, upstreamHashesByTargetHandle);
     hashes.set(node.id, nodeHash);
 
-    // Cache hit?
+    // Cache hit? Same key for both single and fan-out modes — the cache
+    // stores the final aggregated output either way.
     const cached = cache.get(nodeHash);
     if (cached !== undefined) {
       outputs.set(node.id, cached.output);
@@ -295,23 +343,150 @@ export async function runWorkflow(
         status: "cached",
         output: cached.output,
         hash: nodeHash,
-        // Replay the original usage block so the cumulative run total
-        // in the Queue panel credits the cached saving correctly.
         ...(cached.usage ? { usage: cached.usage } : {}),
       });
       continue;
     }
 
-    // Cache miss — run.
+    // Resolve execute() once. Capturing the narrowed reference here keeps
+    // TS's control-flow analysis happy when the same function is used
+    // inside the fan-out closure (TS would otherwise widen `schema.execute`
+    // back to `T | undefined`).
+    if (!schema.execute) {
+      emit(node.id, {
+        status: "error",
+        error: `Node "${node.kind}" has no execute() — every registered schema must.`,
+        hash: nodeHash,
+      });
+      for (const n of topo.order) {
+        if (records.get(n.id)?.status === "pending") {
+          emit(n.id, { status: "cancelled" });
+        }
+      }
+      return { ok: false, failedNodeId: node.id, records };
+    }
+    const execute = schema.execute;
+
+    /* ─────────────────────── Fan-out branch ─────────────────────── */
+    if (fanOut !== undefined) {
+      const { handle: fanHandle, items } = fanOut;
+      emit(node.id, {
+        status: "running",
+        hash: nodeHash,
+        fanOut: { total: items.length, done: 0 },
+      });
+      const start = performance.now();
+      const outputsByIndex: Array<
+        StandardizedOutput | StandardizedOutput[]
+      > = new Array(items.length);
+      let doneCount = 0;
+      let firstError: unknown;
+      let cancelled = false;
+
+      // Bounded-concurrency runner. Stays simple because we don't need
+      // priorities or cancellation-of-individual-children — abort kills
+      // the whole run by signal.
+      let nextIndex = 0;
+      async function worker(): Promise<void> {
+        for (;;) {
+          if (firstError !== undefined || cancelled || signal.aborted) {
+            return;
+          }
+          const i = nextIndex++;
+          if (i >= items.length) return;
+          const perItemInputs = { ...inputs, [fanHandle]: items[i]! };
+          try {
+            const rawResult = await execute({
+              nodeId: node.id,
+              config: node.config,
+              inputs: perItemInputs,
+              signal,
+            });
+            const { output: perItemOutput } =
+              normalizeExecuteResult(rawResult);
+            outputsByIndex[i] = perItemOutput;
+            doneCount += 1;
+            // Progress emit. We re-read the in-progress record so other
+            // metadata (hash) stays stable.
+            emit(node.id, {
+              status: "running",
+              hash: nodeHash,
+              fanOut: { total: items.length, done: doneCount },
+            });
+          } catch (err) {
+            if (signal.aborted || (err as Error)?.name === "AbortError") {
+              cancelled = true;
+              return;
+            }
+            // First failure wins; remaining workers bail.
+            if (firstError === undefined) firstError = err;
+            return;
+          }
+        }
+      }
+
+      const workers = Array.from(
+        { length: Math.max(1, Math.min(maxConcurrent, items.length)) },
+        () => worker(),
+      );
+      await Promise.all(workers);
+
+      if (cancelled) {
+        emit(node.id, { status: "cancelled", hash: nodeHash });
+        for (const n of topo.order) {
+          if (records.get(n.id)?.status === "pending") {
+            emit(n.id, { status: "cancelled" });
+          }
+        }
+        return { ok: false, records };
+      }
+      if (firstError !== undefined) {
+        const message =
+          firstError instanceof Error
+            ? firstError.message
+            : String(firstError);
+        emit(node.id, {
+          status: "error",
+          error: message,
+          hash: nodeHash,
+        });
+        for (const n of topo.order) {
+          if (records.get(n.id)?.status === "pending") {
+            emit(n.id, { status: "cancelled" });
+          }
+        }
+        return { ok: false, failedNodeId: node.id, records };
+      }
+
+      // Flatten N outputs into a single array — each per-item execute
+      // may return a single StandardizedOutput or an array; concat
+      // both shapes. Skips holes (from early returns).
+      const flatOutput: StandardizedOutput[] = [];
+      for (const piece of outputsByIndex) {
+        if (Array.isArray(piece)) flatOutput.push(...piece);
+        else if (piece !== undefined) flatOutput.push(piece);
+      }
+
+      const elapsedMs = Math.round(performance.now() - start);
+      // Cache the aggregated output (no usage block in fan-out today —
+      // the wrapper-level usage on per-item results is dropped because
+      // the queue panel shows one row per node, not per-item).
+      cache.set(nodeHash, { output: flatOutput });
+      outputs.set(node.id, flatOutput);
+      emit(node.id, {
+        status: "done",
+        output: flatOutput,
+        elapsedMs,
+        hash: nodeHash,
+        fanOut: { total: items.length, done: items.length },
+      });
+      continue;
+    }
+
+    /* ───────────────────── Single-execution branch ───────────────────── */
     emit(node.id, { status: "running", hash: nodeHash });
     const start = performance.now();
     try {
-      const execute = schema.execute;
-      if (!execute) {
-        throw new Error(
-          `Node "${node.kind}" has no execute() — every registered schema must.`,
-        );
-      }
       const rawResult = await execute({
         nodeId: node.id,
         config: node.config,
