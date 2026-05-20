@@ -1,5 +1,6 @@
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
+import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textNodeSchema } from "@/components/nodes/node-text";
 
 import { nodeRegistry } from "./registry";
@@ -25,6 +26,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(textNodeSchema);
   nodeRegistry.register(imageNodeSchema);
   nodeRegistry.register(llmTextNodeSchema);
+  nodeRegistry.register(soulIdNodeSchema);
   registered = true;
 }
 
