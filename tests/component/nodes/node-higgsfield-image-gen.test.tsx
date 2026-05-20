@@ -5,7 +5,7 @@ import {
   hasHiggsfieldImageGenOverrides,
   higgsfieldImageGenNodeSchema,
 } from "@/components/nodes/node-higgsfield-image-gen";
-import { useExecutionStore } from "@/lib/stores/execution-store";
+import { _resetExecutionForTests } from "@/lib/stores/execution-store";
 import type { SoulIdRef, StandardizedOutput } from "@/types/node";
 
 vi.mock("@/lib/higgsfield/call-higgsfield-image", async () => {
@@ -23,7 +23,7 @@ const callMock = vi.mocked(higgs.callHiggsfieldImage);
 
 beforeEach(() => {
   callMock.mockReset();
-  useExecutionStore.getState()._resetExecutionForTests?.();
+  _resetExecutionForTests();
 });
 
 const SOUL_REF: SoulIdRef = {

@@ -176,6 +176,15 @@ interface RawCustomReferenceListItem {
     | "completed"
     | "failed";
   thumbnail_url: string | null;
+  /**
+   * The list endpoint never populates `thumbnail_url` (always null in the
+   * wild as of May 2026), but the per-character GET endpoint returns a
+   * `reference_media` array with the training images. We could fetch each
+   * character individually for a thumbnail, but that's N extra requests
+   * per list — for now we surface what the list endpoint gives us and let
+   * the UI render a User-glyph fallback.
+   */
+  reference_media?: Array<{ id: string; media_url: string }>;
   created_at: string;
 }
 
@@ -191,6 +200,17 @@ interface RawCustomReferenceList {
  * List trained Soul ID characters under the configured API key. Walks all
  * pages (Higgsfield caps at 20 per page) up to a hard 50-page safety so a
  * pathological account doesn't loop forever.
+ *
+ * The list endpoint never populates `thumbnail_url` (always null in the
+ * wild as of May 2026); for completed characters we fan-out a per-character
+ * GET to read the first `reference_media` entry as a thumbnail. Keeps the
+ * UI from rendering a wall of placeholder glyphs when the user actually
+ * has trained characters with cover images.
+ *
+ * The fan-out is sequential to stay well under any per-second rate limit;
+ * for users with many characters this is N+1 requests but each is a
+ * cached GET. If this ever becomes a perceived UX problem (>10 chars),
+ * the obvious fix is concurrent + a session cache.
  */
 export async function listSoulIds(
   signal: AbortSignal,
@@ -204,12 +224,32 @@ export async function listSoulIds(
       { method: "GET", signal },
     );
     for (const item of res.items ?? []) {
+      // For completed characters, fetch the per-character payload to grab
+      // a real thumbnail from `reference_media[0].media_url`. Defensive
+      // fallback to null on errors so a single bad character doesn't kill
+      // the whole list.
+      let thumbnailUrl: string | null = item.thumbnail_url ?? null;
+      if (item.status === "completed" && !thumbnailUrl) {
+        try {
+          const detail = await fetchJson<RawCustomReferenceListItem>(
+            `${API_BASE}/v1/custom-references/${encodeURIComponent(item.id)}`,
+            creds,
+            { method: "GET", signal },
+          );
+          thumbnailUrl =
+            detail.thumbnail_url ??
+            detail.reference_media?.[0]?.media_url ??
+            null;
+        } catch {
+          // Keep going with no thumbnail rather than failing the whole list.
+        }
+      }
       all.push({
         id: item.id,
         name: item.name,
         modelVersion: item.model_version,
         status: item.status,
-        thumbnailUrl: item.thumbnail_url,
+        thumbnailUrl,
         createdAt: item.created_at,
       });
     }

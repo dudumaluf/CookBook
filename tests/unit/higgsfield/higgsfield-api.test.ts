@@ -680,6 +680,22 @@ describe("listSoulIds", () => {
         },
       ]),
     );
+    // Page 1 has a completed v2 character → wrapper does an extra GET
+    // for its thumbnail. Mock it with reference_media so we can assert
+    // the thumbnail was filled in from the per-char endpoint.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        id: "a3f4c891-7b2e-4d1a-9e8c-1f4b2a3c5d6e",
+        name: "A",
+        model_version: "v2",
+        status: "completed",
+        thumbnail_url: null,
+        created_at: "2026-04-01T12:00:00Z",
+        reference_media: [
+          { id: "ref-1", media_url: "https://cdn.example/A-cover.jpg" },
+        ],
+      }),
+    );
     fetchMock.mockResolvedValueOnce(
       pageResponse(2, 2, [
         {
@@ -692,13 +708,16 @@ describe("listSoulIds", () => {
         },
       ]),
     );
+    // No GET extra for "B" because it's in_progress, not completed.
 
     const { listSoulIds } = await import(
       "@/lib/higgsfield/higgsfield-api"
     );
     const items = await listSoulIds(new AbortController().signal);
     expect(items.map((i) => i.name)).toEqual(["A", "B"]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // page1 + GET-thumbnail-A + page2 = 3 fetches
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(items[0]!.thumbnailUrl).toBe("https://cdn.example/A-cover.jpg");
   });
 
   it("throws code='missing_keys' when env vars are absent", async () => {
