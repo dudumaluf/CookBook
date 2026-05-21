@@ -1,19 +1,27 @@
 "use client";
 
 import {
+  AlertCircle,
+  Check,
   Image as ImageIcon,
   ImagePlus,
   Loader2,
   Sparkles,
+  X,
 } from "lucide-react";
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
-import { callHiggsfieldImage } from "@/lib/higgsfield/call-higgsfield-image";
+import {
+  callHiggsfieldImage,
+  fetchSoulStyles,
+  HiggsfieldCallError,
+} from "@/lib/higgsfield/call-higgsfield-image";
 import {
   SOUL_ASPECT_RATIOS,
   SOUL_BATCH_SIZES,
   SOUL_RESOLUTIONS,
+  type HiggsfieldSoulStyle,
   type SoulAspectRatio,
   type SoulBatchSize,
   type SoulMode,
@@ -183,7 +191,6 @@ function HiggsfieldImageGenSettingsContent({
   const batchId = useId();
   const seedId = useId();
   const negPromptId = useId();
-  const styleId = useId();
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -295,30 +302,15 @@ function HiggsfieldImageGenSettingsContent({
         />
       </div>
 
-      {/* Style preset (only when no image is wired) ------------------- */}
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={styleId} className="font-medium text-foreground/90">
-          Soul Style preset
-          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-            (UUID)
-          </span>
-        </label>
-        <input
-          id={styleId}
-          type="text"
-          placeholder="optional"
-          value={config.styleId ?? ""}
-          onChange={(e) => {
-            const v = e.target.value.trim();
-            updateConfig({ styleId: v.length > 0 ? v : undefined });
-          }}
-          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
-        />
-        <p className="text-[10.5px] text-muted-foreground/80">
-          Wire a reference image to use Soul Reference mode instead. Style
-          and reference are mutually exclusive.
-        </p>
-      </div>
+      {/* Style preset picker ----------------------------------------- */}
+      <SoulStylePicker
+        styleId={config.styleId}
+        onChange={(next) => updateConfig({ styleId: next })}
+      />
+      <p className="-mt-1.5 text-[10.5px] text-muted-foreground/80">
+        Wire a reference image to use Soul Reference mode instead. Style
+        and reference are mutually exclusive.
+      </p>
 
       {/* Negative prompt --------------------------------------------- */}
       <div className="flex flex-col gap-1.5">
@@ -358,6 +350,172 @@ export function hasHiggsfieldImageGenOverrides(
     config.seed !== undefined ||
     config.negativePrompt !== undefined ||
     config.styleId !== undefined
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/* Soul Style picker (Slice 5.3)                                          */
+/* ────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Thumbnail-grid picker for the curated v2 Soul Style presets. Replaces
+ * the raw-UUID input that shipped in Slice 4.3. Lazily fetches the catalog
+ * the first time the popover renders the picker — re-fetches on every
+ * mount because the popover lives in a Portal and doesn't keep state
+ * across opens.
+ *
+ * States:
+ *   - loading       → centered spinner, "Loading styles…"
+ *   - error         → inline alert pill with the upstream message; the
+ *                     selected styleId (if any) stays usable as a chip
+ *                     so re-opens don't blow away a working selection.
+ *   - empty array   → "No styles available" copy (would be a regression
+ *                     from Higgsfield, but defensive).
+ *   - loaded        → 2-column thumbnail grid with names; click selects;
+ *                     "None" chip clears the selection.
+ *
+ * The grid intentionally caps height at ~14 rem and scrolls inside the
+ * popover so the rest of the settings (negative prompt, etc.) stay
+ * reachable on smaller viewports.
+ */
+function SoulStylePicker({
+  styleId,
+  onChange,
+}: {
+  styleId: string | undefined;
+  onChange: (next: string | undefined) => void;
+}) {
+  const [styles, setStyles] = useState<HiggsfieldSoulStyle[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetchSoulStyles(ctrl.signal)
+      .then((next) => {
+        if (!ctrl.signal.aborted) setStyles(next);
+      })
+      .catch((err) => {
+        if ((err as Error)?.name === "AbortError") return;
+        const msg =
+          err instanceof HiggsfieldCallError
+            ? err.code === "missing_keys"
+              ? "Higgsfield keys missing — set HIGGSFIELD_API_KEY + HIGGSFIELD_API_SECRET in .env.local."
+              : err.message
+            : err instanceof Error
+              ? err.message
+              : "Failed to load styles";
+        setError(msg);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const selected =
+    styleId && styles
+      ? (styles.find((s) => s.id === styleId) ?? null)
+      : null;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-foreground/90">
+          Soul Style preset
+        </span>
+        {styleId !== undefined ? (
+          <button
+            type="button"
+            onClick={() => onChange(undefined)}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-[10.5px] text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-2.5 w-2.5" /> Clear
+          </button>
+        ) : null}
+      </div>
+
+      {/* If a style is selected, surface its name even while loading so a
+          slow network doesn't make the user feel like they lost it. */}
+      {selected ? (
+        <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent/[0.06] px-2 py-1.5 text-[11px]">
+          {selected.previewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={selected.previewUrl}
+              alt=""
+              className="h-7 w-7 shrink-0 rounded object-cover"
+            />
+          ) : null}
+          <span className="truncate font-medium text-foreground/90">
+            {selected.name}
+          </span>
+        </div>
+      ) : null}
+
+      {error !== null ? (
+        <p
+          role="alert"
+          className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-[10.5px] leading-snug text-destructive"
+        >
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{error}</span>
+        </p>
+      ) : styles === null ? (
+        <div className="flex items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-3 text-[10.5px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Loading styles…</span>
+        </div>
+      ) : styles.length === 0 ? (
+        <p className="rounded-md bg-foreground/[0.04] px-2 py-3 text-center text-[10.5px] text-muted-foreground">
+          No styles available
+        </p>
+      ) : (
+        <div
+          data-testid="soul-style-grid"
+          className="grid max-h-[14rem] grid-cols-2 gap-1 overflow-y-auto rounded-md border border-border/40 bg-foreground/[0.02] p-1"
+        >
+          {styles.map((s) => {
+            const isActive = s.id === styleId;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onChange(s.id)}
+                onPointerDown={(e) => e.stopPropagation()}
+                aria-pressed={isActive}
+                className={`group/style relative flex flex-col gap-0.5 overflow-hidden rounded-md border bg-foreground/[0.03] p-0.5 text-left transition-colors hover:bg-foreground/[0.06] ${
+                  isActive ? "border-accent/70" : "border-transparent"
+                }`}
+              >
+                {s.previewUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={s.previewUrl}
+                    alt=""
+                    loading="lazy"
+                    className="aspect-square w-full rounded-sm object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <div className="aspect-square w-full rounded-sm bg-foreground/[0.06]" />
+                )}
+                <span className="truncate px-1 pb-0.5 text-[10px] text-foreground/80">
+                  {s.name}
+                </span>
+                {isActive ? (
+                  <span
+                    aria-hidden
+                    className="absolute right-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-accent-foreground"
+                  >
+                    <Check className="h-2.5 w-2.5" />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

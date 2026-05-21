@@ -1,10 +1,11 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
 
 import {
   hasHiggsfieldImageGenOverrides,
   higgsfieldImageGenNodeSchema,
 } from "@/components/nodes/node-higgsfield-image-gen";
+import type { HiggsfieldSoulStyle } from "@/lib/higgsfield/types";
 import { _resetExecutionForTests } from "@/lib/stores/execution-store";
 import type { SoulIdRef, StandardizedOutput } from "@/types/node";
 
@@ -15,16 +16,43 @@ vi.mock("@/lib/higgsfield/call-higgsfield-image", async () => {
   return {
     ...actual,
     callHiggsfieldImage: vi.fn(),
+    fetchSoulStyles: vi.fn(),
   };
 });
 
 const higgs = await import("@/lib/higgsfield/call-higgsfield-image");
 const callMock = vi.mocked(higgs.callHiggsfieldImage);
+const fetchStylesMock = vi.mocked(higgs.fetchSoulStyles);
 
 beforeEach(() => {
   callMock.mockReset();
+  fetchStylesMock.mockReset();
+  // Default: empty catalog so old tests don't accidentally poke the
+  // picker's grid path. Tests that exercise the picker override.
+  fetchStylesMock.mockResolvedValue([]);
   _resetExecutionForTests();
 });
+
+const STYLE_FIXTURE: HiggsfieldSoulStyle[] = [
+  {
+    id: "95151de0-e0e5-4e04-bd45-c58c8a4ac023",
+    name: "Street photography",
+    description: "",
+    previewUrl: "https://cdn.example/street.webp",
+  },
+  {
+    id: "3d5584b2-4d15-48d2-8a09-c1073259f4c6",
+    name: "Editorial street style",
+    description: "",
+    previewUrl: "https://cdn.example/editorial.webp",
+  },
+  {
+    id: "fafd3087-0d0f-4fb1-9af6-91b7d304687c",
+    name: "Warm ambient",
+    description: "",
+    previewUrl: "https://cdn.example/warm.webp",
+  },
+];
 
 const SOUL_REF: SoulIdRef = {
   customReferenceId: "b66a1caa-612f-440d-8353-debceb00aae6",
@@ -299,6 +327,120 @@ describe("higgsfieldImageGenNodeSchema", () => {
       expect(args.batchSize).toBe(4);
       expect(args.seed).toBe(42);
       expect(args.negativePrompt).toBe("blur");
+    });
+  });
+
+  /* ──────────────────── Slice 5.3: Soul Style picker ──────────────────── */
+
+  describe("Soul Style picker (settings popover)", () => {
+    const Settings = higgsfieldImageGenNodeSchema.settings!.Content;
+
+    it("fetches the catalog on mount and renders a 2-column thumbnail grid", async () => {
+      fetchStylesMock.mockResolvedValueOnce(STYLE_FIXTURE);
+      render(
+        <Settings
+          nodeId="g"
+          config={{}}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      // Loading first…
+      expect(screen.getByText(/loading styles/i)).toBeTruthy();
+      // …then the catalog renders.
+      const grid = await screen.findByTestId("soul-style-grid");
+      expect(grid.className).toContain("grid-cols-2");
+      expect(screen.getByText("Street photography")).toBeTruthy();
+      expect(screen.getByText("Editorial street style")).toBeTruthy();
+      expect(screen.getByText("Warm ambient")).toBeTruthy();
+      expect(fetchStylesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("clicking a thumbnail commits its UUID via updateConfig", async () => {
+      fetchStylesMock.mockResolvedValueOnce(STYLE_FIXTURE);
+      const updateConfig = vi.fn();
+      render(
+        <Settings
+          nodeId="g"
+          config={{}}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      const grid = await screen.findByTestId("soul-style-grid");
+      const editorial = (grid.querySelectorAll("button")[1] as HTMLButtonElement);
+      await act(async () => {
+        fireEvent.click(editorial);
+      });
+      expect(updateConfig).toHaveBeenCalledWith({
+        styleId: "3d5584b2-4d15-48d2-8a09-c1073259f4c6",
+      });
+    });
+
+    it("the active style row carries aria-pressed=true and the selected chip renders its name", async () => {
+      fetchStylesMock.mockResolvedValueOnce(STYLE_FIXTURE);
+      render(
+        <Settings
+          nodeId="g"
+          config={{ styleId: STYLE_FIXTURE[0]!.id }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      await screen.findByTestId("soul-style-grid");
+      const pressed = screen.getAllByRole("button", { pressed: true });
+      // First style is the selected one; the chip duplicates the name above.
+      expect(pressed.length).toBe(1);
+      // Two occurrences expected: the selected-chip preview + the grid item.
+      expect(screen.getAllByText("Street photography").length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("Clear button clears the selected styleId via updateConfig(undefined)", async () => {
+      fetchStylesMock.mockResolvedValueOnce(STYLE_FIXTURE);
+      const updateConfig = vi.fn();
+      render(
+        <Settings
+          nodeId="g"
+          config={{ styleId: STYLE_FIXTURE[0]!.id }}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      await screen.findByTestId("soul-style-grid");
+      const clearBtn = screen.getByRole("button", { name: /clear/i });
+      await act(async () => {
+        fireEvent.click(clearBtn);
+      });
+      expect(updateConfig).toHaveBeenCalledWith({ styleId: undefined });
+    });
+
+    it("renders an empty-state copy when the catalog is empty", async () => {
+      fetchStylesMock.mockResolvedValueOnce([]);
+      render(
+        <Settings
+          nodeId="g"
+          config={{}}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText(/no styles available/i)).toBeTruthy();
+      });
+    });
+
+    it("renders an inline error pill when the fetch fails", async () => {
+      fetchStylesMock.mockRejectedValueOnce(new Error("Higgsfield 503"));
+      render(
+        <Settings
+          nodeId="g"
+          config={{}}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(/Higgsfield 503/);
     });
   });
 });

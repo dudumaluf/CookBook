@@ -198,6 +198,31 @@ export interface HiggsfieldSoulIdListResponse {
   items: HiggsfieldSoulIdSummary[];
 }
 
+/* ------------------------------- Soul Style ------------------------------- */
+
+/**
+ * One Soul Style preset (Slice 5.3). The Higgsfield catalogue at
+ * `/v1/text2image/soul-styles/v2` exposes 33 curated v2-photo presets
+ * (e.g. "Flash editorial", "Digital camera", "Editorial street style").
+ *
+ * Used by the HiggsfieldImageGen settings popover's style picker —
+ * replaces the raw-UUID input that shipped in Slice 4.3.
+ *
+ * Fields mirror the upstream snake_case payload normalised to our usual
+ * camelCase. `description` is often empty in the wild but kept on the
+ * shape so future captioning lands without a schema bump.
+ */
+export interface HiggsfieldSoulStyle {
+  id: string;
+  name: string;
+  description: string;
+  previewUrl: string;
+}
+
+export interface HiggsfieldSoulStylesResponse {
+  items: HiggsfieldSoulStyle[];
+}
+
 /* ------------------------------- Errors ------------------------------- */
 
 /**

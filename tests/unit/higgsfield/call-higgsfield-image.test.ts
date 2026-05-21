@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   callHiggsfieldImage,
   fetchSoulIds,
+  fetchSoulStyles,
   HiggsfieldCallError,
 } from "@/lib/higgsfield/call-higgsfield-image";
 
@@ -226,6 +227,63 @@ describe("fetchSoulIds", () => {
 
     await expect(
       fetchSoulIds(new AbortController().signal),
+    ).rejects.toMatchObject({ code: "network" });
+  });
+});
+
+/* ------------------------------ fetchSoulStyles ------------------------------ */
+
+describe("fetchSoulStyles", () => {
+  it("returns the items array on success", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        items: [
+          {
+            id: "95151de0-e0e5-4e04-bd45-c58c8a4ac023",
+            name: "Street photography",
+            description: "",
+            previewUrl: "https://cdn.example/street.webp",
+          },
+        ],
+      }),
+    );
+
+    const items = await fetchSoulStyles(new AbortController().signal);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.name).toBe("Street photography");
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "/api/higgsfield/soul-styles",
+    );
+  });
+
+  it("maps server-side missing_keys into a typed error", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(500, {
+        error: "HIGGSFIELD env vars missing",
+        code: "missing_keys",
+      }),
+    );
+
+    await expect(
+      fetchSoulStyles(new AbortController().signal),
+    ).rejects.toMatchObject({ code: "missing_keys" });
+  });
+
+  it("translates a 499 server response into AbortError", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(499, { error: "Request cancelled", code: "aborted" }),
+    );
+
+    await expect(
+      fetchSoulStyles(new AbortController().signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("maps a fetch-level network failure to HiggsfieldCallError('network')", async () => {
+    fetchMock.mockImplementationOnce(() => Promise.reject(new TypeError("fetch failed")));
+
+    await expect(
+      fetchSoulStyles(new AbortController().signal),
     ).rejects.toMatchObject({ code: "network" });
   });
 });

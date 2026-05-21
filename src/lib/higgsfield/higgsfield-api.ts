@@ -5,6 +5,7 @@ import type {
   HiggsfieldImageRequest,
   HiggsfieldImageSuccessResponse,
   HiggsfieldSoulIdSummary,
+  HiggsfieldSoulStyle,
 } from "./types";
 
 /**
@@ -90,14 +91,11 @@ function authHeaders(creds: Credentials): Record<string, string> {
 
 /**
  * Headers for the legacy auth scheme — used by `/v1/text2image/*`
- * endpoints (Soul Style listings, etc.). Not used yet; will be when
- * the style picker UI lands. Kept here so the next wrapper that needs
- * a `/v1/text2image/*` call can `import { authHeadersV1 }` and not
- * re-discover the auth split.
- *
- * eslint-disable-next-line @typescript-eslint/no-unused-vars
+ * endpoints (Soul Style listings, etc.). Per `cloud.higgsfield.ai/models`
+ * reference these endpoints expect separate `hf-api-key` + `hf-secret`
+ * headers, not the consolidated `Authorization: Key KEY:SECRET` shape
+ * that generation endpoints use. Don't mix.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function authHeadersV1(creds: Credentials): Record<string, string> {
   return {
     "hf-api-key": creds.key,
@@ -125,6 +123,13 @@ interface FetchJsonOptions {
   method: "GET" | "POST";
   body?: string;
   signal?: AbortSignal;
+  /**
+   * Pick the auth scheme — generation endpoints use the canonical
+   * `Authorization: Key` shape (default); `/v1/text2image/*` endpoints
+   * use the legacy `hf-api-key` + `hf-secret` pair (set this to true).
+   * See ADR-0029 for why both schemes coexist.
+   */
+  useV1Auth?: boolean;
 }
 
 async function fetchJson<T>(
@@ -135,7 +140,7 @@ async function fetchJson<T>(
   if (options.signal?.aborted) throw makeAbort();
   const res = await fetch(url, {
     method: options.method,
-    headers: authHeaders(creds),
+    headers: options.useV1Auth ? authHeadersV1(creds) : authHeaders(creds),
     body: options.body,
     signal: options.signal,
   });
@@ -287,6 +292,54 @@ export async function listSoulIds(
     if (!res.total_pages || page >= res.total_pages) break;
   }
   return all;
+}
+
+/* ------------------------------- Soul Styles ------------------------------- */
+
+interface RawSoulStyle {
+  id: string;
+  name: string;
+  description?: string | null;
+  preview_url?: string | null;
+}
+
+/**
+ * List the curated v2 Soul Style presets — used by the HiggsfieldImageGen
+ * settings popover style picker (Slice 5.3). Higgsfield exposes 33 v2
+ * presets at this endpoint (e.g. "Flash editorial", "Digital camera",
+ * "Editorial street style"). The list is stable enough that we don't
+ * cache it client-side; just refetch when the popover opens.
+ *
+ * Auth: this endpoint takes the legacy `hf-api-key` / `hf-secret` pair
+ * (per `cloud.higgsfield.ai/models` reference). Don't use the canonical
+ * `Authorization: Key` header here — it's silently rejected.
+ *
+ * Returns an empty array on a malformed payload (`null` items, etc.).
+ */
+export async function listSoulStyles(
+  signal: AbortSignal,
+): Promise<HiggsfieldSoulStyle[]> {
+  const creds = loadCredentials();
+  // Endpoint returns a bare `RawSoulStyle[]`, not `{ items: [...] }`.
+  const raw = await fetchJson<RawSoulStyle[]>(
+    `${API_BASE}/v1/text2image/soul-styles/v2`,
+    creds,
+    { method: "GET", signal, useV1Auth: true },
+  );
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (s): s is RawSoulStyle & { id: string; name: string } =>
+        typeof s?.id === "string" &&
+        typeof s.name === "string" &&
+        s.name.length > 0,
+    )
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description ?? "",
+      previewUrl: s.preview_url ?? "",
+    }));
 }
 
 /* ------------------------------- Image generation ------------------------------- */

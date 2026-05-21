@@ -4,6 +4,8 @@ import type {
   HiggsfieldImageSuccessResponse,
   HiggsfieldSoulIdListResponse,
   HiggsfieldSoulIdSummary,
+  HiggsfieldSoulStyle,
+  HiggsfieldSoulStylesResponse,
 } from "./types";
 
 /**
@@ -93,6 +95,44 @@ export async function fetchSoulIds(
 
   if (res.ok) {
     const data = (await res.json()) as HiggsfieldSoulIdListResponse;
+    return data.items;
+  }
+
+  const { message, code } = await readErrorPayload(res);
+
+  if (res.status === 499) {
+    const abortErr = new Error(message);
+    abortErr.name = "AbortError";
+    throw abortErr;
+  }
+
+  throw new HiggsfieldCallError(message, code);
+}
+
+/**
+ * Fetch the curated v2 Soul Style presets — Slice 5.3. Powers the
+ * thumbnail picker grid in the HiggsfieldImageGen settings popover.
+ *
+ * Same shape contract as `fetchSoulIds` (returns the `items` array
+ * directly, throws `HiggsfieldCallError` on upstream failure, preserves
+ * `AbortError` unchanged on cancellation).
+ */
+export async function fetchSoulStyles(
+  signal: AbortSignal,
+): Promise<HiggsfieldSoulStyle[]> {
+  let res: Response;
+  try {
+    res = await fetch("/api/higgsfield/soul-styles", { signal });
+  } catch (err) {
+    if ((err as Error)?.name === "AbortError") throw err;
+    throw new HiggsfieldCallError(
+      "Could not reach the Higgsfield endpoint. Is the dev server running?",
+      "network",
+    );
+  }
+
+  if (res.ok) {
+    const data = (await res.json()) as HiggsfieldSoulStylesResponse;
     return data.items;
   }
 

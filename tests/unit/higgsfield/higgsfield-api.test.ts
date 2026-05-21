@@ -741,3 +741,121 @@ describe("listSoulIds", () => {
     ).rejects.toMatchObject({ code: "upstream_error" });
   });
 });
+
+/* ------------------------------ listSoulStyles ------------------------------ */
+
+describe("listSoulStyles", () => {
+  function setEnv() {
+    process.env.HIGGSFIELD_API_KEY = "key";
+    process.env.HIGGSFIELD_API_SECRET = "secret";
+  }
+
+  it("hits /v1/text2image/soul-styles/v2 with the LEGACY auth header pair (hf-api-key + hf-secret)", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, [
+        {
+          id: "95151de0-e0e5-4e04-bd45-c58c8a4ac023",
+          name: "Street photography",
+          description: "",
+          preview_url: "https://cdn.example/street.webp",
+        },
+      ]),
+    );
+
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const items = await listSoulStyles(new AbortController().signal);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(
+      "https://platform.higgsfield.ai/v1/text2image/soul-styles/v2",
+    );
+    const headers = init?.headers as Record<string, string>;
+    // Legacy scheme — NOT the consolidated `Authorization: Key` form.
+    expect(headers["hf-api-key"]).toBe("key");
+    expect(headers["hf-secret"]).toBe("secret");
+    expect(headers.Authorization).toBeUndefined();
+
+    expect(items).toEqual([
+      {
+        id: "95151de0-e0e5-4e04-bd45-c58c8a4ac023",
+        name: "Street photography",
+        description: "",
+        previewUrl: "https://cdn.example/street.webp",
+      },
+    ]);
+  });
+
+  it("normalises preview_url → previewUrl and defaults description to empty string", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, [
+        {
+          id: "uuid-1",
+          name: "A",
+          // No description, no preview_url — defensive payload shape.
+        },
+      ]),
+    );
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const items = await listSoulStyles(new AbortController().signal);
+    expect(items[0]).toEqual({
+      id: "uuid-1",
+      name: "A",
+      description: "",
+      previewUrl: "",
+    });
+  });
+
+  it("filters out malformed rows (missing id or name)", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, [
+        { id: "ok", name: "Good" },
+        { id: "no-name" }, // missing name
+        { name: "no-id" }, // missing id
+        null,
+      ]),
+    );
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const items = await listSoulStyles(new AbortController().signal);
+    expect(items.map((i) => i.id)).toEqual(["ok"]);
+  });
+
+  it("returns an empty array when the upstream payload isn't an array (defensive)", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { unexpected: true }));
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    const items = await listSoulStyles(new AbortController().signal);
+    expect(items).toEqual([]);
+  });
+
+  it("throws code='missing_keys' when env vars are absent", async () => {
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await expect(
+      listSoulStyles(new AbortController().signal),
+    ).rejects.toMatchObject({ code: "missing_keys" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards upstream errors with code='upstream_error'", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { detail: "down" }));
+    const { listSoulStyles } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await expect(
+      listSoulStyles(new AbortController().signal),
+    ).rejects.toMatchObject({ code: "upstream_error" });
+  });
+});
