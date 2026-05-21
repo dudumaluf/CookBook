@@ -345,4 +345,100 @@ describe("QueuePanel", () => {
     render(withTooltip(<QueuePanel />));
     expect(screen.queryByText(/this run/)).toBeNull();
   });
+
+  /* ──────────────────── Slice 5.2: image thumbs ──────────────────── */
+
+  it("renders a 1-up thumbnail for a single image output", () => {
+    seedNodes([n("g", "image")]);
+    seedRecords({
+      g: {
+        status: "done",
+        output: { type: "image", value: { url: "https://x/solo.png" } },
+      },
+    });
+    render(withTooltip(<QueuePanel />));
+    const grid = screen.getByTestId("queue-row-thumbs");
+    expect(grid.children).toHaveLength(1);
+    expect(grid.className).toContain("grid-cols-1");
+    const link = grid.querySelector("a") as HTMLAnchorElement;
+    expect(link.href).toContain("https://x/solo.png");
+  });
+
+  it("renders a 2×2 grid for a 4-image batch", () => {
+    seedNodes([n("g", "higgsfield-image-gen")]);
+    seedRecords({
+      g: {
+        status: "done",
+        output: [
+          { type: "image", value: { url: "https://x/a.png" } },
+          { type: "image", value: { url: "https://x/b.png" } },
+          { type: "image", value: { url: "https://x/c.png" } },
+          { type: "image", value: { url: "https://x/d.png" } },
+        ],
+      },
+    });
+    render(withTooltip(<QueuePanel />));
+    const grid = screen.getByTestId("queue-row-thumbs");
+    expect(grid.children).toHaveLength(4);
+    expect(grid.className).toContain("grid-cols-2");
+  });
+
+  it("caps the visible thumbs at MAX_THUMBS and shows a `+N more` chip", () => {
+    seedNodes([n("g", "higgsfield-image-gen")]);
+    seedRecords({
+      g: {
+        status: "done",
+        output: Array.from({ length: 9 }, (_, i) => ({
+          type: "image" as const,
+          value: { url: `https://x/${i}.png` },
+        })),
+      },
+    });
+    render(withTooltip(<QueuePanel />));
+    const grid = screen.getByTestId("queue-row-thumbs");
+    // 6 thumbs + 1 overflow chip = 7 children
+    expect(grid.children).toHaveLength(7);
+    const overflow = screen.getByTestId("queue-row-thumbs-overflow");
+    expect(overflow.textContent).toMatch(/\+3 more/);
+  });
+
+  it("prefers the image thumb grid over the text preview when both are present (image wins)", () => {
+    // Defensive: a node that mixed types; the grid should win and the
+    // text preview shouldn't render.
+    seedNodes([n("g", "image")]);
+    seedRecords({
+      g: {
+        status: "done",
+        output: [
+          { type: "image", value: { url: "https://x/a.png" } },
+          { type: "text", value: "should not render" },
+        ],
+      },
+    });
+    render(withTooltip(<QueuePanel />));
+    expect(screen.getByTestId("queue-row-thumbs")).toBeTruthy();
+    expect(screen.queryByText(/should not render/)).toBeNull();
+  });
+
+  it("renders the image thumbs on `cached` records too", () => {
+    seedNodes([n("g", "image")]);
+    seedRecords({
+      g: {
+        status: "cached",
+        output: { type: "image", value: { url: "https://x/cached.png" } },
+      },
+    });
+    render(withTooltip(<QueuePanel />));
+    expect(screen.getByTestId("queue-row-thumbs")).toBeTruthy();
+  });
+
+  it("does NOT render thumbs on running / pending / error", () => {
+    seedNodes([n("g", "higgsfield-image-gen")]);
+    // running: no output yet
+    seedRecords({
+      g: { status: "running" },
+    });
+    render(withTooltip(<QueuePanel />));
+    expect(screen.queryByTestId("queue-row-thumbs")).toBeNull();
+  });
 });

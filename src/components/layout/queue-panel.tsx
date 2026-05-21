@@ -173,10 +173,19 @@ interface RowData {
   record: ExecutionRecord;
   /** Truncated text preview (≤ 120 chars), or null if not a text output. */
   preview: string | null;
+  /**
+   * Image output URLs (Slice 5.2). Empty array when the node didn't emit
+   * any image outputs. Up to `MAX_THUMBS` are rendered; the row shows a
+   * `+N more` cap when the count exceeds the visible grid.
+   */
+  imageUrls: string[];
 }
 
+/** Visual cap — beyond this we render a `+N more` chip rather than a wall of thumbs. */
+const MAX_THUMBS = 6;
+
 function QueueRow({ row }: { row: RowData }) {
-  const { nodeId, label, IconComponent, record, preview } = row;
+  const { nodeId, label, IconComponent, record, preview, imageUrls } = row;
   const usage = record.usage;
   const elapsedMs = record.elapsedMs;
 
@@ -189,6 +198,8 @@ function QueueRow({ row }: { row: RowData }) {
     .join(" · ");
 
   const isError = record.status === "error";
+  const visibleThumbs = imageUrls.slice(0, MAX_THUMBS);
+  const hiddenCount = imageUrls.length - visibleThumbs.length;
 
   return (
     <li className="border-b border-border/30 px-3 py-2 last:border-b-0">
@@ -217,6 +228,50 @@ function QueueRow({ row }: { row: RowData }) {
         >
           {record.error}
         </p>
+      ) : visibleThumbs.length > 0 ? (
+        // Image outputs win over text preview: if a node emitted images,
+        // the user wants to see them at a glance. Grid sizes itself by
+        // count so a 1-image row reads as one big square; a 4-image row
+        // is a clean 2×2; a 6-image row is 3×2.
+        <div
+          data-testid="queue-row-thumbs"
+          className={
+            visibleThumbs.length === 1
+              ? "mt-1.5 grid grid-cols-1 gap-1"
+              : visibleThumbs.length <= 4
+                ? "mt-1.5 grid grid-cols-2 gap-1"
+                : "mt-1.5 grid grid-cols-3 gap-1"
+          }
+        >
+          {visibleThumbs.map((url, i) => (
+            <a
+              key={`${url}-${i}`}
+              href={url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="block aspect-square overflow-hidden rounded-md bg-foreground/5"
+              aria-label={`Open generated image ${i + 1} in a new tab`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt=""
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </a>
+          ))}
+          {hiddenCount > 0 ? (
+            <div
+              data-testid="queue-row-thumbs-overflow"
+              className="flex aspect-square items-center justify-center rounded-md bg-foreground/[0.06] text-[10.5px] text-muted-foreground"
+            >
+              +{hiddenCount} more
+            </div>
+          ) : null}
+        </div>
       ) : preview !== null ? (
         // Why a div with `line-clamp-2` rather than truncate: text outputs
         // routinely contain line breaks (the joke we tested has `\n`),
@@ -318,6 +373,7 @@ export function buildRows(
       IconComponent: schema?.icon ?? null,
       record,
       preview: extractTextPreview(record),
+      imageUrls: extractImageUrls(record),
     });
   }
   return rows;
@@ -334,6 +390,27 @@ function extractTextPreview(record: ExecutionRecord): string | null {
   const text = first.value.trim();
   if (text.length === 0) return null;
   return text.length > 120 ? text.slice(0, 117) + "…" : text;
+}
+
+/**
+ * Pulls every image URL out of a node's output (Slice 5.2). Returns
+ * an empty array for non-done / non-cached / non-image outputs so the
+ * UI just doesn't render the thumb grid in those cases.
+ *
+ * Handles both the single-output shape (`{ type: "image", value: { url } }`)
+ * and the array shape from a batched gen / fan-out (`StandardizedOutput[]`).
+ */
+function extractImageUrls(record: ExecutionRecord): string[] {
+  if (record.status !== "done" && record.status !== "cached") return [];
+  const out = record.output;
+  if (!out) return [];
+  const list = Array.isArray(out) ? out : [out];
+  return list
+    .filter(
+      (o): o is StandardizedOutput & { type: "image" } => o?.type === "image",
+    )
+    .map((o) => o.value.url)
+    .filter((u) => typeof u === "string" && u.length > 0);
 }
 
 /** "$0.0001" / "$0.12" / "<$0.0001" — short form for queue rows. */
