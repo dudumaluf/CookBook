@@ -12,7 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { cn } from "@/lib/utils";
-import type { ExecutionStatus } from "@/types/node";
+import type { ExecutionRecord, ExecutionStatus } from "@/types/node";
 
 /**
  * Tiny status indicator for the BaseNode header.
@@ -28,6 +28,8 @@ import type { ExecutionStatus } from "@/types/node";
  *   idle      → nothing rendered. Default state pre-run; no clutter.
  *   pending   → muted dashed circle. "Queued in this run".
  *   running   → spinner in accent. "execute() in flight".
+ *               During fan-out, a tiny `done/total` counter renders
+ *               beside the spinner (e.g. `3/8`) — Slice 5.1.
  *   done      → solid check in success-green. Hover for elapsed ms.
  *   cached    → lightning bolt in muted-success. Hover for "from cache".
  *   error     → solid AlertCircle in destructive. Hover for message.
@@ -43,18 +45,26 @@ export function NodeStatusChip({ nodeId }: { nodeId: string }) {
   // chip when this node's record changes.
   const record = useExecutionStore((s) => s.records.get(nodeId));
   if (!record || record.status === "idle") return null;
-  return <StatusBadge status={record.status} hint={hintFor(record)} />;
+  return (
+    <StatusBadge
+      status={record.status}
+      hint={hintFor(record)}
+      fanOut={record.fanOut}
+    />
+  );
 }
 
-function hintFor(record: {
-  status: ExecutionStatus;
-  error?: string;
-  elapsedMs?: number;
-}): string {
+function hintFor(record: Pick<ExecutionRecord, "status" | "error" | "elapsedMs" | "fanOut">): string {
   switch (record.status) {
     case "pending":
       return "Pending — queued in this run";
     case "running":
+      // Mid-fan-out: lift the progress into the tooltip so AT users
+      // hear it and sighted users get the same number twice (visible
+      // chip + on-hover tooltip).
+      if (record.fanOut !== undefined) {
+        return `Running ${record.fanOut.done}/${record.fanOut.total}…`;
+      }
       return "Running…";
     case "done":
       return record.elapsedMs !== undefined
@@ -89,11 +99,17 @@ const VISUALS: Record<Exclude<ExecutionStatus, "idle">, StatusVisual> = {
 function StatusBadge({
   status,
   hint,
+  fanOut,
 }: {
   status: Exclude<ExecutionStatus, "idle">;
   hint: string;
+  fanOut?: { total: number; done: number };
 }) {
   const { Icon, className, spin } = VISUALS[status];
+  // Show the inline counter only while running a fan-out — once the node
+  // finishes the elapsed-ms tooltip + the success/error icon already say
+  // everything; an extra `8/8` glyph would be noise.
+  const showFanOut = status === "running" && fanOut !== undefined;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -105,9 +121,21 @@ function StatusBadge({
           role="status"
           aria-label={hint}
           data-status={status}
-          className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+          data-fanout={showFanOut ? `${fanOut!.done}/${fanOut!.total}` : undefined}
+          className={cn(
+            "inline-flex shrink-0 items-center justify-center",
+            showFanOut ? "h-3.5 gap-1" : "h-3.5 w-3.5",
+          )}
         >
           <Icon className={cn("h-3 w-3", spin && "animate-spin", className)} />
+          {showFanOut ? (
+            <span
+              className="font-mono text-[10px] leading-none tabular-nums text-accent"
+              data-testid="status-chip-fanout-count"
+            >
+              {fanOut!.done}/{fanOut!.total}
+            </span>
+          ) : null}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top">{hint}</TooltipContent>

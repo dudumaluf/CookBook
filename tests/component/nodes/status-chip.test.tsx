@@ -77,4 +77,35 @@ describe("NodeStatusChip", () => {
     const badge = screen.getByRole("status");
     expect(badge.getAttribute("aria-label")).toContain("Boom");
   });
+
+  /* ──────────────────── Slice 5.1: fan-out counter ──────────────────── */
+
+  it("renders an inline `done/total` counter beside the spinner during fan-out", () => {
+    setStatus("n1", "running", { fanOut: { total: 8, done: 3 } });
+    render(withProvider(<NodeStatusChip nodeId="n1" />));
+    const counter = screen.getByTestId("status-chip-fanout-count");
+    expect(counter.textContent).toBe("3/8");
+  });
+
+  it("surfaces the fan-out progress in the running tooltip / aria-label", () => {
+    setStatus("n1", "running", { fanOut: { total: 4, done: 2 } });
+    render(withProvider(<NodeStatusChip nodeId="n1" />));
+    const badge = screen.getByRole("status");
+    expect(badge.getAttribute("aria-label")).toContain("2/4");
+  });
+
+  it("does NOT render the counter on non-running statuses (final state shows the icon only)", () => {
+    setStatus("n1", "done", {
+      elapsedMs: 600,
+      fanOut: { total: 4, done: 4 },
+    });
+    render(withProvider(<NodeStatusChip nodeId="n1" />));
+    expect(screen.queryByTestId("status-chip-fanout-count")).toBeNull();
+  });
+
+  it("does NOT render the counter when running without fan-out (single execution)", () => {
+    setStatus("n1", "running");
+    render(withProvider(<NodeStatusChip nodeId="n1" />));
+    expect(screen.queryByTestId("status-chip-fanout-count")).toBeNull();
+  });
 });
