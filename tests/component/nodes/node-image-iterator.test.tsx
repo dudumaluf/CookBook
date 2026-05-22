@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
-import type { StandardizedOutput } from "@/types/node";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import type { StandardizedOutput, WorkflowEdge } from "@/types/node";
 
 describe("imageIteratorNodeSchema", () => {
   it("declares the expected schema shape", () => {
@@ -32,22 +33,99 @@ describe("imageIteratorNodeSchema", () => {
     );
   });
 
-  it("renders an explanatory hint in the body", () => {
-    const Body = imageIteratorNodeSchema.Body;
-    render(
-      <Body
-        nodeId="n1"
-        config={{}}
-        updateConfig={() => undefined}
-        selected={false}
-      />,
-    );
-    expect(
-      screen.getByText(/wire n images here/i),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/parallel/i),
-    ).toBeTruthy();
+  /* ──────────────────── Slice 5.4: live edge count ──────────────────── */
+
+  describe("live edge count in body", () => {
+    // Reset the workflow-store between tests so leftover edges from one
+    // case don't leak into the next.
+    beforeEach(() => {
+      useWorkflowStore.setState({ nodes: [], edges: [] });
+    });
+    afterEach(() => {
+      useWorkflowStore.setState({ nodes: [], edges: [] });
+    });
+
+    function seedEdges(edges: WorkflowEdge[]) {
+      useWorkflowStore.setState({ edges });
+    }
+
+    it("shows the empty-state copy when no edges are wired into the `images` handle", () => {
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={{}}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      const status = screen.getByTestId("image-iterator-count");
+      expect(status.textContent).toMatch(/no images connected/i);
+      // Forward-compat footnote pointing at Slice 5.5 redesign.
+      expect(
+        screen.getByText(/drop images directly into this node/i),
+      ).toBeInTheDocument();
+    });
+
+    it("counts only edges targeting THIS iterator's `images` handle (not unrelated edges)", () => {
+      seedEdges([
+        // Three edges into our iterator's `images` handle.
+        {
+          id: "e1",
+          source: "src-1",
+          sourceHandle: "out",
+          target: "iter-1",
+          targetHandle: "images",
+        },
+        {
+          id: "e2",
+          source: "src-2",
+          sourceHandle: "out",
+          target: "iter-1",
+          targetHandle: "images",
+        },
+        {
+          id: "e3",
+          source: "src-3",
+          sourceHandle: "out",
+          target: "iter-1",
+          targetHandle: "images",
+        },
+        // Edge into a different iterator — should not count.
+        {
+          id: "e4",
+          source: "src-4",
+          sourceHandle: "out",
+          target: "iter-other",
+          targetHandle: "images",
+        },
+        // Edge from our iterator's *output* to something downstream —
+        // should not count (we only care about edges targeting the
+        // `images` input handle).
+        {
+          id: "e5",
+          source: "iter-1",
+          sourceHandle: "out",
+          target: "downstream",
+          targetHandle: "image",
+        },
+      ]);
+
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={{}}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      const status = screen.getByTestId("image-iterator-count");
+      expect(status.textContent).toMatch(/3 images connected/i);
+      // Plural-aware copy mentions parallel fan-out so the user knows
+      // what's about to happen.
+      expect(status.textContent).toMatch(/parallel/i);
+    });
   });
 
   describe("execute()", () => {

@@ -4,6 +4,7 @@ import { Image as ImageIcon, Layers } from "lucide-react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputArrayByType } from "@/lib/engine/extract-input";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 /**
@@ -33,22 +34,60 @@ import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
  */
 export type ImageIteratorNodeConfig = Record<string, never>;
 
-function ImageIteratorNodeBody({}: NodeBodyProps<ImageIteratorNodeConfig>) {
-  // The body doesn't render the upstream images directly — the engine
-  // doesn't expose live upstream state to a node body, only the
-  // execution-store records do, and we don't want to subscribe to those
-  // here (the iterator is reactive, no run record). Instead, surface a
-  // small explanatory hint and lean on the connected handles to show
-  // count via React Flow's natural rendering.
+function ImageIteratorNodeBody({
+  nodeId,
+}: NodeBodyProps<ImageIteratorNodeConfig>) {
+  // Subscribe to the edges array directly and derive the multi-edge count
+  // here. We can't read it from upstream execution state (the iterator is
+  // reactive, so it has no run record); the workflow store edges are the
+  // source of truth for "how many things are wired in".
+  //
+  // Note: this picks up *any* edge into our `images` handle including ones
+  // currently in-flight (being dragged). React Flow's connection logic
+  // doesn't add to `edges` until the drop completes, so we don't have to
+  // filter for "committed" edges manually.
+  const connectedCount = useWorkflowStore(
+    (s) =>
+      s.edges.filter(
+        (e) => e.target === nodeId && e.targetHandle === "images",
+      ).length,
+  );
+
+  // Note (ADR-0031, Slice 5.4): we *don't* visually telegraph "this port
+  // accepts multiple edges" with a larger ring here, because ADR-0023
+  // explicitly mandates uniform port chrome across the canvas (only the
+  // datatype color differs). Multi-edge is discoverable by trying — the
+  // count below is the only place we surface it. The Slice 5.5 redesign
+  // will move multi-image storage *inside* the node body anyway, at
+  // which point the multi-edge pattern goes away entirely.
   return (
     <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
-        <Layers className="h-3 w-3 text-accent" />
-        <span>
-          Wire N images here. Downstream runs once per image, in parallel
-          (up to 4 at a time).
+        <Layers className="h-3 w-3 shrink-0 text-accent" />
+        <span data-testid="image-iterator-count" className="leading-snug">
+          {connectedCount === 0 ? (
+            <>
+              <span className="text-foreground/80">No images connected.</span>{" "}
+              Wire image nodes into the left port.
+            </>
+          ) : connectedCount === 1 ? (
+            <>
+              <span className="text-foreground/85">1 image connected.</span>{" "}
+              Wire more for fan-out (parallel, up to 4 at a time).
+            </>
+          ) : (
+            <>
+              <span className="text-foreground/85">
+                {connectedCount} images connected.
+              </span>{" "}
+              Downstream runs once per image, in parallel (up to 4 at a time).
+            </>
+          )}
         </span>
       </div>
+      <p className="px-1 text-[10.5px] leading-snug text-muted-foreground/60">
+        Planned: drop images directly into this node (Slice 5.5).
+      </p>
     </div>
   );
 }
