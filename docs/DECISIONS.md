@@ -801,3 +801,151 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **`fanOut.done` counts both successes and failures** so a cascaded-cancel mid-flight may report a non-final number. The terminal record (`done` or `error`) carries the canonical state; `fanOut` is informational.
   - **Cinema and v1 endpoints have different latency profiles than v2/standard**, so a fan-out spanning multiple variants would have unbalanced workers. Acceptable: today no recipe mixes variants, and `maxConcurrent: 4` keeps the slowest-first pattern bounded.
   - **`maxConcurrent: 4` is hardcoded as the default.** Higgsfield's cap is 4; Fal can absorb more. We default conservatively because the iterator-fan-out path is image-gen-shaped today; once Slice 5 ships a per-recipe runtime config, this becomes user-tunable.
+
+## ADR-0031 — Explicit iteration nodes, two-axis (selection × execution) model, Run-here, and per-node history (M0a Slice 5.4 design lock-in; implementation lands in Slice 5.5+)
+
+- **Date**: 2026-05-21
+- **Status**: design lock-in only. Cosmetic groundwork ships in Slice 5.4 (drag/click protocol, queue scroll, Image Iterator visual cleanup). The actual multi-image storage, new node kinds, Run-here button, and history accounting all land in subsequent slices (5.5 → 5.7). This ADR is here so future-me / future-agent / the assistant DSL can read one document instead of re-litigating these calls.
+- **Context**: Slice 4 shipped fan-out (ADR-0030) with `Image Iterator` as the only "iterator-flagged" source and `HiggsfieldImageGen` as the only fan-out consumer. The user's first real workflow with three reference images surfaced a cluster of UX gaps that all share a root cause — *the model conflates "what gets emitted" with "how the engine despatches"*. Several design conversations later, the cleanest disambiguation we found is two ortogonal axes plus a small set of explicit, single-purpose nodes. The model below is what we are committing to *for the long term*; the 5.4 fixes are intentionally minimal and forward-compatible with it.
+
+### 1. The two axes (the core insight)
+
+Every iteration question collapses cleanly when separated into:
+
+- **Selection mode** — *"of the N items I have stored, how many do I emit on this run?"* — lives on the **source node** (the one carrying the list).
+- **Execution mode** — *"how does the engine despatch the consumer when it sees the resulting array?"* — lives on the **consumer node** via the existing `iterator: true` schema flag (no per-edge state).
+
+Modes:
+
+```
+Selection (source node config)   →   what comes out of the source's `out` handle
+─────────────────────────────────    ─────────────────────────────────────────────
+fixed                                items[cursor]              (1-element array)
+increment                            items[cursor]; cursor++    (1-element array)
+decrement                            items[cursor]; cursor--    (1-element array)
+random                               items[rand()]              (1-element array)
+range (start, end)                   items[start..end]          (N-element array)
+all                                  items[0..N-1]              (N-element array)
+
+Execution (consumer node `iterator: true`)   →   how runWorkflow despatches
+──────────────────────────────────────────       ────────────────────────────────
+single (consumer NOT iterator-flagged)         array delivered as the input value
+                                                 verbatim — the consumer decides
+                                                 what to do with N>1 items
+parallel (consumer iterator-flagged, default)  N concurrent runs, capped by
+                                                 maxConcurrent (today: 4)
+sequential (consumer iterator-flagged, opt-in) N runs serially, one after the
+                                                 other (debug / RAM-bounded paths)
+```
+
+The combination matrix of "how many items × how the consumer handles them" stays human-readable because both axes are small and orthogonal. Compare with the alternative (one big enum like `single | batch_serial | batch_parallel | range_parallel | range_serial | …`): six selection modes × three execution modes = eighteen combinations to reason about. As two independent eyes you only learn six + three = nine concepts and compose them.
+
+**Cache key contract is unchanged** (`fnv1a_64(stableStringify({ kind, config, deps }))`). The cursor lives in `node.config`; the selection mode lives in `node.config`; the execution mode lives in the *consumer's* `schema.iterator`. So changing the cursor on a `fixed` source busts only that node's hash; changing selection from `fixed` to `all` busts the source's hash *and* every downstream's hash because the dependency hash changes shape; changing the consumer from non-iterator to iterator-flagged also busts the consumer's hash. All correct.
+
+### 2. The node catalog
+
+Six nodes carry the model. Each has a single, explicit purpose. None is a hidden-mode hybrid.
+
+| Node                | Storage                              | Selection? | `iterator`? | Reactive? |
+| ------------------- | ------------------------------------ | ---------- | ----------- | --------- |
+| **`File`** (Image)  | exactly 1 image (assetId or url)     | n/a        | no          | yes       |
+| **`Image Iterator`**| N images (asset ids array + cursor)  | yes        | yes         | yes       |
+| **`Text Iterator`** | N strings (array + cursor)           | yes        | yes         | yes       |
+| **`Array`**         | none — pure transform               | n/a        | no          | yes       |
+| **`List`**          | none — pure selector                | n/a        | no          | yes       |
+| **`Number`**        | a single number, with mode           | partial*   | no          | yes       |
+
+\* `Number` re-uses the same selection-mode vocabulary as iterators (`fixed | increment | decrement | random | range`) but emits a single `number` value, not an array. It exists primarily to drive remote cursors (the "comfyui seed slot" pattern).
+
+Node-by-node:
+
+- **`File`**: 1 image. Unchanged from today. Drag drops still spawn it; multi-import drops onto a different surface (see `Image Iterator`).
+- **`Image Iterator`**: stores `assetIds: string[]` + `cursor: number` + `selection: "fixed" | "increment" | "decrement" | "random" | "range" | "all"`. Schema declares `iterator: true`. Body shows `<x/N>` counter + arrows + the current cursor's preview thumbnail (history-style). Library multi-image drag dumps assets into the iterator instead of spawning N separate `Image` nodes. Today's multi-edge `images` input handle is **removed** because the storage is internal.
+- **`Text Iterator`**: same shape but for strings. Stores `strings: string[]` + cursor + selection mode. Same UI affordance.
+- **`Array`**: pure transform. Input: `text` (single). Config: `splitOn: string` (default empty = passthrough as `[input]`). Output: `text` array. Reactive. Useful for "LLM gave me '`a---b---c`' and I want a list".
+- **`List`**: pure selector. Input: `in` (any, single). Optional input: `cursor` (number, single — wires to a Number node). Config: `cursor: number` (used when `cursor` input not connected). Output: same dataType as input, single. *Not* iterator-flagged — emits one item.
+- **`Number`**: 1 number. Config: `value: number` + `mode: "fixed" | "increment" | "decrement" | "random" | "range"` + (when `range`) `start, end, step`. Reactive. Output: `number`. Auto-advances each run when `mode !== "fixed"` (the engine bumps the persisted `value` after a successful run).
+
+The catalog covers every iteration scenario we've discussed, including the ones that motivated the redesign:
+
+| Scenario the user described                                    | Node graph                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 1 reference, 1 generation                                      | `File → HiggsfieldImageGen`                                                                 |
+| 5 references, increment one per Run                            | `Image Iterator(selection=increment) → HiggsfieldImageGen`                                  |
+| 5 references, all in parallel in one Run                       | `Image Iterator(selection=all) → HiggsfieldImageGen`  (the gen is iterator-flagged)         |
+| 5 references, all sequential in one Run                        | `Image Iterator(selection=all) → HiggsfieldImageGen` with iterator's `executionMode=sequential` |
+| LLM produces "`a---b---c`" → 3 prompts in parallel             | `LLM Text → Array(splitOn="---") → HiggsfieldImageGen`                                      |
+| LLM produces 8 prompts → user clicks through them one-by-one    | `LLM Text → Array → List(cursor=N) → HiggsfieldImageGen`                                    |
+| Two parallel iterators with synchronised cursors               | `Number → List × 2` — both Lists read the same cursor input                                 |
+
+### 3. Run-here
+
+Every executable node ships a small "▶" button in the header next to the existing `⋯` settings trigger. Clicking it calls `runWorkflow({ ..., endAtNodeId: thisNode.id })`. The engine:
+
+1. Walks edges in reverse from `endAtNodeId` to find the ancestor set.
+2. Topologically sorts only that ancestor set (current `topologicalSort` already accepts arbitrary node lists, so no algorithmic change).
+3. Runs as today, except the topo iteration ends *at* `endAtNodeId` and never enqueues anything downstream.
+4. Emits `cancelled` for downstream nodes that were `pending` (consistency with abort semantics).
+
+Implementation footprint: **~30 LOC** in `src/lib/engine/run-workflow.ts` (one new BFS function, one new `if (endAtNodeId && !ancestorSet.has(node.id)) skip` guard inside the existing topo loop) + a tiny "▶" button in `src/components/nodes/base-node.tsx` plumbed through `useExecutionStore.startRun({ endAt: id })`.
+
+Run-here changes neither selection nor execution semantics. It only changes which node is the **last** one run.
+
+Concrete uses:
+
+- **Debugging**: "What is the LLM Text actually emitting right now?" — Run-here on the LLM Text node. The downstream image generator stays idle.
+- **Iterative tuning**: "I want to fiddle with the prompt 5 times and only burn LLM credits, not image-gen credits, until I'm happy." — Run-here on LLM Text repeatedly. When happy, Run on the Export node downstream.
+- **Cache visibility**: any Run-here populates the cache for ancestor nodes; subsequent global Runs skip them as `cached`.
+
+### 4. History (per-node, in execution store)
+
+History is **runtime state** (not part of the saved recipe shape). It lives in the execution store, capped, and is in-memory only until SQLite (Slice 5.7+).
+
+```ts
+// Addition to existing ExecutionRecord:
+interface HistoryEntry {
+  output: StandardizedOutput | StandardizedOutput[];
+  usage?: NodeUsage;
+  ranAt: number;     // epoch ms
+  runId: number;     // execution-store runId
+}
+
+interface ExecutionRecord {
+  // ...existing fields unchanged...
+  history?: HistoryEntry[];   // capped (default 20, schema-overridable per kind)
+}
+```
+
+Each successful `done` emit prepends to `history` and trims to cap. `cached` does not duplicate (cache hits replay the existing entry, not add a new one). `error` and `cancelled` are not added to history (they're available on the live record only).
+
+UI: the `<x/N>` counter + arrows in node bodies (Image Iterator, Text Iterator, HiggsfieldImageGen, etc.) read from `record.history` when present. The cursor (separate from history index — they coincide for fresh runs but the user can navigate back without affecting selection-mode cursor) lets the user inspect past outputs. Choosing "Use this output downstream" is a future affordance (not 5.4, not 5.5; revisit when the assistant DSL needs to reference past outputs).
+
+History is **per-node**, not per-recipe — duplicating a node loses its history (acceptable; history is runtime). Two nodes with the same kind+config have separate histories (because they have different `nodeId`s).
+
+### 5. What ships in Slice 5.4 (today) vs 5.5+ (future)
+
+**5.4 today** — three forward-compatible cosmetic / ergonomic fixes:
+
+- **Drag/click protocol** on `BaseNode`: header is the explicit drag handle; body wrapper opts out of drag (`nodrag` class — recognized natively by React Flow); all body inputs / textareas / popover content already-stopPropagation stay; documented in the BaseNode JSDoc as a paragraph future nodes follow.
+- **Queue panel scroll**: the `<ScrollArea>` is already wrapped — only CSS `min-h-0` cascade is missing on the parent flex column. One-line fix.
+- **Image Iterator visual**: body shows live edge count ("3 images connected") + tiny footnote pointing at this ADR. Storage stays multi-edge (today's behaviour); the migration to internal multi-image storage is **5.5**.
+
+**5.5 (next)** — the migration:
+
+- `Image Iterator` and `Text Iterator` adopt internal multi-storage (`assetIds[]` / `strings[]` + cursor + selection mode). Library multi-image drag updates targets the iterator surface. Body grows the `<x/N>` counter + selection-mode picker.
+- Old multi-edge `images` input on `Image Iterator` is migrated: workflow-store `vN → vN+1` collects existing wired images into the new internal array.
+
+**5.6** — the new nodes (`Array`, `List`, `Number`). Pure / reactive; no engine changes.
+
+**5.7** — Run-here button + engine `endAtNodeId` + history-on-record.
+
+**5.8 (or later)** — SQLite persistence for the workflow + execution stores (the existing Repository abstraction from ADR-0005 cashes in).
+
+### 6. Trade-offs accepted
+
+- **The model is more nodes**, not fewer. Six explicit nodes vs the current two (`File`, `Image Iterator`). We accept the catalog growth in exchange for each node having a one-sentence purpose. The alternative (one fancy "smart" node with mode flags) was tried in `ContentFlow` and the user explicitly rejected it for Cookbook.
+- **Selection cursor is per-instance config** so duplicating a node doesn't share progress. Acceptable; matches the per-instance label / size pattern (ADR-0028).
+- **History cap defaults to 20 per node** — long enough to scrub recent runs, short enough to not bloat the in-memory store. Per-kind override is one schema field away if image gens want shorter (memory) or LLMs want longer (cheap).
+- **Run-here doesn't re-trigger on upstream cache invalidation** — i.e. if you Run-here on a downstream node with a cached upstream, the upstream stays `cached` even if its inputs would change in a global run. We document this in the JSDoc but accept it; the fix is a tooltip-level disclosure, not an engine-level equality check.
+- **`Number` node's auto-advance happens on `done`, not on submit** — so a failed run doesn't leak into the cursor. Same logic as the iterator's selection-mode advance.
+- **No edge-level fan-out marker** was an explicit choice (we considered it, see [conversation-summary in CHANGELOG]). The user wanted nodes to be the substantives and edges to be the verbs-as-passages; configurable edges break that mental model. Iterator-as-node carries the meaning explicitly.
