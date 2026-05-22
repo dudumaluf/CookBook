@@ -131,6 +131,32 @@ export interface BaseNodeProps {
  * right = outputs), one row per handle. The vertical placement reads from
  * the schema order, so reordering inputs in the schema reorders them
  * visually.
+ *
+ * ## Drag / click protocol (ADR-0031, Slice 5.4)
+ *
+ * Every BaseNode has a single, predictable rule for what initiates a node
+ * drag vs. what is "click here, type here, scroll here" content:
+ *
+ *  - **Header is the drag handle.** Hovering the header shows `cursor-grab`;
+ *    while dragging, the cursor flips to `grabbing`. The whole header row
+ *    (icon · title · status chip · `⋯`) reads as "grab me to move".
+ *  - **Body wrapper opts out of drag** via the `nodrag` class — React Flow
+ *    recognizes this class natively and never starts a node drag from any
+ *    descendant. So clicking on text in the body, dragging to highlight a
+ *    selection, scrolling a long output, etc., never accidentally moves the
+ *    node. The body still bubbles single-click events up to React Flow for
+ *    selection (just not drag).
+ *  - **The title `<span>` keeps `select-none`** so a single click on it
+ *    bubbles cleanly to React Flow's selection logic instead of starting
+ *    a text-selection (we never want users selecting "Text" / "Image" /
+ *    etc. as if it were copy-pasteable content).
+ *  - Inputs / textareas / popover triggers inside body content already
+ *    `stopPropagation` on `pointerDown` (belt-and-suspenders alongside
+ *    the `nodrag` wrapper, harmless when both apply).
+ *
+ * New nodes get this for free as long as they pass their content through
+ * the BaseNode `children` slot. Don't add a custom `cursor-grab` to body
+ * elements — the body is intentionally not a drag handle.
  */
 export function BaseNode({
   nodeId,
@@ -183,8 +209,17 @@ export function BaseNode({
        * settings-capable node parks its "secondary knobs" handle in the
        * same pixel-stable spot, no matter what the node body is up to.
        * Status chip pops in/out beside it during a run — settings position
-       * never shifts. */}
-      <header className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-2 text-xs font-medium text-foreground/90">
+       * never shifts.
+       *
+       * Header is the explicit drag handle for the node (ADR-0031, Slice
+       * 5.4): `cursor-grab` on hover, `cursor-grabbing` while React Flow's
+       * dragging-state class is on the wrapper. The body wrapper below
+       * carries `nodrag` to opt out of drag from inside content, so this
+       * is the only surface that initiates a node move. */}
+      <header
+        data-testid="node-drag-handle"
+        className="flex shrink-0 cursor-grab items-center gap-2 px-3 pb-1 pt-2 text-xs font-medium text-foreground/90 active:cursor-grabbing"
+      >
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {onRename ? (
           <EditableNodeTitle
@@ -194,7 +229,9 @@ export function BaseNode({
             onCommit={onRename}
           />
         ) : (
-          <span className="min-w-0 flex-1 truncate">{displayTitle}</span>
+          <span className="min-w-0 flex-1 select-none truncate">
+            {displayTitle}
+          </span>
         )}
         <NodeStatusChip nodeId={nodeId} />
         {settings && <NodeSettingsTrigger settings={settings} />}
@@ -209,10 +246,17 @@ export function BaseNode({
        *  inside the body to actually scroll. For content-driven cards
        *  (default), `min-h-0` would let a 0-height body collapse, so we
        *  keep the wrapper as a plain block. Either way the body sees the
-       *  same `width:100%` semantics. */}
+       *  same `width:100%` semantics.
+       *
+       *  The `nodrag` class is the React Flow native opt-out (recognized
+       *  by the lib without any prop config) — every descendant is
+       *  click-through for canvas selection but does NOT initiate a node
+       *  drag (ADR-0031, Slice 5.4). The header above keeps the drag
+       *  responsibility. */}
       <div
+        data-testid="node-body"
         className={cn(
-          "flex w-full flex-col",
+          "nodrag flex w-full flex-col",
           hasExplicitHeight && "min-h-0 flex-1",
         )}
       >

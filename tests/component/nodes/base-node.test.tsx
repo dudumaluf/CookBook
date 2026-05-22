@@ -252,6 +252,62 @@ describe("<BaseNode />", () => {
   });
 
   /* ─────────────────────────────────────────────────────────────────── */
+  /* Drag/click protocol (ADR-0031, Slice 5.4)                           */
+  /* ─────────────────────────────────────────────────────────────────── */
+
+  describe("drag / click protocol (ADR-0031)", () => {
+    it("the header is the explicit drag handle (cursor-grab + grabbing on press)", () => {
+      // The header carries `cursor-grab` so users see the "grab me" affordance
+      // on hover, and `active:cursor-grabbing` so pressing the mouse down
+      // flips the cursor while React Flow is starting a drag.
+      renderShell({ onRename: vi.fn() });
+      const header = screen.getByTestId("node-drag-handle");
+      expect(header.tagName).toBe("HEADER");
+      expect(header.className).toMatch(/cursor-grab/);
+      expect(header.className).toMatch(/active:cursor-grabbing/);
+    });
+
+    it("the body wrapper carries the React-Flow-native `nodrag` class so clicks inside don't initiate a node drag", () => {
+      // React Flow recognizes the literal class `nodrag` on any descendant
+      // and never starts a node drag from it. This is the load-bearing rule
+      // of the whole drag protocol — every body has to inherit it.
+      renderShell({ onRename: vi.fn() });
+      const body = screen.getByTestId("node-body");
+      expect(body.className.split(/\s+/)).toContain("nodrag");
+    });
+
+    it("the title <span> stays select-none so single-clicks bubble to React Flow's selection logic instead of starting a text selection", () => {
+      // Two cases: with onRename (EditableNodeTitle) and without (plain
+      // span fallback). Both have to keep `select-none` so clicking the
+      // title selects the node, never the word "Test Node".
+      const { rerender } = render(
+        <ReactFlowProvider>
+          <BaseNode
+            nodeId="n1"
+            schema={schema}
+            selected={false}
+            onRename={vi.fn()}
+          >
+            <div data-testid="body" />
+          </BaseNode>
+        </ReactFlowProvider>,
+      );
+      const editableTitle = screen.getByText("Test Node");
+      expect(editableTitle.className).toMatch(/select-none/);
+
+      rerender(
+        <ReactFlowProvider>
+          <BaseNode nodeId="n1" schema={schema} selected={false}>
+            <div data-testid="body" />
+          </BaseNode>
+        </ReactFlowProvider>,
+      );
+      const plainTitle = screen.getByText("Test Node");
+      expect(plainTitle.className).toMatch(/select-none/);
+    });
+  });
+
+  /* ─────────────────────────────────────────────────────────────────── */
   /* Settings slot (ADR-0027) — standardized `⋯` trigger + popover       */
   /* ─────────────────────────────────────────────────────────────────── */
 
