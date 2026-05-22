@@ -118,7 +118,15 @@ export function QueuePanel() {
         </Tooltip>
       </header>
 
-      <ScrollArea className="flex-1">
+      {/* `min-h-0` is the load-bearing class here: without it, the flex
+       *  child grows to accommodate `<ul>` content, the aside's
+       *  `height: min(70vh, 640px)` is silently violated, and the
+       *  ScrollArea never engages because its Viewport sees no upper
+       *  bound. With `min-h-0`, the flex child is allowed to shrink past
+       *  its intrinsic content height, which lets the ScrollArea Root
+       *  hit `height = aside_height − header_height − footer_height` and
+       *  the inner Viewport finally activates the scroll. */}
+      <ScrollArea className="min-h-0 flex-1">
         {rows.length === 0 ? (
           <EmptyState />
         ) : (

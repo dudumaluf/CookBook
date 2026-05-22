@@ -441,4 +441,51 @@ describe("QueuePanel", () => {
     render(withTooltip(<QueuePanel />));
     expect(screen.queryByTestId("queue-row-thumbs")).toBeNull();
   });
+
+  /* ──────────────────── Slice 5.4: scrollable rows ──────────────────── */
+
+  it("the scrollable area has the load-bearing `min-h-0 flex-1` cascade so rows can overflow into the ScrollArea instead of pushing the aside taller", () => {
+    // Seed enough rows to comfortably exceed the aside's `min(70vh, 640px)`
+    // height. We can't measure real layout in happy-dom, but the
+    // load-bearing cascade is structural: aside has flex-col + a fixed
+    // height, header / footer take their natural height, and the
+    // ScrollArea Root must be `flex-1 min-h-0` so it (a) fills the
+    // remaining space and (b) is allowed to shrink below its content's
+    // intrinsic height. Without `min-h-0`, the ScrollArea grows past the
+    // aside's max-height and the inner Viewport never engages — silently
+    // breaking the entire scroll affordance.
+    const records: Record<string, ExecutionRecord> = {};
+    const nodes: NodeInstance[] = [];
+    for (let i = 0; i < 30; i++) {
+      const id = `n${i}`;
+      nodes.push(n(id, "text"));
+      records[id] = {
+        status: "done",
+        output: { type: "text", value: `row ${i}` },
+      };
+    }
+    seedNodes(nodes);
+    seedRecords(records);
+    render(withTooltip(<QueuePanel />));
+
+    const aside = screen.getByRole("complementary");
+    expect(aside.className).toMatch(/flex-col/);
+
+    // The ScrollArea Root carries `min-h-0 flex-1`. Without `min-h-0`,
+    // the flex child would grow to fit its content and the aside's
+    // bounded height (`style.height: min(70vh, 640px)` set by the
+    // panel) would be silently ignored. happy-dom can't measure layout
+    // so we assert the load-bearing classes structurally.
+    const scrollRoot = aside.querySelector(
+      "[data-slot='scroll-area']",
+    ) as HTMLElement | null;
+    expect(scrollRoot).not.toBeNull();
+    expect(scrollRoot!.className).toMatch(/min-h-0/);
+    expect(scrollRoot!.className).toMatch(/flex-1/);
+
+    // And the rows actually rendered (so we know we're checking a
+    // populated case, not an empty-state path).
+    expect(screen.getByText("row 0")).toBeInTheDocument();
+    expect(screen.getByText("row 29")).toBeInTheDocument();
+  });
 });
