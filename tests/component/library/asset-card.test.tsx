@@ -7,7 +7,7 @@ import {
   parseAssetDrag,
 } from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
-import type { ImageAsset } from "@/types/asset";
+import type { AssetGroupAsset, ImageAsset } from "@/types/asset";
 
 vi.mock("@/lib/library/upload-asset", () => ({
   uploadImageAsset: vi.fn(),
@@ -211,5 +211,152 @@ describe("<AssetCard />", () => {
     useAssetStore.setState({ assets: [empty] });
     render(<AssetCard asset={empty} />);
     expect(screen.queryByAltText("Empty")).toBeNull();
+  });
+
+  /* ──────────────── Slice 5.6b: AssetGroup card ──────────────── */
+
+  describe("group cards (Slice 5.6b)", () => {
+    function makeGroup(
+      partial: Partial<AssetGroupAsset> = {},
+    ): AssetGroupAsset {
+      return {
+        id: "group_1",
+        kind: "asset-group",
+        name: "Photoshoot Paris",
+        tags: [],
+        scope: "project",
+        createdAt: 0,
+        updatedAt: 0,
+        assetIds: [],
+        isUntitled: false,
+        ...partial,
+      };
+    }
+
+    function seedImageAsset(id: string, url: string): ImageAsset {
+      return {
+        id,
+        kind: "image",
+        name: id,
+        tags: [],
+        scope: "project",
+        createdAt: 0,
+        updatedAt: 0,
+        source: { type: "url", url },
+      };
+    }
+
+    it("renders a 2x2 mosaic of up to 4 image thumbnails + count badge", () => {
+      const images = Array.from({ length: 5 }, (_, i) =>
+        seedImageAsset(`a-${i}`, `https://x/${i}.png`),
+      );
+      const group = makeGroup({ assetIds: images.map((a) => a.id) });
+      useAssetStore.setState({ assets: [...images, group] });
+      const { container } = render(<AssetCard asset={group} />);
+      const mosaic = screen.getByTestId("asset-group-mosaic");
+      expect(mosaic).toBeInTheDocument();
+      // First 4 images render. Use `container.querySelectorAll` since
+      // the imgs in the mosaic have empty alt strings.
+      const imgs = Array.from(
+        container.querySelectorAll('[data-testid="asset-group-mosaic"] img'),
+      ) as HTMLImageElement[];
+      expect(imgs).toHaveLength(4);
+      expect(imgs[0]?.src).toContain("https://x/0.png");
+      // Count badge shows total (5).
+      expect(
+        screen.getByTestId("asset-group-count-badge").textContent,
+      ).toBe("5");
+    });
+
+    it("shows the Untitled badge for auto-created groups", () => {
+      const group = makeGroup({
+        name: "Untitled 1",
+        isUntitled: true,
+      });
+      useAssetStore.setState({ assets: [group] });
+      render(<AssetCard asset={group} />);
+      expect(
+        screen.getByTestId("asset-group-untitled-badge"),
+      ).toBeInTheDocument();
+    });
+
+    it("does NOT show the Untitled badge for renamed groups", () => {
+      const group = makeGroup({ name: "Real group", isUntitled: false });
+      useAssetStore.setState({ assets: [group] });
+      render(<AssetCard asset={group} />);
+      expect(
+        screen.queryByTestId("asset-group-untitled-badge"),
+      ).toBeNull();
+    });
+
+    it("double-click on the name commits a rename via the asset store", () => {
+      const group = makeGroup({ name: "Old name", isUntitled: true });
+      useAssetStore.setState({ assets: [group] });
+      render(<AssetCard asset={group} />);
+      // Double-click the name → input appears.
+      fireEvent.doubleClick(screen.getByText("Old name"));
+      const input = screen.getByLabelText(
+        /Rename group Old name/i,
+      ) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "New name" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      // Asset store updated; isUntitled flipped to false.
+      const after = useAssetStore.getState().getAsset(group.id);
+      if (after?.kind === "asset-group") {
+        expect(after.name).toBe("New name");
+        expect(after.isUntitled).toBe(false);
+      } else {
+        throw new Error("expected an asset-group after rename");
+      }
+    });
+
+    it("delete button calls removeGroup (NOT removeAsset)", () => {
+      const group = makeGroup({ assetIds: ["a-1"] });
+      const linkedImage = seedImageAsset(
+        "a-1",
+        "https://x/1.png",
+      );
+      useAssetStore.setState({ assets: [linkedImage, group] });
+
+      render(<AssetCard asset={group} />);
+      fireEvent.click(
+        screen.getByLabelText(`Delete group ${group.name}`),
+      );
+      // Group dropped; underlying image survives.
+      expect(useAssetStore.getState().getAsset(group.id)).toBeUndefined();
+      expect(useAssetStore.getState().getAsset("a-1")?.kind).toBe("image");
+    });
+
+    it("dragging a group writes the multi-id payload with kind 'asset-group'", () => {
+      const group = makeGroup({ assetIds: ["a-1", "a-2"] });
+      useAssetStore.setState({
+        assets: [
+          seedImageAsset("a-1", "https://x/1.png"),
+          seedImageAsset("a-2", "https://x/2.png"),
+          group,
+        ],
+      });
+      render(<AssetCard asset={group} />);
+      const setData = vi.fn();
+      fireEvent.dragStart(screen.getByTestId("asset-card"), {
+        dataTransfer: { setData, effectAllowed: "" },
+      });
+      const [, payload] = setData.mock.calls[0]!;
+      expect(parseAssetDrag(payload as string)).toEqual({
+        assetIds: [group.id],
+        kind: "asset-group",
+      });
+    });
+
+    it("calls onOpen with the group on double-click anywhere on the card (canvas / subview entry)", () => {
+      const group = makeGroup();
+      useAssetStore.setState({ assets: [group] });
+      const onOpen = vi.fn();
+      render(<AssetCard asset={group} onOpen={onOpen} />);
+      // Use the mosaic (not the name) so we hit the card's
+      // double-click handler, not the inline-rename one.
+      fireEvent.doubleClick(screen.getByTestId("asset-group-mosaic"));
+      expect(onOpen).toHaveBeenCalledWith(group);
+    });
   });
 });

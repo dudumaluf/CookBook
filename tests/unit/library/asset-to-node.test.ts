@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { assetToNode } from "@/lib/library/asset-to-node";
-import type { ImageAsset } from "@/types/asset";
+import type { AssetGroupAsset, ImageAsset } from "@/types/asset";
 
 function makeAsset(source: ImageAsset["source"]): ImageAsset {
   return {
@@ -45,6 +45,28 @@ describe("assetToNode", () => {
       initialConfig: {
         assetId: asset.id,
         url: "https://cdn.supabase.test/cookbook-assets/images/abc/cat.png",
+      },
+    });
+  });
+
+  it("AssetGroup → spawns image-iterator linked via groupId (Slice 5.6 / ADR-0032)", () => {
+    const group: AssetGroupAsset = {
+      id: "g-photo-paris",
+      kind: "asset-group",
+      name: "Photoshoot Paris",
+      tags: [],
+      scope: "project",
+      createdAt: 1,
+      updatedAt: 1,
+      assetIds: ["a-1", "a-2", "a-3"],
+      isUntitled: false,
+    };
+    expect(assetToNode(group)).toEqual({
+      kind: "image-iterator",
+      initialConfig: {
+        groupId: group.id,
+        cursor: 0,
+        selectionMode: "all",
       },
     });
   });
