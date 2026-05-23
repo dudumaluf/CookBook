@@ -478,6 +478,253 @@ describe("workflow-store", () => {
     });
   });
 
+  /* ──────────────────────────────────────────────────────────────────── */
+  /* v8 migrate — Image Iterator goes from multi-edge to internal storage */
+  /* (ADR-0031, Slice 5.5).                                               */
+  /* ──────────────────────────────────────────────────────────────────── */
+
+  describe("v8 migrate (Image Iterator internal storage)", () => {
+    it("collapses 3 wired Image nodes into the iterator's internal `assetIds`, and drops the now-orphan edges", () => {
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "img-1",
+              kind: "image",
+              position: { x: 0, y: 0 },
+              config: { url: "https://x/1.png", assetId: "a-1" },
+            },
+            {
+              id: "img-2",
+              kind: "image",
+              position: { x: 0, y: 100 },
+              config: { url: "https://x/2.png", assetId: "a-2" },
+            },
+            {
+              id: "img-3",
+              kind: "image",
+              position: { x: 0, y: 200 },
+              config: { url: "https://x/3.png", assetId: "a-3" },
+            },
+            {
+              id: "iter-1",
+              kind: "image-iterator",
+              position: { x: 200, y: 100 },
+              config: {},
+            },
+            {
+              id: "gen-1",
+              kind: "higgsfield-image-gen",
+              position: { x: 400, y: 100 },
+              config: {},
+            },
+          ],
+          edges: [
+            // 3 image → iterator wires (these get dropped post-migration).
+            {
+              id: "e1",
+              source: "img-1",
+              sourceHandle: "out",
+              target: "iter-1",
+              targetHandle: "images",
+            },
+            {
+              id: "e2",
+              source: "img-2",
+              sourceHandle: "out",
+              target: "iter-1",
+              targetHandle: "images",
+            },
+            {
+              id: "e3",
+              source: "img-3",
+              sourceHandle: "out",
+              target: "iter-1",
+              targetHandle: "images",
+            },
+            // iterator → gen wire (stays — this isn't an `images`-handle edge).
+            {
+              id: "e4",
+              source: "iter-1",
+              sourceHandle: "out",
+              target: "gen-1",
+              targetHandle: "image",
+            },
+          ],
+        },
+        7,
+      ) as {
+        nodes: { id: string; kind: string; config: Record<string, unknown> }[];
+        edges: { id: string }[];
+      };
+
+      const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
+      expect(iter.config).toEqual({
+        assetIds: ["a-1", "a-2", "a-3"],
+        cursor: 0,
+        selectionMode: "all", // matches pre-5.5 fan-out-everything behaviour
+      });
+
+      // Orphan edges dropped, downstream edge preserved.
+      const remainingIds = migrated.edges.map((e) => e.id).sort();
+      expect(remainingIds).toEqual(["e4"]);
+    });
+
+    it("ignores upstream edges from non-image kinds (no assetId to migrate)", () => {
+      // A Text node wired into the iterator's `images` handle (defensive
+      // — wouldn't have type-checked at edge creation, but legacy
+      // payloads might still carry it). The migration drops the edge
+      // and the iterator just ends up with an empty `assetIds`.
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "txt-1",
+              kind: "text",
+              position: { x: 0, y: 0 },
+              config: { text: "rogue" },
+            },
+            {
+              id: "iter-1",
+              kind: "image-iterator",
+              position: { x: 200, y: 100 },
+              config: {},
+            },
+          ],
+          edges: [
+            {
+              id: "e1",
+              source: "txt-1",
+              sourceHandle: "out",
+              target: "iter-1",
+              targetHandle: "images",
+            },
+          ],
+        },
+        7,
+      ) as {
+        nodes: { id: string; config: Record<string, unknown> }[];
+        edges: { id: string }[];
+      };
+
+      const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
+      expect(iter.config).toEqual({
+        assetIds: [],
+        cursor: 0,
+        selectionMode: "all",
+      });
+      // Stale edge still gets pruned even though there's nothing to import.
+      expect(migrated.edges).toEqual([]);
+    });
+
+    it("is idempotent on a v8 payload — already-clean iterators pass through", () => {
+      const v8Payload = {
+        nodes: [
+          {
+            id: "iter-1",
+            kind: "image-iterator",
+            position: { x: 0, y: 0 },
+            config: {
+              assetIds: ["a-1", "a-2"],
+              cursor: 1,
+              selectionMode: "fixed",
+            },
+          },
+        ],
+        edges: [],
+      };
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        v8Payload,
+        7,
+      ) as {
+        nodes: { config: Record<string, unknown> }[];
+      };
+      expect(migrated.nodes[0]?.config).toEqual({
+        assetIds: ["a-1", "a-2"],
+        cursor: 1,
+        selectionMode: "fixed",
+      });
+    });
+
+    it("drops legacy `images`-handle edges even when the iterator already has assetIds (hand-edited payloads)", () => {
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "img-1",
+              kind: "image",
+              position: { x: 0, y: 0 },
+              config: { url: "https://x/1.png", assetId: "a-1" },
+            },
+            {
+              id: "iter-1",
+              kind: "image-iterator",
+              position: { x: 200, y: 0 },
+              config: {
+                // already populated — don't double-import from edges.
+                assetIds: ["a-7"],
+                cursor: 0,
+                selectionMode: "all",
+              },
+            },
+          ],
+          edges: [
+            {
+              id: "e1",
+              source: "img-1",
+              sourceHandle: "out",
+              target: "iter-1",
+              targetHandle: "images",
+            },
+          ],
+        },
+        7,
+      ) as {
+        nodes: { id: string; config: Record<string, unknown> }[];
+        edges: { id: string }[];
+      };
+      // assetIds preserved verbatim (no double import from `e1`).
+      const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
+      expect((iter.config as { assetIds: string[] }).assetIds).toEqual([
+        "a-7",
+      ]);
+      // Stale edge still gets dropped so persisted JSON stays clean.
+      expect(migrated.edges).toEqual([]);
+    });
+
+    it("sanitises a malformed text-iterator config (defensive against hand-edited payloads)", () => {
+      // text-iterator is brand new in v8 — there's no migration *path*,
+      // but the migrate still runs on every existing node, and it
+      // sanitises a partial / malformed config so the engine never
+      // sees garbage if someone editing localStorage typo'd a field.
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "tit-1",
+              kind: "text-iterator",
+              position: { x: 0, y: 0 },
+              config: {
+                texts: ["valid", 7, "second", null], // mixed types
+                cursor: -3, // out of range
+                selectionMode: "looped", // unknown mode
+              },
+            },
+          ],
+          edges: [],
+        },
+        7,
+      ) as {
+        nodes: { config: Record<string, unknown> }[];
+      };
+      expect(migrated.nodes[0]?.config).toEqual({
+        texts: ["valid", "second"], // non-string entries dropped
+        cursor: 0, // negative cursor floored
+        selectionMode: "all", // unknown mode → safe default
+      });
+    });
+  });
+
   describe("edge selection", () => {
     it("setSelectedEdgeIds stores the ids verbatim", () => {
       useWorkflowStore.getState().setSelectedEdgeIds(["e1", "e2"]);

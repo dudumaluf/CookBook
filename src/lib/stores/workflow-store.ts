@@ -280,7 +280,16 @@ export const useWorkflowStore = create<WorkflowState>()(
       // can re-wire them with Text nodes.
       // v3: LLMTextNodeConfig renamed `prompt` → `user` and added `system`.
       // v2: dev wipe; shape unchanged vs v1.
-      version: 7,
+      // v8: Image Iterator moved its multi-edge `images` input to internal
+      // storage (`config.assetIds: string[] + cursor + selectionMode`), per
+      // ADR-0031. Existing graphs are migrated by walking every Image
+      // Iterator: edges targeting `images` are resolved to upstream Image
+      // node `assetId`s and collapsed into the iterator's new `assetIds`
+      // array (selectionMode "all" matches today's fan-out-everything
+      // behaviour bit-for-bit). The orphan edges are then dropped. The
+      // text-iterator node is brand new in v8 — no migration path needed
+      // (no legacy graphs reference it).
+      version: 8,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -388,7 +397,149 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
           return n;
         });
-        return { ...state, nodes: migratedNodes };
+
+        // ────────────────────────────────────────────────────────────────
+        // v8 — Image Iterator goes from multi-edge input to internal
+        // assetIds[] storage (ADR-0031, Slice 5.5).
+        //
+        // For every image-iterator node:
+        //   1. Sanitise the existing config — assetIds[], cursor (>= 0
+        //      integer), selectionMode (one of the known modes), optional
+        //      range — even if it's already on v8 (idempotency path for
+        //      hand-edited localStorage).
+        //   2. If `assetIds` is empty AND there are still edges targeting
+        //      this iterator's old `images` handle, walk those edges and
+        //      collect each upstream Image node's `assetId` into the new
+        //      array. selectionMode defaults to "all" so a migrated graph
+        //      runs bit-for-bit identically to the pre-v8 fan-out.
+        //   3. Drop the now-orphan edges from state.edges so persisted
+        //      JSON stays clean and the canvas doesn't render dead lines.
+        //
+        // text-iterator is brand new in v8 — no migration path needed,
+        // but we still sanitise the config defensively for any
+        // hand-edited payload.
+        const validSelectionModes = new Set([
+          "fixed",
+          "increment",
+          "decrement",
+          "random",
+          "range",
+          "all",
+        ]);
+        const sanitiseSelectionMode = (raw: unknown): string =>
+          typeof raw === "string" && validSelectionModes.has(raw)
+            ? raw
+            : "all";
+        const sanitiseCursor = (raw: unknown): number => {
+          if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+          const t = Math.trunc(raw);
+          return t < 0 ? 0 : t;
+        };
+        const sanitiseRange = (raw: unknown):
+          | { start: number; end: number }
+          | undefined => {
+          if (
+            typeof raw !== "object" ||
+            raw === null ||
+            !("start" in raw) ||
+            !("end" in raw)
+          ) {
+            return undefined;
+          }
+          const r = raw as { start?: unknown; end?: unknown };
+          if (
+            typeof r.start !== "number" ||
+            typeof r.end !== "number" ||
+            !Number.isFinite(r.start) ||
+            !Number.isFinite(r.end)
+          ) {
+            return undefined;
+          }
+          return {
+            start: Math.trunc(r.start),
+            end: Math.trunc(r.end),
+          };
+        };
+
+        const orphanEdgeIds = new Set<string>();
+        const persistedEdges = (state.edges ?? []) as readonly WorkflowEdge[];
+        // Pre-index Image nodes by id so iterator migration is O(N+E) total.
+        const imageNodeAssetById = new Map<string, string>();
+        for (const n of migratedNodes) {
+          if (n.kind !== "image") continue;
+          const cfg = (n.config ?? {}) as { assetId?: unknown };
+          if (typeof cfg.assetId === "string" && cfg.assetId.length > 0) {
+            imageNodeAssetById.set(n.id, cfg.assetId);
+          }
+        }
+
+        const v8Nodes = migratedNodes.map((nRaw) => {
+          if (nRaw.kind !== "image-iterator" && nRaw.kind !== "text-iterator") {
+            return nRaw;
+          }
+          const old = (nRaw.config ?? {}) as Record<string, unknown>;
+
+          if (nRaw.kind === "text-iterator") {
+            const next: Record<string, unknown> = {
+              texts: Array.isArray(old.texts)
+                ? old.texts.filter((t): t is string => typeof t === "string")
+                : [],
+              cursor: sanitiseCursor(old.cursor),
+              selectionMode: sanitiseSelectionMode(old.selectionMode),
+            };
+            const range = sanitiseRange(old.range);
+            if (range) next.range = range;
+            return { ...nRaw, config: next };
+          }
+
+          // image-iterator. Collect existing assetIds (idempotent path) or
+          // fall through to harvesting wired upstream edges.
+          const assetIds = Array.isArray(old.assetIds)
+            ? old.assetIds.filter(
+                (id): id is string => typeof id === "string" && id.length > 0,
+              )
+            : [];
+          if (assetIds.length === 0) {
+            // Walk edges targeting `images` and resolve each source.
+            for (const edge of persistedEdges) {
+              if (
+                edge.target !== nRaw.id ||
+                edge.targetHandle !== "images"
+              ) {
+                continue;
+              }
+              orphanEdgeIds.add(edge.id);
+              const upstreamAssetId = imageNodeAssetById.get(edge.source);
+              if (upstreamAssetId) assetIds.push(upstreamAssetId);
+            }
+          } else {
+            // If the iterator already carries assetIds (hand-edited or
+            // round-tripped from v8), still drop any stale edges targeting
+            // the now-defunct `images` handle so the persisted JSON stays
+            // clean.
+            for (const edge of persistedEdges) {
+              if (edge.target === nRaw.id && edge.targetHandle === "images") {
+                orphanEdgeIds.add(edge.id);
+              }
+            }
+          }
+
+          const next: Record<string, unknown> = {
+            assetIds,
+            cursor: sanitiseCursor(old.cursor),
+            selectionMode: sanitiseSelectionMode(old.selectionMode),
+          };
+          const range = sanitiseRange(old.range);
+          if (range) next.range = range;
+          return { ...nRaw, config: next };
+        });
+
+        const v8Edges =
+          orphanEdgeIds.size > 0
+            ? persistedEdges.filter((e) => !orphanEdgeIds.has(e.id))
+            : (state.edges ?? []);
+
+        return { ...state, nodes: v8Nodes, edges: v8Edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

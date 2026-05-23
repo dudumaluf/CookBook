@@ -4,6 +4,7 @@ import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator"
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
+import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
 
 import { nodeRegistry } from "./registry";
@@ -32,6 +33,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(soulIdNodeSchema);
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
+  nodeRegistry.register(textIteratorNodeSchema);
   nodeRegistry.register(exportNodeSchema);
   registered = true;
 }

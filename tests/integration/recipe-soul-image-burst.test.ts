@@ -255,24 +255,18 @@ describe("LLM-callable recipe path — Soul Image Burst (mocked)", () => {
       .getState()
       .createImageAssetFromUrl({ url: "https://example.com/cc3.jpg" });
 
+    // Slice 5.5: Image Iterator stores assetIds directly in config; no
+    // more multi-edge wiring of separate Image nodes.
     const store = useWorkflowStore.getState();
     const promptId = store.addNode("text", { x: 0, y: 0 }, { text: "go" });
     const soulId = store.addNode("soul-id", { x: 0, y: 200 }, {
       assetId: soulAssetId,
     });
-    const i1 = store.addNode("image", { x: 0, y: 400 }, {
-      assetId: ref1,
-      url: "https://example.com/aa1.jpg",
+    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {
+      assetIds: [ref1, ref2, ref3],
+      cursor: 0,
+      selectionMode: "all",
     });
-    const i2 = store.addNode("image", { x: 0, y: 500 }, {
-      assetId: ref2,
-      url: "https://example.com/bb2.jpg",
-    });
-    const i3 = store.addNode("image", { x: 0, y: 600 }, {
-      assetId: ref3,
-      url: "https://example.com/cc3.jpg",
-    });
-    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {});
     const genId = store.addNode("higgsfield-image-gen", { x: 400, y: 100 }, {});
 
     store.addEdge({
@@ -286,25 +280,6 @@ describe("LLM-callable recipe path — Soul Image Burst (mocked)", () => {
       sourceHandle: "out",
       target: genId,
       targetHandle: "soulId",
-    });
-    // 3 images → iterator → genId.image (single input → fan-out).
-    store.addEdge({
-      source: i1,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
-    });
-    store.addEdge({
-      source: i2,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
-    });
-    store.addEdge({
-      source: i3,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
     });
     store.addEdge({
       source: iterId,
@@ -582,19 +557,13 @@ describe("LLM-callable recipe path — full burst with Export saves to Library",
       { x: 0, y: 200 },
       { assetId: soulAssetId },
     );
-    const i1 = store.addNode("image", { x: 0, y: 400 }, {
-      assetId: ref1,
-      url: "https://example.com/aaa11.jpg",
+    // Slice 5.5: Image Iterator stores assetIds directly; no longer
+    // wired through standalone Image nodes + multi-edge handles.
+    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {
+      assetIds: [ref1, ref2, ref3],
+      cursor: 0,
+      selectionMode: "all",
     });
-    const i2 = store.addNode("image", { x: 0, y: 500 }, {
-      assetId: ref2,
-      url: "https://example.com/bbb22.jpg",
-    });
-    const i3 = store.addNode("image", { x: 0, y: 600 }, {
-      assetId: ref3,
-      url: "https://example.com/ccc33.jpg",
-    });
-    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {});
     const genId = store.addNode("higgsfield-image-gen", { x: 400, y: 100 }, {});
     const exportId = store.addNode(
       "export",
@@ -613,24 +582,6 @@ describe("LLM-callable recipe path — full burst with Export saves to Library",
       sourceHandle: "out",
       target: genId,
       targetHandle: "soulId",
-    });
-    store.addEdge({
-      source: i1,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
-    });
-    store.addEdge({
-      source: i2,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
-    });
-    store.addEdge({
-      source: i3,
-      sourceHandle: "out",
-      target: iterId,
-      targetHandle: "images",
     });
     store.addEdge({
       source: iterId,

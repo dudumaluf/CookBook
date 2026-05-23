@@ -1,92 +1,117 @@
 "use client";
 
-import { Image as ImageIcon, Layers } from "lucide-react";
+import { Image as ImageIcon } from "lucide-react";
 
 import { defineNode } from "@/lib/engine/define-node";
-import { extractInputArrayByType } from "@/lib/engine/extract-input";
+import {
+  applySelectionMode,
+  type SelectionMode,
+  type SelectionRange,
+} from "@/lib/iterators/selection-mode";
+import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 /**
- * Image Iterator — collects N upstream images into one array output that
- * fan-outs onto the next single-input node.
+ * Image Iterator (Slice 5.5, ADR-0031) — N images stored INSIDE the node
+ * with a selection mode + cursor controlling what gets emitted on a run.
  *
- * Wire 8 Image nodes (or one Library multi-select drag, future polish)
- * into the `images` handle, plug the iterator's `out` into a downstream
- * single-input image handle (e.g. HiggsfieldImageGen.image), and the
- * engine runs the downstream once per item, in parallel up to
- * maxConcurrent (4 — Higgsfield's per-keypair cap). See ADR-0030.
+ * Replaces the Slice 4.4b multi-edge design. Storage moved from "edges
+ * wired into the `images` handle" to "asset ids in `config.assetIds`",
+ * for two reasons:
  *
- * Reactive (output is a pure function of upstream content). `iterator: true`
- * is the magic flag that switches the runner from "first item only" to
- * "fan-out N times". Without it the runner would just hand the array to
- * the downstream as the input value, which on a single-handle would only
- * ever take the first item.
+ *  1. **Direct manipulation**. Users drag images from the library straight
+ *     onto the iterator surface (or use the body's drop zone, Slice 5.5c)
+ *     instead of spawning N standalone Image nodes. The iterator becomes
+ *     a *bag of references* with controls — closer to how Weavy / ComfyUI
+ *     surface multi-asset inputs.
  *
- * No knobs in Slice 4 — the iterator is just a pass-through bundler. Future
- * slices can grow `take(n)`, `skip(n)`, `randomize`, etc. as config without
- * breaking the existing fan-out semantics.
+ *  2. **Selection modes**. The iterator can emit a subset of its bag —
+ *     `fixed` (cursor item only), `increment` / `decrement` (advance per
+ *     run), `random`, `range`, or `all` (full fan-out, the legacy
+ *     behaviour). The cursor is part of the iterator's identity so the
+ *     body's preview matches what the next run will actually emit.
+ *
+ * Engine hookup is unchanged. Schema flag `iterator: true` is still set;
+ * the engine fan-outs whenever `execute()` returns a `StandardizedOutput[]`
+ * landing on a single-input downstream handle. For modes that emit only
+ * one item (`fixed | increment | decrement | random`), the fan-out branch
+ * runs once — same code path, same cache contract, just degenerate.
+ *
+ * Cache key: `{ kind, config, deps }` — config now includes `assetIds`,
+ * `cursor`, `selectionMode`, `range`. Changing the cursor in `fixed` mode
+ * busts the iterator's hash and every downstream — exactly what we want
+ * (user picked a different item, downstream needs to re-run).
  */
-/**
- * Empty config — Slice 4 ships the iterator as a pure pass-through bundler.
- * Future slices add `take(n)`, `skip(n)`, `randomize`, etc. without
- * breaking the existing shape.
- */
-export type ImageIteratorNodeConfig = Record<string, never>;
+export interface ImageIteratorNodeConfig {
+  /** Asset ids referenced from the asset store. Order matters — it's the user's order. */
+  assetIds: string[];
+  /** Pointer into `assetIds` used by `fixed` / `increment` / `decrement` / `random`. */
+  cursor: number;
+  /** What slice of `assetIds` to emit on a run. See `selection-mode.ts`. */
+  selectionMode: SelectionMode;
+  /** Inclusive `[start, end]` slice for `selectionMode === "range"`. */
+  range?: SelectionRange;
+}
 
 function ImageIteratorNodeBody({
   nodeId,
+  config,
 }: NodeBodyProps<ImageIteratorNodeConfig>) {
-  // Subscribe to the edges array directly and derive the multi-edge count
-  // here. We can't read it from upstream execution state (the iterator is
-  // reactive, so it has no run record); the workflow store edges are the
-  // source of truth for "how many things are wired in".
-  //
-  // Note: this picks up *any* edge into our `images` handle including ones
-  // currently in-flight (being dragged). React Flow's connection logic
-  // doesn't add to `edges` until the drop completes, so we don't have to
-  // filter for "committed" edges manually.
-  const connectedCount = useWorkflowStore(
-    (s) =>
-      s.edges.filter(
-        (e) => e.target === nodeId && e.targetHandle === "images",
-      ).length,
-  );
+  // Subscribe to the assets so library renames / re-uploads propagate to
+  // the body preview without a refresh. Keeping this read narrow (just
+  // the resolved current asset) reduces re-render noise on big libraries.
+  const assets = useAssetStore((s) => s.assets);
+  const assetIds = config.assetIds ?? [];
+  const safeCursor = clampCursor(config.cursor ?? 0, assetIds.length);
+  const currentId = assetIds[safeCursor];
+  const current = currentId
+    ? assets.find((a) => a.id === currentId && a.kind === "image")
+    : undefined;
 
-  // Note (ADR-0031, Slice 5.4): we *don't* visually telegraph "this port
-  // accepts multiple edges" with a larger ring here, because ADR-0023
-  // explicitly mandates uniform port chrome across the canvas (only the
-  // datatype color differs). Multi-edge is discoverable by trying — the
-  // count below is the only place we surface it. The Slice 5.5 redesign
-  // will move multi-image storage *inside* the node body anyway, at
-  // which point the multi-edge pattern goes away entirely.
+  // Slice 5.5a doesn't ship the cursor / selection-mode UI yet — that's
+  // 5.5b. The body still needs *something* readable so we surface the
+  // count and the current selection mode. The 5.5b body replaces this
+  // wholesale with the IteratorCursor component + thumbnail.
+  const count = assetIds.length;
+  const mode = config.selectionMode ?? "all";
+
+  // Suppress an unused-var lint: `nodeId` is part of the prop contract
+  // for body components but Slice 5.5a's body doesn't read it. 5.5c
+  // (drop-onto-iterator) will.
+  void nodeId;
+
   return (
     <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
-      <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
-        <Layers className="h-3 w-3 shrink-0 text-accent" />
-        <span data-testid="image-iterator-count" className="leading-snug">
-          {connectedCount === 0 ? (
+      <div
+        data-testid="image-iterator-count"
+        className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground"
+      >
+        <ImageIcon className="h-3 w-3 shrink-0 text-accent" />
+        <span className="leading-snug">
+          {count === 0 ? (
             <>
-              <span className="text-foreground/80">No images connected.</span>{" "}
-              Wire image nodes into the left port.
-            </>
-          ) : connectedCount === 1 ? (
-            <>
-              <span className="text-foreground/85">1 image connected.</span>{" "}
-              Wire more for fan-out (parallel, up to 4 at a time).
+              <span className="text-foreground/80">No images yet.</span> Drag
+              from the library to populate.
             </>
           ) : (
             <>
               <span className="text-foreground/85">
-                {connectedCount} images connected.
+                {count} image{count === 1 ? "" : "s"}
               </span>{" "}
-              Downstream runs once per image, in parallel (up to 4 at a time).
+              · mode <span className="text-foreground/80">{mode}</span>
+              {current ? (
+                <>
+                  {" "}
+                  · current <span className="text-foreground/70">{current.name}</span>
+                </>
+              ) : null}
             </>
           )}
         </span>
       </div>
       <p className="px-1 text-[10.5px] leading-snug text-muted-foreground/60">
-        Planned: drop images directly into this node (Slice 5.5).
+        Cursor + mode picker UI lands in Slice 5.5b.
       </p>
     </div>
   );
@@ -97,25 +122,62 @@ export const imageIteratorNodeSchema = defineNode<ImageIteratorNodeConfig>({
   category: "iterator",
   title: "Image Iterator",
   description:
-    "Bundle N images into a fan-out source: each downstream execution runs once per image (parallel, bounded).",
+    "Holds N images. Selection mode + cursor pick what gets emitted on a run.",
   icon: ImageIcon,
-  inputs: [
-    { id: "images", label: "images", dataType: "image", multiple: true },
-  ],
+  // No more multi-edge `images` input. Storage is internal.
+  inputs: [],
   outputs: [{ id: "out", label: "out", dataType: "image" }],
-  defaultConfig: {},
+  defaultConfig: {
+    assetIds: [],
+    cursor: 0,
+    selectionMode: "all",
+  },
   reactive: true,
   iterator: true,
-  execute: async ({ inputs }) => {
-    // Take every wired upstream image and emit them as an array. The
-    // engine sees the iterator flag + array shape and switches to the
-    // fan-out branch when this lands on a single-input handle downstream.
-    const refs = extractInputArrayByType(inputs, "images", "image");
-    const outputs: StandardizedOutput[] = refs.map((ref) => ({
-      type: "image",
-      value: ref,
-    }));
-    return outputs;
+  execute: async ({ nodeId, config }) => {
+    // Resolve asset ids → image refs. Drop ids that don't resolve to an
+    // image asset (e.g. user deleted the asset from the library after
+    // wiring it into the iterator) so the run doesn't crash on a stale
+    // reference.
+    const assetIds = config.assetIds ?? [];
+    const store = useAssetStore.getState();
+    const refs: StandardizedOutput[] = [];
+    for (const id of assetIds) {
+      const asset = store.getAsset(id);
+      if (asset?.kind !== "image") continue;
+      refs.push({ type: "image", value: { url: asset.source.url } });
+    }
+
+    const { items, nextCursor } = applySelectionMode({
+      items: refs,
+      mode: config.selectionMode ?? "all",
+      cursor: clampCursor(config.cursor ?? 0, refs.length),
+      range: config.range,
+    });
+
+    // Persist the advanced cursor for `increment` / `decrement` / `random`
+    // so the next run picks up where this one left off. Skipped for
+    // modes whose `nextCursor` equals the input cursor — avoids a
+    // gratuitous store write on every run.
+    if (
+      (config.selectionMode === "increment" ||
+        config.selectionMode === "decrement" ||
+        config.selectionMode === "random") &&
+      nextCursor !== (config.cursor ?? 0) &&
+      refs.length > 0
+    ) {
+      // The workflow store call has to happen on the next tick — Zustand
+      // forbids state writes from inside a selector / render path; we're
+      // inside execute() (async), so a direct call is fine, but we still
+      // queue it via `setState` so cursor-bumps land cleanly.
+      const ws = useWorkflowStore.getState();
+      // Targeted update keeps the rest of the iterator's config intact.
+      ws.updateNodeConfig<ImageIteratorNodeConfig>(nodeId, {
+        cursor: nextCursor,
+      });
+    }
+
+    return items;
   },
   Body: ImageIteratorNodeBody,
   size: {
@@ -125,3 +187,13 @@ export const imageIteratorNodeSchema = defineNode<ImageIteratorNodeConfig>({
     resizable: "horizontal",
   },
 });
+
+/** Defensive cursor clamp — used by both the body and execute(). */
+function clampCursor(cursor: number, count: number): number {
+  if (count === 0) return 0;
+  if (!Number.isFinite(cursor)) return 0;
+  const truncated = Math.trunc(cursor);
+  if (truncated < 0) return 0;
+  if (truncated >= count) return count - 1;
+  return truncated;
+}
