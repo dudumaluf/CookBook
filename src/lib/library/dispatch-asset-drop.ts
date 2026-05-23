@@ -1,32 +1,41 @@
 /**
- * Drop dispatcher (Slice 5.5c, ADR-0031).
+ * Drop dispatcher (Slice 5.6d, ADR-0032 — supersedes Slice 5.5c).
  *
  * Decides what happens when an asset payload from the library lands on
  * the canvas. Pure / framework-agnostic — takes the dispatched payload
- * + the resolved drop context and returns a description of the action;
- * the caller (`canvas-flow.tsx`'s `onDrop`) is responsible for wiring
- * the result into store mutations.
+ * + the resolved drop context (including the target iterator's
+ * resolved `groupId`, if any) and returns a description of the
+ * action(s); the caller (`canvas-flow.tsx`'s `onDrop`) is responsible
+ * for wiring each action into the right store mutation.
  *
- * The decision tree:
+ * The decision tree (post-5.6):
  *
  *   1 image asset, dropped on empty canvas
- *      → spawn 1 Image node (legacy behaviour preserved)
+ *      → spawn 1 Image node (legacy single-image behaviour preserved)
  *   1 image asset, dropped on an existing Image Iterator
- *      → append assetId to the iterator's `assetIds`
- *   N (≥ 2) image assets, dropped on empty canvas
- *      → spawn 1 new Image Iterator pre-populated with all N assetIds
- *   N (≥ 2) image assets, dropped on an existing Image Iterator
- *      → append all N assetIds to the iterator's `assetIds`
+ *      → `append-to-group` on the iterator's linked group
+ *   N (>=2) image assets, dropped on empty canvas
+ *      → `create-group-and-spawn-iterator` (auto Untitled group)
+ *   N (>=2) image assets, dropped on an existing Image Iterator
+ *      → `append-to-group` on the iterator's linked group
  *
- *   Any number of soul-id assets, dropped on empty canvas
+ *   1 group asset, dropped on empty canvas
+ *      → spawn 1 Image Iterator linked to the group's id
+ *        (multiple iterators can share a group — they all become
+ *         live views on the same underlying set, which is the
+ *         entire point of the AssetGroup model)
+ *   1 group asset, dropped on an existing Image Iterator
+ *      → `append-to-group` on the target's linked group, using the
+ *        SOURCE group's `assetIds` as the payload (merges sets;
+ *        does NOT collapse / delete the source group)
+ *
+ *   Any number of soul-id assets, anywhere
  *      → spawn 1 SoulID node per asset (legacy single-spawn loops)
- *      (Iterator semantics don't apply — Soul ID nodes aren't
- *      iterator-flagged in the engine.)
  *
  *   Drop target is some other existing node (Higgsfield, LLM, …)
- *      → fall through to "spawn new Image / SoulID node next to it"
- *      (we don't auto-wire — too magical, and the user might not want
- *      that asset on that node's input handle).
+ *      → falls through to the "empty canvas" branch (we don't
+ *        auto-wire — too magical, and the user might not want that
+ *        asset on that node's input handle)
  */
 
 import type { AssetDragPayload } from "./asset-drag";
@@ -41,11 +50,32 @@ export interface DropTarget {
   nodeId?: string;
   /** Kind of the node above, if `nodeId` is set. */
   nodeKind?: string;
+  /**
+   * The iterator's linked group id, if `nodeKind === "image-iterator"`.
+   * Resolved by the caller from the workflow store. May be `""` for
+   * placeholder iterators that haven't been linked yet (in which case
+   * the dispatcher converts the drop into a fresh-spawn instead of an
+   * append).
+   */
+  iteratorGroupId?: string;
 }
 
 /**
- * Action descriptor returned to the caller. The caller maps each variant
- * to the appropriate workflow-store mutation.
+ * Action descriptor returned to the caller. The caller maps each
+ * variant to the appropriate store mutation. Three variants:
+ *
+ * - `spawn-node` — call `useWorkflowStore.addNode(kind, pos, config)`.
+ *   For `image-iterator` spawns triggered by a group-drag, `config`
+ *   already carries `groupId` + cursor + selectionMode.
+ * - `create-group-and-spawn-iterator` — multi-step: call
+ *   `useAssetStore.createGroup({ assetIds, isUntitled: true })` to get
+ *   the new group's id, then `useWorkflowStore.addNode("image-iterator",
+ *   pos, { groupId, cursor: 0, selectionMode: "all" })`.
+ * - `append-to-group` — call `useAssetStore.addToGroup(groupId, ids)`.
+ *   The iterator re-renders automatically because it subscribes to the
+ *   asset store.
+ * - `noop` — defensive fall-through for empty payloads / unsupported
+ *   kinds.
  */
 export type AssetDropAction =
   | {
@@ -54,8 +84,14 @@ export type AssetDropAction =
       initialConfig: Record<string, unknown>;
     }
   | {
-      type: "append-to-iterator";
-      iteratorId: string;
+      type: "create-group-and-spawn-iterator";
+      assetIds: string[];
+      /** `true` for the auto-Untitled groups that drag-of-N-images creates. */
+      isUntitled: boolean;
+    }
+  | {
+      type: "append-to-group";
+      groupId: string;
       assetIds: string[];
     }
   | { type: "noop"; reason: string };
@@ -81,11 +117,68 @@ export function dispatchAssetDrop({
     return payload.assetIds.map((id) => ({
       type: "spawn-node" as const,
       kind: "soul-id",
-      // We pass only `assetId` here; canvas-flow will resolve the rest
-      // through `assetToNode` after looking up the asset in the store.
-      // Keeping this dispatcher store-agnostic.
       initialConfig: { assetId: id },
     }));
+  }
+
+  // ── Drop target lookup ────────────────────────────────────────────────
+  // A drop landing on an existing Image Iterator with a real linked
+  // group → propagate via `append-to-group`. The iterator with empty
+  // groupId (placeholder) doesn't get the propagate path; falls
+  // through to the spawn / create branches below so the user gets a
+  // working iterator either way.
+  const droppedOnIterator =
+    target?.nodeKind === "image-iterator" &&
+    target.nodeId !== undefined &&
+    typeof target.iteratorGroupId === "string" &&
+    target.iteratorGroupId.length > 0;
+
+  if (payload.kind === "asset-group") {
+    // Drag of a group card. Always 1 group at a time (drag-payload
+    // contract — multi-group selection drag could emit multi ids,
+    // but spawning N iterators feels overkill until anyone asks for
+    // it). The first id is the group's id.
+    const sourceGroupId = payload.assetIds[0]!;
+
+    if (droppedOnIterator) {
+      // Merge the source group's contents into the target iterator's
+      // linked group. We DON'T inline-resolve the source group's
+      // assetIds here (the dispatcher is store-agnostic); the caller
+      // does the lookup before calling addToGroup. A second action
+      // descriptor with the source group's id makes that explicit.
+      return [
+        {
+          type: "append-to-group",
+          groupId: target.iteratorGroupId!,
+          // Source group id; caller resolves it to the actual member
+          // ids via useAssetStore before calling addToGroup.
+          assetIds: [
+            // Sentinel: "this is a group id, please expand it before
+            // calling addToGroup". We use the prefix "@group:" so the
+            // caller can detect + expand. Today's only emitter is
+            // here, so the contract is local.
+            `@group:${sourceGroupId}`,
+          ],
+        },
+      ];
+    }
+
+    // Drop on canvas / non-iterator node → spawn an iterator linked
+    // to this group. Iterators are SHARED views on the group; if
+    // there's already an iterator pointing at this group elsewhere
+    // on the canvas, the user gets two synced views. That's the
+    // intended model.
+    return [
+      {
+        type: "spawn-node",
+        kind: "image-iterator",
+        initialConfig: {
+          groupId: sourceGroupId,
+          cursor: 0,
+          selectionMode: "all",
+        },
+      },
+    ];
   }
 
   if (payload.kind !== "image") {
@@ -97,24 +190,20 @@ export function dispatchAssetDrop({
     ];
   }
 
-  // Image. Branch on drop target + asset count.
-  const droppedOnIterator =
-    target?.nodeKind === "image-iterator" && target.nodeId !== undefined;
+  // ── Image payload ─────────────────────────────────────────────────────
 
   if (droppedOnIterator) {
     return [
       {
-        type: "append-to-iterator",
-        iteratorId: target.nodeId!,
+        type: "append-to-group",
+        groupId: target.iteratorGroupId!,
         assetIds: payload.assetIds,
       },
     ];
   }
 
   if (payload.assetIds.length === 1) {
-    // 1 image, empty canvas (or non-iterator node) → spawn 1 Image node.
-    // The caller fills in `url` from the asset store before passing
-    // `initialConfig` to `addNode`.
+    // 1 image, empty canvas → spawn 1 Image node.
     return [
       {
         type: "spawn-node",
@@ -124,16 +213,14 @@ export function dispatchAssetDrop({
     ];
   }
 
-  // N images, empty canvas → spawn an Image Iterator pre-populated.
+  // N images, empty canvas → create an Untitled group + spawn an
+  // iterator linked to it. The caller does both store writes and
+  // wires the freshly-minted groupId into the iterator's config.
   return [
     {
-      type: "spawn-node",
-      kind: "image-iterator",
-      initialConfig: {
-        assetIds: payload.assetIds,
-        cursor: 0,
-        selectionMode: "all",
-      },
+      type: "create-group-and-spawn-iterator",
+      assetIds: payload.assetIds,
+      isUntitled: true,
     },
   ];
 }
