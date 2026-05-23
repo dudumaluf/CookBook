@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import {
   imageIteratorNodeSchema,
@@ -219,10 +219,10 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
     });
   });
 
-  /* ────────────────────────────── Body 5.5a copy ───────────────────────── */
+  /* ───────────────────────── Body (Slice 5.5b: thumbnail + cursor) ─────── */
 
-  describe("body (Slice 5.5a placeholder)", () => {
-    it("renders the empty-state copy when there are no assetIds", () => {
+  describe("body — empty state", () => {
+    it("shows the 'no images yet' empty state with a 'drag from Library' hint", () => {
       const Body = imageIteratorNodeSchema.Body;
       render(
         <Body
@@ -232,11 +232,17 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
           selected={false}
         />,
       );
-      const el = screen.getByTestId("image-iterator-count");
-      expect(el.textContent).toMatch(/no images yet/i);
+      const empty = screen.getByTestId("image-iterator-empty");
+      expect(empty).toBeInTheDocument();
+      expect(empty.textContent).toMatch(/no images yet/i);
+      expect(empty.textContent).toMatch(/drag from the library/i);
+      // No cursor / mode chip when empty.
+      expect(screen.queryByTestId("iterator-cursor")).toBeNull();
     });
+  });
 
-    it("shows the count + selection mode + current asset name when populated", () => {
+  describe("body — populated", () => {
+    it("renders the cursor's thumbnail, the 1-indexed counter, the mode chip, and the asset name", () => {
       seedImageAsset("a-1", "https://x/1.png", "Subject ref");
       seedImageAsset("a-2", "https://x/2.png", "Backdrop");
 
@@ -253,10 +259,137 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
           selected={false}
         />,
       );
-      const el = screen.getByTestId("image-iterator-count");
-      expect(el.textContent).toMatch(/2 images/i);
-      expect(el.textContent).toMatch(/increment/i);
-      expect(el.textContent).toMatch(/Subject ref/);
+      // Thumbnail of cursor=0 (Subject ref).
+      const img = screen.getByAltText("Subject ref") as HTMLImageElement;
+      expect(img.src).toContain("https://x/1.png");
+      // Counter is 1-indexed.
+      expect(
+        screen.getByTestId("iterator-cursor-counter").textContent,
+      ).toBe("1 / 2");
+      // Mode chip.
+      expect(screen.getByTestId("image-iterator-mode-chip").textContent)
+        .toBe("increment");
+      // Asset name.
+      expect(
+        screen.getByTestId("image-iterator-current-name").textContent,
+      ).toBe("Subject ref");
+    });
+
+    it("clicking the cursor's right arrow updates config.cursor via updateConfig", () => {
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedImageAsset("a-2", "https://x/2.png", "Second");
+      const updateConfig = vi.fn();
+
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({
+            assetIds: ["a-1", "a-2"],
+            cursor: 0,
+            selectionMode: "fixed",
+          })}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /image next item/i }),
+      );
+      expect(updateConfig).toHaveBeenCalledWith({ cursor: 1 });
+    });
+  });
+
+  /* ────────────────────── Settings popover (Slice 5.5b) ─────────────────── */
+
+  describe("settings content — selection mode picker", () => {
+    it("renders the selection-mode dropdown with every mode option", () => {
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({ assetIds: ["a-1"] })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      const select = screen.getByLabelText(
+        /selection mode/i,
+      ) as HTMLSelectElement;
+      const optionValues = Array.from(select.options).map((o) => o.value);
+      expect(optionValues).toEqual([
+        "fixed",
+        "increment",
+        "decrement",
+        "random",
+        "range",
+        "all",
+      ]);
+    });
+
+    it("changing the dropdown commits via updateConfig", () => {
+      const updateConfig = vi.fn();
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({ assetIds: ["a-1"] })}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText(/selection mode/i), {
+        target: { value: "increment" },
+      });
+      expect(updateConfig).toHaveBeenCalledWith({ selectionMode: "increment" });
+    });
+
+    it("renders Start + End range inputs only when selectionMode === 'range'", () => {
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      const { rerender } = render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({ assetIds: ["a-1"] })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(screen.queryByLabelText(/start \(1-indexed\)/i)).toBeNull();
+
+      rerender(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({
+            assetIds: ["a-1", "a-2", "a-3"],
+            selectionMode: "range",
+          })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(screen.getByLabelText(/start \(1-indexed\)/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/end \(1-indexed\)/i)).toBeInTheDocument();
+    });
+  });
+
+  /* ─────────────────────────── hasOverrides ───────────────────────────── */
+
+  describe("settings.hasOverrides", () => {
+    it("returns false on a default-config iterator (mode='all', cursor=0)", () => {
+      const has = imageIteratorNodeSchema.settings?.hasOverrides;
+      expect(has?.(makeConfig({ assetIds: ["a-1"] }))).toBe(false);
+    });
+    it("returns true once selectionMode is anything other than 'all'", () => {
+      const has = imageIteratorNodeSchema.settings?.hasOverrides;
+      expect(
+        has?.(makeConfig({ assetIds: ["a-1"], selectionMode: "fixed" })),
+      ).toBe(true);
+    });
+    it("returns true once cursor moved off 0", () => {
+      const has = imageIteratorNodeSchema.settings?.hasOverrides;
+      expect(
+        has?.(makeConfig({ assetIds: ["a-1", "a-2"], cursor: 1 })),
+      ).toBe(true);
     });
   });
 });

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import {
   textIteratorNodeSchema,
@@ -133,8 +133,10 @@ describe("textIteratorNodeSchema (Slice 5.5)", () => {
     });
   });
 
-  describe("body (Slice 5.5a placeholder)", () => {
-    it("renders the empty-state copy when `texts` is empty", () => {
+  /* ───────────────────────── Body (Slice 5.5b: editor + cursor) ───────── */
+
+  describe("body — empty state (textarea editor)", () => {
+    it("renders a textarea with one-per-line placeholder when `texts` is empty", () => {
       const Body = textIteratorNodeSchema.Body;
       render(
         <Body
@@ -144,19 +146,48 @@ describe("textIteratorNodeSchema (Slice 5.5)", () => {
           selected={false}
         />,
       );
-      const el = screen.getByTestId("text-iterator-count");
-      expect(el.textContent).toMatch(/no texts yet/i);
+      const textarea = screen.getByPlaceholderText(
+        /one text per line/i,
+      ) as HTMLTextAreaElement;
+      expect(textarea).toBeInTheDocument();
+      // No cursor / preview when empty.
+      expect(screen.queryByTestId("text-iterator-preview")).toBeNull();
+      expect(screen.queryByTestId("iterator-cursor")).toBeNull();
     });
 
-    it("shows count + mode + truncated current text preview when populated", () => {
-      const longText =
-        "this is a long-ish first prompt that the body will truncate when shown as preview";
+    it("blurring the textarea splits on newlines and commits via updateConfig", () => {
+      const updateConfig = vi.fn();
+      const Body = textIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ texts: [] })}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      const textarea = screen.getByPlaceholderText(
+        /one text per line/i,
+      ) as HTMLTextAreaElement;
+      fireEvent.blur(textarea, {
+        target: { value: "alpha\nbeta\n\ngamma\n" },
+      });
+      // Empty lines + trailing newline dropped.
+      expect(updateConfig).toHaveBeenCalledWith({
+        texts: ["alpha", "beta", "gamma"],
+        cursor: 0,
+      });
+    });
+  });
+
+  describe("body — populated", () => {
+    it("renders the cursor's text preview, the 1-indexed counter, and the mode chip", () => {
       const Body = textIteratorNodeSchema.Body;
       render(
         <Body
           nodeId="iter-1"
           config={makeConfig({
-            texts: [longText, "second prompt"],
+            texts: ["alpha", "beta"],
             cursor: 0,
             selectionMode: "increment",
           })}
@@ -164,13 +195,75 @@ describe("textIteratorNodeSchema (Slice 5.5)", () => {
           selected={false}
         />,
       );
-      const el = screen.getByTestId("text-iterator-count");
-      expect(el.textContent).toMatch(/2 texts/i);
-      expect(el.textContent).toMatch(/increment/i);
-      // Preview shows the current text inside curly quotes; long texts
-      // get truncated with an ellipsis past the body's 60-char cap.
-      expect(el.textContent).toMatch(/this is a long-ish first prompt/);
-      expect(el.textContent).toMatch(/…/);
+      // Preview of cursor=0.
+      const preview = screen.getByTestId("text-iterator-preview");
+      expect(preview.textContent).toContain("alpha");
+      // Counter is 1-indexed.
+      expect(
+        screen.getByTestId("iterator-cursor-counter").textContent,
+      ).toBe("1 / 2");
+      // Mode chip.
+      expect(
+        screen.getByTestId("text-iterator-mode-chip").textContent,
+      ).toBe("increment");
+    });
+  });
+
+  /* ────────────────────── Settings popover (Slice 5.5b) ─────────────────── */
+
+  describe("settings content", () => {
+    it("renders the selection-mode dropdown plus an editable textarea synced to `texts`", () => {
+      const SettingsContent = textIteratorNodeSchema.settings!.Content;
+      render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({
+            texts: ["alpha", "beta"],
+            cursor: 0,
+            selectionMode: "all",
+          })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      const select = screen.getByLabelText(
+        /selection mode/i,
+      ) as HTMLSelectElement;
+      expect(select.value).toBe("all");
+
+      const textarea = screen.getByLabelText(
+        /texts \(one per line\)/i,
+      ) as HTMLTextAreaElement;
+      // defaultValue picks up the joined texts so the editor shows the
+      // current state immediately.
+      expect(textarea.value).toBe("alpha\nbeta");
+    });
+
+    it("blurring the settings textarea commits the new texts list", () => {
+      const updateConfig = vi.fn();
+      const SettingsContent = textIteratorNodeSchema.settings!.Content;
+      render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({
+            texts: ["alpha"],
+            cursor: 0,
+            selectionMode: "fixed",
+          })}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      const textarea = screen.getByLabelText(
+        /texts \(one per line\)/i,
+      ) as HTMLTextAreaElement;
+      fireEvent.blur(textarea, {
+        target: { value: "alpha\nbeta\ngamma" },
+      });
+      expect(updateConfig).toHaveBeenCalledWith({
+        texts: ["alpha", "beta", "gamma"],
+        cursor: 0,
+      });
     });
   });
 });
