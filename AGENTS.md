@@ -15,8 +15,8 @@ This file is the **single starting point** for any new agent / chat session. If 
 ## Where we are right now
 
 - **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
-- **Last shipped slice**: **Slice 5.5 — Iterator nodes with internal storage + Text Iterator + library multi-select + drop-onto-Iterator** (sub-slices 5.5a → 5.5c) — first concrete payoff of **ADR-0031** (the design lock-in we wrote in Slice 5.4: explicit iteration nodes, two-axis selection × execution model, Run-here, history). The iterator nodes now hold their items inside the node config (`assetIds[] / texts[] + cursor + selectionMode`) instead of multi-edge inputs; the library has Finder-style multi-select; multi-payload drops route through a pure dispatcher to spawn or append to an iterator. Snapshot: [`docs/STATE-AFTER-M0a-slice5-5.md`](./docs/STATE-AFTER-M0a-slice5-5.md). Tests green at 521 / 521. Workflow-store v7 → v8 migration handles existing graphs cleanly.
-- **Next up**: **Slice 5.6 — `Array`, `List`, `Number` nodes** (per ROADMAP backlog under "Slice 5.5+ — fallout from ADR-0031"). Three pure / reactive nodes with no engine changes: `Array` splits a string by a delimiter; `List` selects 1 from N (single or array input) with optional cursor input handle; `Number` emits a number using the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. After 5.6: **Slice 5.7** (Run-here button + per-node history) and **Slice 5.8** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
+- **Last shipped slice**: **Slice 5.6 — AssetGroup as first-class library kind; Iterator always linked** (sub-slices 5.6a → 5.6e) — implements **ADR-0032**. Every Image Iterator on the canvas now has `config.groupId` pointing at a real `AssetGroup` in the library (Slice 5.5's free-floating `assetIds[]` is superseded). Library gains a Groups section + subview; multi-file imports get a dialog ("as separate / as group"); drag of a group spawns iterator linked to it; multi-iterator views auto-sync; Detach creates a `(copy)` group + relinks (no byte duplication); Untitled groups auto-clean when their last linker is deleted. Workflow-store `v8 → v9` migration absorbs Slice 5.5 graphs. Snapshot: [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md). Tests green at 575 / 575.
+- **Next up**: **Slice 5.6f — library polish** (right-click context menu on cards, multi-delete via Backspace, double-click rename on `image` and `soul-id` cards). Then **Slice 5.7 — `Array` / `List` / `Number` nodes** (was 5.6 in the previous roadmap; bumped). After 5.7: **Slice 5.8** (Run-here button + per-node history) and **Slice 5.9** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
 
 ## Read these first (in order; ~10 min total)
 
@@ -36,7 +36,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ```bash
 npm install              # once
 npm run dev              # Next 16 + Turbopack on :3000
-npm test                 # Vitest, all 521 tests, ~5 s
+npm test                 # Vitest, all 575 tests, ~5 s
 npm run test:watch       # while iterating
 npx tsc --noEmit         # type check (no `npm run` wrapper for this one)
 npm run lint             # ESLint
@@ -83,14 +83,14 @@ Other rules:
 
 ## Next task (starting fresh)
 
-Open [`docs/STATE-AFTER-M0a-slice5-5.md`](./docs/STATE-AFTER-M0a-slice5-5.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5.5+ — fallout from ADR-0031**". Suggested first actions:
+Open [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5.5+ — fallout from ADR-0031**" (5.6 marked SHIPPED; 5.6f / 5.7 / 5.8 / 5.9 are the queue). Suggested first actions:
 
-1. Plan **Slice 5.6 — `Array`, `List`, `Number` nodes**. Three pure / reactive nodes with **zero engine changes** (so very small surface). `Array` splits a string by a configured delimiter (`{ splitOn: string }`). `List` is a 1-of-N selector with an optional `cursor` input handle (lets a Number node drive the selection remotely). `Number` emits a number with the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. Each node mirrors the existing schema patterns (`defineNode`, settings popover via `⋯`); body chrome can reuse `<IteratorCursor />` from Slice 5.5b.
-2. Read [ADR-0031](./docs/DECISIONS.md) (current — Slice 5.5+ ladder is in §5). The catalog table maps each scenario to a node graph; the per-iterator history work is parked at Slice 5.7. Don't over-design 5.6 — it's purely about adding three small leaf nodes.
+1. Plan **Slice 5.6f — library polish** (small, focused). Right-click context menu on `AssetCard` (group / ungroup / detach / add to canvas / train Soul ID — last one parked behind a flag if the endpoint isn't ready). Multi-delete: Backspace while selected library cards exist drops them via `removeAsset` / `removeGroup` per kind; respects the same input-aware guard as the canvas (no delete while focus is in an editor). Double-click rename on `image` and `soul-id` cards (mirrors the group card's rename pattern from Slice 5.6b). User flagged these mid-5.6c; promised to ship them as a sub-slice before Slice 5.7.
+2. After 5.6f: **Slice 5.7 — `Array` / `List` / `Number` nodes**. Three pure / reactive nodes with **zero engine changes**. `Array` splits a string by a configured delimiter (`{ splitOn: string }`). `List` is a 1-of-N selector with an optional `cursor` input handle (lets a Number node drive the selection remotely). `Number` emits a number with the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. Body chrome can reuse `<IteratorCursor />` from Slice 5.5b.
 3. Decide whether `Array` should also accept a regex (vs literal-string) splitter on day one or wait for the assistant DSL to ask for it. Default lean: literal string only in 5.6, regex parked.
 4. Mirror the existing node + integration test rhythm: `tests/component/...` per UI surface, `tests/integration/...` per recipe-shaped flow, `scripts/smoke-*.ts` for any persistence migration sanity check.
 
-Confirm with the user before kicking off Slice 5.6 if any of the three nodes feels gold-plated for the use case at hand — the iteration story is intentionally being assembled in small pieces so each merge is reviewable in isolation.
+Confirm with the user before kicking off any of these — Slice 5.6f's right-click menu in particular has design choices (item order, keyboard shortcuts inside the menu, how it interacts with the existing card actions like the trash button on hover) that shouldn't be assumed.
 
 ## File layout cheat-sheet
 

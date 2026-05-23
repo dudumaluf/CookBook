@@ -949,3 +949,88 @@ History is **per-node**, not per-recipe — duplicating a node loses its history
 - **Run-here doesn't re-trigger on upstream cache invalidation** — i.e. if you Run-here on a downstream node with a cached upstream, the upstream stays `cached` even if its inputs would change in a global run. We document this in the JSDoc but accept it; the fix is a tooltip-level disclosure, not an engine-level equality check.
 - **`Number` node's auto-advance happens on `done`, not on submit** — so a failed run doesn't leak into the cursor. Same logic as the iterator's selection-mode advance.
 - **No edge-level fan-out marker** was an explicit choice (we considered it, see [conversation-summary in CHANGELOG]). The user wanted nodes to be the substantives and edges to be the verbs-as-passages; configurable edges break that mental model. Iterator-as-node carries the meaning explicitly.
+
+## ADR-0032 — AssetGroup as the substantive for image batches; Iterator is the canvas view (M0a Slice 5.6)
+
+- **Date**: 2026-05-23
+- **Status**: implemented in Slice 5.6 (sub-slices 5.6a → 5.6e). Lives alongside ADR-0031 (which defines the iterator's selection × execution model); ADR-0032 narrows ADR-0031 §2 by asserting *every Image Iterator on the canvas is always linked to an AssetGroup in the library*. The Slice 5.5 design where the iterator carried `assetIds[]` directly in its config is **superseded**; `groupId` replaces it.
+- **Context**: After Slice 5.5 shipped (Image Iterator with internal `assetIds[]` + Finder-style multi-select on the library), the user came back with a higher-order observation: "in WeavyAI, dropping multiple images into the canvas works, but **organisationally** you want them as a group on the side too — like a folder you can revisit, train a Soul ID from, drag into another recipe later." The Slice 5.5 design satisfied the canvas-side fan-out need but left the library cluttered with N standalone images for every batch the user assembled, and there was no way to *reuse* a curated set across recipes without re-multi-selecting it every time. Treating the batch as a first-class library entity (an AssetGroup with a name) solves both problems and unblocks future actions ("Train Soul ID from this group", "Use this group as a moodboard reference").
+- **The mental model (the one rule)**:
+
+  > Every Image Iterator on the canvas is always linked to an AssetGroup in the library. The library is the single source of truth for "which images are in this set"; the canvas is a *view* over that set.
+
+  Concretely, `ImageIteratorNodeConfig.groupId: string` is always set (empty string is a transient placeholder for the moment between `addNode()` and the dispatcher's groupId write). `config.assetIds[]` from Slice 5.5 is **removed**. Iterator items are derived at execute-time from `useAssetStore.getState().getAsset(groupId).assetIds`.
+
+### 1. The data model
+
+`AssetGroupAsset` joins the `Asset` union as a third kind (next to `image` and `soul-id`). The shape is intentionally minimal:
+
+```ts
+interface AssetGroupAsset extends AssetCommon {
+  kind: "asset-group";
+  /** Ordered `image` asset ids. Order = iterator's cursor walk order. */
+  assetIds: string[];
+  /** True for auto-created groups (multi-drag, v8→v9 migration); flips
+   *  to false on first non-empty rename. Drives the cleanup rule. */
+  isUntitled: boolean;
+}
+```
+
+No bytes — groups are pure metadata. The `image` ids inside survive group deletion (they're the durable thing). Group nesting and cross-kind groups are out of scope for M0a.
+
+### 2. The four entry points to "iterator linked to a group"
+
+There are exactly four ways an iterator gets a real `groupId`:
+
+1. **Drag a group card from the library** (Slice 5.6d) — the dispatcher's `kind === "asset-group"` branch spawns `image-iterator` with `initialConfig.groupId = group.id`. Multiple iterators can share the same group; editing the group propagates to all of them. **This is the intended model**, not a footgun.
+2. **Multi-drag N image cards from the library** (Slice 5.6d) — the dispatcher returns `create-group-and-spawn-iterator`. The canvas-flow caller creates an `Untitled` group via `useAssetStore.getState().createGroup({ assetIds, isUntitled: true })`, then spawns the iterator linked to it.
+3. **Drop more images on an existing iterator** (Slice 5.6d) — the dispatcher returns `append-to-group`. The caller calls `addToGroup(iteratorGroupId, ids)`. The iterator (and any other iterator linked to the same group) re-renders naturally.
+4. **Workflow-store v8 → v9 migration** (Slice 5.6a) — every legacy iterator with `assetIds[]` in its config becomes an `Untitled` group materialised in the asset store, plus the iterator's config rewrites to `{ groupId, cursor, selectionMode, range? }`. Selection mode + cursor + range carry over verbatim. The migration runs synchronously and requires `useAssetStore.persist.rehydrate()` to fire **before** `useWorkflowStore.persist.rehydrate()` (AppShell's effect ordering enforces this).
+
+### 3. The "Detach" pattern
+
+Inspired by Figma's "Detach instance" + Photoshop's "Smart Object → Layers". The Detach button in the iterator's settings popover (`⋯`):
+
+1. Reads the source group from `config.groupId`.
+2. Calls `useAssetStore.getState().createGroup({ name: "<source> (copy)", assetIds: [...source.assetIds], isUntitled: false })`. **Note:** the new group references the SAME image ids — no byte duplication. The source group's image asset records aren't touched.
+3. Calls `updateNodeConfig({ groupId: newGroupId, cursor: 0 })`. The iterator is now a view on the new (independent) group; future edits to either side don't bleed across.
+
+The action is conservative: it always creates a new group rather than converting the iterator to a "free" / unlinked state. This is by design — see §5 below.
+
+### 4. The Untitled cleanup rule
+
+The risk of (2) above is library pollution: every multi-drag creates an `Untitled` group, and the user accumulates "Untitled 1", "Untitled 2", … even after deleting the iterators that owned them. The cleanup rule (Slice 5.6e):
+
+> When an iterator is deleted, drop the linked group iff
+> - `group.isUntitled === true` (auto-created, never renamed), AND
+> - no other iterator on the canvas links to it.
+
+The rule is implemented as `cleanupUntitledGroupIfOrphan(groupId, linkedNodeIds)` on the asset store. The caller (`canvas-flow.tsx`) computes `linkedNodeIds` by walking `useWorkflowStore.getState().nodes` and filtering iterators with matching `config.groupId`. Trigger points are the keyboard Backspace/Delete handler and React Flow's `onNodesChange` `c.type === "remove"` branch (defensive — RF's own delete shortcut is disabled but the change emitter still fires for programmatic removals).
+
+Renaming a group flips `isUntitled` to `false` permanently — the user just told us "this is a real group worth keeping". The cleanup leaves it alone from then on. This is the affordance that promotes a casual multi-drag bag to a reusable library entity.
+
+### 5. Why "always linked", not "linked OR free"
+
+We considered (and explicitly rejected) a model where iterators could be *either* linked to a group OR carry their own `assetIds[]` snapshot. Three problems:
+
+1. **Two state machines.** Every operation (rename, detach, drop, edit) needs a different code path for each shape. Slice 5.7+ features (per-node history, run-here, recipe-as-node) would have to remember to handle both. Library is the single source of truth — period — keeps each feature simple.
+2. **The "what does Detach mean" question is unanswerable.** If iterators can be free, then Detach has two meanings (convert to free / fork into a new group). We picked the latter, and once we've picked it, the free state is no longer useful — every iterator either points at its original group or at a (copy) group.
+3. **Multi-iterator views are a feature, not a footgun.** Sharing a group across iterators (auto-mirror on edit) is exactly what users want for "I'm doing 3 different recipe variations on the same photoshoot, edits on the photoshoot list should affect all 3". The free-iterator alternative would force the user to manually duplicate every edit.
+
+### 6. Cache key + engine implications
+
+The iterator's `computeNodeHash` reads `{ groupId, cursor, selectionMode, range }` from config. The actual `assetIds` resolution happens **inside `execute()`** (not in the hash directly), so the hash is stable on cosmetic changes (resizing a node, etc.) but invalidates correctly when:
+
+- The user picks a different group (dispatcher rewrites `groupId`).
+- The user changes selection mode / cursor / range.
+- The group's contents change (`addToGroup`/`removeFromGroup` triggers a re-render through the asset store subscription, and on the *next* run, `execute()` resolves new ids → engine sees a different output → downstream hash invalidates).
+
+The fan-out branch in `runWorkflow.ts` (ADR-0030) is bit-identical to Slice 4 / 5.5; the iterator's emit is still a `StandardizedOutput[]` and the engine's per-item dispatch is unchanged. ADR-0032 is purely about *where the array of items lives* (in the library, behind a stable id), not how the engine consumes it.
+
+### 7. Trade-offs accepted
+
+- **Untitled groups feel like cruft until you understand the cleanup rule.** A user who uses the iterator pattern heavily without ever renaming groups will see "Untitled 1 / Untitled 2 / …" in the library. The cleanup rule prevents *orphan* accumulation, but a multi-iterator-shared Untitled is intentionally preserved (because it has linked owners). The visual badge ("Untitled" pill on the group card) is a constant reminder that the user can rename to promote.
+- **Renaming is a one-way operation.** Once the user renames a group, `isUntitled` flips to `false` permanently — even if they rename it back to "Untitled 5". This is intentional: rename = "I'm keeping this", and we don't want to silently re-arm cleanup.
+- **The "@group:<id>" sentinel in the dispatcher** is a small protocol smell — the dispatcher is supposed to be store-agnostic, but it needs to communicate "expand this id through the asset store before calling addToGroup" to the caller. We chose the sentinel over leaking the asset store into the dispatcher (which would couple two layers). The sentinel is local to one emitter / one consumer; if it spreads, it becomes a real protocol with a Zod schema.
+- **Groups are flat lists of `image` ids only.** No nesting, no soul-id-in-group. M0a doesn't need either, and the data model stays read-cheap. Future cross-kind groups (a "moodboard" with images + soul IDs + text prompts) get a different `kind` rather than retro-fitting `assetIds: AnyAssetId[]` here.
+- **The migration doesn't preserve the original folder context** (when the user dragged from `~/Pictures/photoshoot-paris`, we don't read that path through `webkitGetAsEntry()`). Auto-named "Untitled <N>" instead. Folder-aware naming is a polish item if requests come.

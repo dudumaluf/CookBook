@@ -24,7 +24,8 @@ End-of-slice and end-of-milestone snapshots. Read the latest one if you're picki
 - **[STATE-AFTER-M0a-slice2.md](./STATE-AFTER-M0a-slice2.md)** — Library + Asset abstraction + drag-to-canvas.
 - **[STATE-AFTER-M0a-slice3.md](./STATE-AFTER-M0a-slice3.md)** — Run engine + LLM Text + Queue panel + settings popover (3.1 → 3.4) + standardised settings affordance (ADR-0027) + node sizing contract (ADR-0028).
 - **[STATE-AFTER-M0a-slice4.md](./STATE-AFTER-M0a-slice4.md)** — Higgsfield Cloud API + Soul ID + HiggsfieldImageGen + ImageIterator + Export + engine fan-out + complete Soul Image Burst recipe (ADR-0029, ADR-0030).
-- **[STATE-AFTER-M0a-slice5-5.md](./STATE-AFTER-M0a-slice5-5.md)** — Iterator nodes with internal storage + selection mode + cursor + Text Iterator + library multi-select + drop-onto-Iterator (ADR-0031) (current).
+- **[STATE-AFTER-M0a-slice5-5.md](./STATE-AFTER-M0a-slice5-5.md)** — Iterator nodes with internal storage + selection mode + cursor + Text Iterator + library multi-select + drop-onto-Iterator (ADR-0031).
+- **[STATE-AFTER-M0a-slice5-6.md](./STATE-AFTER-M0a-slice5-6.md)** — AssetGroup as first-class library kind; Iterator always linked via `groupId`; library Groups section + subview; import-as-group dialog; Detach + Untitled-cleanup (ADR-0032) (current).
 
 ## Maintenance rules (the contract)
 
