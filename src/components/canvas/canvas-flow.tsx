@@ -30,6 +30,7 @@ import {
   parseAssetDrag,
 } from "@/lib/library/asset-drag";
 import { assetToNode } from "@/lib/library/asset-to-node";
+import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
 import { dispatchAssetDrop } from "@/lib/library/dispatch-asset-drop";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
@@ -374,7 +375,21 @@ function CanvasFlowInner() {
         if (c.type === "position" && c.position) {
           pendingMoves.current.set(c.id, c.position);
         } else if (c.type === "remove") {
+          // Capture iterator's linked groupId before removal so we
+          // can run `cleanupUntitledGroupIfOrphan` afterwards (Slice
+          // 5.6e). Non-iterator removals: groupId is empty, cleanup
+          // helper no-ops.
+          const node = useWorkflowStore
+            .getState()
+            .nodes.find((n) => n.id === c.id);
+          const groupId =
+            node?.kind === "image-iterator"
+              ? ((node.config as { groupId?: unknown })?.groupId ?? "")
+              : "";
           removeNode(c.id);
+          if (typeof groupId === "string" && groupId.length > 0) {
+            cleanupGroupIfOrphan(groupId);
+          }
         } else if (
           c.type === "dimensions" &&
           // `setAttributes` is React Flow's signal for "this is a real
@@ -466,6 +481,16 @@ function CanvasFlowInner() {
   // Input-aware: ignored when focus is inside an editable element so typing
   // Backspace in the prompt bar / a text node / the rename input doesn't
   // wipe the canvas.
+  //
+  // ## Iterator cleanup (Slice 5.6e, ADR-0032)
+  //
+  // Deleting an iterator may orphan the linked `Untitled` group it
+  // owned. We capture each iterator's `groupId` BEFORE removal, then
+  // call `cleanupUntitledGroupIfOrphan` on the asset store after the
+  // workflow-store mutation lands. The cleanup walks the post-removal
+  // workflow nodes to confirm no other iterator still references the
+  // group; the group is dropped iff `isUntitled === true` AND the
+  // `linkedNodeIds` arg is empty.
   useEffect(() => {
     function handler(event: KeyboardEvent) {
       if (
@@ -474,7 +499,17 @@ function CanvasFlowInner() {
           return {
             selectedNodeIds: s.selectedNodeIds,
             selectedEdgeIds: s.selectedEdgeIds,
-            removeNode: s.removeNode,
+            removeNode: (id: string) => {
+              const node = s.nodes.find((n) => n.id === id);
+              const groupId =
+                node?.kind === "image-iterator"
+                  ? ((node.config as { groupId?: unknown })?.groupId ?? "")
+                  : "";
+              s.removeNode(id);
+              if (typeof groupId === "string" && groupId.length > 0) {
+                cleanupGroupIfOrphan(groupId);
+              }
+            },
             removeEdge: s.removeEdge,
           };
         })

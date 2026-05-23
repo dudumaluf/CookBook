@@ -490,6 +490,56 @@ describe("imageIteratorNodeSchema (Slice 5.6)", () => {
         screen.getByTestId("image-iterator-detach-button"),
       ).toBeInTheDocument();
     });
+
+    it("clicking 'Detach from group' creates a (copy) group and re-links the iterator", () => {
+      // Seed an image asset and a real (non-Untitled) source group.
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedImageAsset("a-2", "https://x/2.png", "Second");
+      seedGroup("g-source", "Photoshoot Paris", ["a-1", "a-2"]);
+
+      const updateConfig = vi.fn();
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({
+            groupId: "g-source",
+            cursor: 1,
+            selectionMode: "fixed",
+          })}
+          updateConfig={updateConfig}
+          selected={false}
+        />,
+      );
+      fireEvent.click(
+        screen.getByTestId("image-iterator-detach-button"),
+      );
+
+      // Two updateConfig calls: groupId rewrite + cursor reset.
+      const calls = updateConfig.mock.calls.map((c) => c[0]);
+      const groupIdCall = calls.find(
+        (c) => typeof c?.groupId === "string",
+      );
+      const cursorCall = calls.find((c) => c?.cursor === 0);
+      expect(groupIdCall).toBeDefined();
+      expect(cursorCall).toBeDefined();
+      const newGroupId = (groupIdCall as { groupId: string }).groupId;
+      // The new group exists in the asset store, named "<source> (copy)",
+      // referencing the SAME asset ids (no byte duplication).
+      const newGroup = useAssetStore.getState().getAsset(newGroupId);
+      expect(newGroup?.kind).toBe("asset-group");
+      if (newGroup?.kind === "asset-group") {
+        expect(newGroup.name).toBe("Photoshoot Paris (copy)");
+        expect(newGroup.assetIds).toEqual(["a-1", "a-2"]);
+        expect(newGroup.isUntitled).toBe(false);
+      }
+      // Source group survives unchanged.
+      const source = useAssetStore.getState().getAsset("g-source");
+      if (source?.kind === "asset-group") {
+        expect(source.name).toBe("Photoshoot Paris");
+        expect(source.assetIds).toEqual(["a-1", "a-2"]);
+      }
+    });
   });
 
   /* ─────────────────────────── hasOverrides ───────────────────────────── */
