@@ -15,8 +15,8 @@ This file is the **single starting point** for any new agent / chat session. If 
 ## Where we are right now
 
 - **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
-- **Last shipped slice**: **Slice 4 — Higgsfield + Soul ID + complete Soul Image Burst recipe** (sub-slices 4.1 → 4.5) + two new ADRs: **ADR-0029** (Higgsfield Cloud API route shape + `soul-id` `StandardizedOutput` variant + endpoint dispatch by Soul variant) and **ADR-0030** (engine fan-out — supersedes the strict-serial portion of ADR-0019). Snapshot: [`docs/STATE-AFTER-M0a-slice4.md`](./docs/STATE-AFTER-M0a-slice4.md). Tests green at 409 / 409.
-- **Next up**: **Slice 5 — Properties popover + queue thumbnails + save/load**. Node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets (the Asset repository abstraction lands here, swapping storage without touching `asset-store`'s public API). Per-recipe `maxConcurrent` config also fits this slice.
+- **Last shipped slice**: **Slice 5.5 — Iterator nodes with internal storage + Text Iterator + library multi-select + drop-onto-Iterator** (sub-slices 5.5a → 5.5c) — first concrete payoff of **ADR-0031** (the design lock-in we wrote in Slice 5.4: explicit iteration nodes, two-axis selection × execution model, Run-here, history). The iterator nodes now hold their items inside the node config (`assetIds[] / texts[] + cursor + selectionMode`) instead of multi-edge inputs; the library has Finder-style multi-select; multi-payload drops route through a pure dispatcher to spawn or append to an iterator. Snapshot: [`docs/STATE-AFTER-M0a-slice5-5.md`](./docs/STATE-AFTER-M0a-slice5-5.md). Tests green at 521 / 521. Workflow-store v7 → v8 migration handles existing graphs cleanly.
+- **Next up**: **Slice 5.6 — `Array`, `List`, `Number` nodes** (per ROADMAP backlog under "Slice 5.5+ — fallout from ADR-0031"). Three pure / reactive nodes with no engine changes: `Array` splits a string by a delimiter; `List` selects 1 from N (single or array input) with optional cursor input handle; `Number` emits a number using the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. After 5.6: **Slice 5.7** (Run-here button + per-node history) and **Slice 5.8** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
 
 ## Read these first (in order; ~10 min total)
 
@@ -36,7 +36,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ```bash
 npm install              # once
 npm run dev              # Next 16 + Turbopack on :3000
-npm test                 # Vitest, all 409 tests, ~5 s
+npm test                 # Vitest, all 521 tests, ~5 s
 npm run test:watch       # while iterating
 npx tsc --noEmit         # type check (no `npm run` wrapper for this one)
 npm run lint             # ESLint
@@ -83,14 +83,14 @@ Other rules:
 
 ## Next task (starting fresh)
 
-Open [`docs/STATE-AFTER-M0a-slice4.md`](./docs/STATE-AFTER-M0a-slice4.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5 — Properties popover + queue thumbnails + save/load**". Suggested first actions:
+Open [`docs/STATE-AFTER-M0a-slice5-5.md`](./docs/STATE-AFTER-M0a-slice5-5.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5.5+ — fallout from ADR-0031**". Suggested first actions:
 
-1. Plan sub-slices for Slice 5 the same way Slice 3 / Slice 4 were sliced: each sub-slice ships independently testable value (Properties popover; queue thumbnails; SQLite swap behind the existing Repository abstraction; per-recipe `maxConcurrent` config).
-2. Read [ADR-0005](./docs/DECISIONS.md) (local-first, cloud-ready architecture) — Slice 5 finally cashes the cheque it wrote: SQLite (Drizzle) + the filesystem-blob layer slot in behind the existing `useWorkflowStore` / `useAssetStore` interfaces. **Public API stays stable; the backing storage changes.**
-3. Decide which surface lands first: queue thumbnails (visual win, glues Slice 4's Export pipeline directly into the queue panel preview) or persistence (unblocks recipe-save which is M0d, but plumbing-heavy).
+1. Plan **Slice 5.6 — `Array`, `List`, `Number` nodes**. Three pure / reactive nodes with **zero engine changes** (so very small surface). `Array` splits a string by a configured delimiter (`{ splitOn: string }`). `List` is a 1-of-N selector with an optional `cursor` input handle (lets a Number node drive the selection remotely). `Number` emits a number with the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. Each node mirrors the existing schema patterns (`defineNode`, settings popover via `⋯`); body chrome can reuse `<IteratorCursor />` from Slice 5.5b.
+2. Read [ADR-0031](./docs/DECISIONS.md) (current — Slice 5.5+ ladder is in §5). The catalog table maps each scenario to a node graph; the per-iterator history work is parked at Slice 5.7. Don't over-design 5.6 — it's purely about adding three small leaf nodes.
+3. Decide whether `Array` should also accept a regex (vs literal-string) splitter on day one or wait for the assistant DSL to ask for it. Default lean: literal string only in 5.6, regex parked.
 4. Mirror the existing node + integration test rhythm: `tests/component/...` per UI surface, `tests/integration/...` per recipe-shaped flow, `scripts/smoke-*.ts` for any persistence migration sanity check.
 
-Confirm with the user before kicking off Slice 5 if any of the above is ambiguous (especially: do queue thumbnails land before or after the SQLite swap, and where the Properties popover anchors in relation to the existing settings popover).
+Confirm with the user before kicking off Slice 5.6 if any of the three nodes feels gold-plated for the use case at hand — the iteration story is intentionally being assembled in small pieces so each merge is reviewable in isolation.
 
 ## File layout cheat-sheet
 
