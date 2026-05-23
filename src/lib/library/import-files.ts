@@ -53,3 +53,35 @@ export async function importImageFiles(files: File[]): Promise<ImportResult> {
 
   return { created: ids.length, errors, ids };
 }
+
+/**
+ * Same as `importImageFiles` but also wraps the successful imports in a
+ * named `AssetGroup` (Slice 5.6, ADR-0032). Returns the group id along
+ * with the per-file result.
+ *
+ * If all files fail to import, the group is still NOT created (an
+ * empty group would be an immediate-cleanup target by the cleanup rule
+ * — pointless). The caller can detect this by `created === 0` and
+ * surface a toast instead of opening the library subview.
+ *
+ * `isUntitled` defaults to `false` because users hitting this path
+ * went through the "Import as group" dialog with an explicit name —
+ * it's a real group worth keeping. The `auto-Untitled` flow lives in
+ * Slice 5.6d's drop dispatcher (multi-id drag from the library to the
+ * canvas creates an Untitled group automatically).
+ */
+export async function importImageFilesAsGroup(
+  files: File[],
+  name: string,
+): Promise<ImportResult & { groupId: string | null }> {
+  const result = await importImageFiles(files);
+  if (result.created === 0) {
+    return { ...result, groupId: null };
+  }
+  const groupId = useAssetStore.getState().createGroup({
+    name: name.trim() || "Untitled",
+    assetIds: result.ids,
+    isUntitled: false,
+  });
+  return { ...result, groupId };
+}

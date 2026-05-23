@@ -24,6 +24,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ImportAsGroupDialog } from "@/components/library/import-as-group-dialog";
 import {
   fetchSoulIds,
   HiggsfieldCallError,
@@ -59,22 +60,35 @@ function UploadingBadge() {
 export function UploadAssetButton() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  /**
+   * The "Import as group?" dialog (Slice 5.6c). `null` = closed; an
+   * array means "user just selected these N files, ask them what to
+   * do". Single-file selections skip the dialog and import straight.
+   */
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
-    setIsUploading(true);
-    let result;
-    try {
-      result = await importImageFiles(Array.from(files));
-    } finally {
-      setIsUploading(false);
+    const list = Array.from(files);
+    if (list.length === 1) {
+      // Single-file: skip the dialog, import straight (today's behaviour).
+      setIsUploading(true);
+      let result;
+      try {
+        result = await importImageFiles(list);
+      } finally {
+        setIsUploading(false);
+      }
+      if (result.created > 0) {
+        toast.success(
+          `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
+        );
+      }
+      for (const err of result.errors) toast.error(err);
+      return;
     }
-    if (result.created > 0) {
-      toast.success(
-        `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
-      );
-    }
-    for (const err of result.errors) toast.error(err);
+    // Multi-file: ask the user via the dialog.
+    setPendingFiles(list);
   }
 
   return (
@@ -113,6 +127,10 @@ export function UploadAssetButton() {
           // Reset so re-selecting the same file fires another change.
           e.target.value = "";
         }}
+      />
+      <ImportAsGroupDialog
+        files={pendingFiles}
+        onClose={() => setPendingFiles(null)}
       />
     </>
   );

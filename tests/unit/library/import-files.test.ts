@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MAX_IMAGE_BYTES, importImageFiles } from "@/lib/library/import-files";
+import {
+  MAX_IMAGE_BYTES,
+  importImageFiles,
+  importImageFilesAsGroup,
+} from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import type { AssetGroupAsset } from "@/types/asset";
 
 // The store's createImageAssetFromFile would otherwise call the real
 // Supabase client; mock the uploader so this test stays unit-scoped.
@@ -61,5 +66,69 @@ describe("importImageFiles", () => {
     ]);
     expect(result.created).toBe(1);
     expect(result.errors).toEqual(["bad.pdf: not an image"]);
+  });
+});
+
+describe("importImageFilesAsGroup (Slice 5.6c)", () => {
+  it("imports each image AND wraps the successes in a named group", async () => {
+    const result = await importImageFilesAsGroup(
+      [makeImage("a.png", 10), makeImage("b.png", 20)],
+      "Photoshoot Paris",
+    );
+    expect(result.created).toBe(2);
+    expect(result.errors).toEqual([]);
+    expect(result.groupId).not.toBeNull();
+    const group = useAssetStore.getState().getAsset(result.groupId!);
+    expect(group?.kind).toBe("asset-group");
+    if (group?.kind === "asset-group") {
+      expect(group.name).toBe("Photoshoot Paris");
+      expect(group.assetIds).toEqual(result.ids);
+      // Explicit-name path → not Untitled.
+      expect(group.isUntitled).toBe(false);
+    }
+  });
+
+  it("partial success — group only includes the imported (successful) ids", async () => {
+    const result = await importImageFilesAsGroup(
+      [
+        makeImage("ok.png", 10),
+        new File(["x"], "bad.pdf", { type: "application/pdf" }),
+      ],
+      "Mixed batch",
+    );
+    expect(result.created).toBe(1);
+    expect(result.errors.length).toBe(1);
+    expect(result.groupId).not.toBeNull();
+    const group = useAssetStore
+      .getState()
+      .getAsset(result.groupId!) as AssetGroupAsset;
+    expect(group.assetIds).toEqual(result.ids);
+    expect(group.assetIds).toHaveLength(1);
+  });
+
+  it("returns groupId === null and creates NO group when all files fail", async () => {
+    const result = await importImageFilesAsGroup(
+      [new File(["x"], "bad.pdf", { type: "application/pdf" })],
+      "Doomed",
+    );
+    expect(result.created).toBe(0);
+    expect(result.groupId).toBeNull();
+    // No group materialised in the asset store.
+    const groups = useAssetStore
+      .getState()
+      .assets.filter((a) => a.kind === "asset-group");
+    expect(groups).toHaveLength(0);
+  });
+
+  it("falls back to 'Untitled' when name is empty / whitespace", async () => {
+    const result = await importImageFilesAsGroup(
+      [makeImage("a.png", 10)],
+      "   ",
+    );
+    expect(result.groupId).not.toBeNull();
+    const group = useAssetStore
+      .getState()
+      .getAsset(result.groupId!) as AssetGroupAsset;
+    expect(group.name).toBe("Untitled");
   });
 });

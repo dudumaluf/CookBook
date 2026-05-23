@@ -15,6 +15,7 @@ import type {
 } from "@/types/asset";
 
 import { AssetCard } from "./asset-card";
+import { ImportAsGroupDialog } from "./import-as-group-dialog";
 
 /**
  * LibraryContent
@@ -39,6 +40,8 @@ export function LibraryContent() {
   const assets = useAssetStore((s) => s.assets);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  /** "Import as group?" dialog state — see Slice 5.6c. */
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
 
   // Re-resolve the group on every render so renames / membership
   // changes propagate while inside the subview. If the active group
@@ -63,16 +66,21 @@ export function LibraryContent() {
   async function handleDrop(event: React.DragEvent) {
     event.preventDefault();
     setIsDropTarget(false);
-    if (event.dataTransfer.files.length === 0) return;
-    const result = await importImageFiles(
-      Array.from(event.dataTransfer.files),
-    );
-    if (result.created > 0) {
-      toast.success(
-        `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
-      );
+    const list = Array.from(event.dataTransfer.files);
+    if (list.length === 0) return;
+    if (list.length === 1) {
+      // Single-file drop: import straight, no dialog.
+      const result = await importImageFiles(list);
+      if (result.created > 0) {
+        toast.success(
+          `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
+        );
+      }
+      for (const err of result.errors) toast.error(err);
+      return;
     }
-    for (const err of result.errors) toast.error(err);
+    // 2+ files: ask the user via the dialog.
+    setPendingFiles(list);
   }
 
   return (
@@ -109,6 +117,10 @@ export function LibraryContent() {
           onAssetOpen={handleAssetOpen}
         />
       )}
+      <ImportAsGroupDialog
+        files={pendingFiles}
+        onClose={() => setPendingFiles(null)}
+      />
     </div>
   );
 }
