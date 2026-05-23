@@ -122,6 +122,36 @@ export interface AssetState {
   listByKind: <K extends AssetKind>(
     kind: K,
   ) => Extract<Asset, { kind: K }>[];
+
+  /* ─────────────────────────── Selection (Slice 5.5c) ─────────────────── */
+
+  /**
+   * Library multi-select state. Transient (not persisted via `partialize`)
+   * — selection is a session-level UI thing, not part of the durable
+   * library. Drives the highlighted ring on AssetCard + the multi-payload
+   * the drag handler writes to `dataTransfer`.
+   */
+  selectedAssetIds: string[];
+  /**
+   * Anchor for shift-click range selection. Internal — set on every
+   * `selectAsset` / `toggleAssetSelection` so the next shift-click knows
+   * where to start the range from.
+   */
+  selectionAnchorId: string | null;
+  /** Replace the selection with just this id (plain click). */
+  selectAsset: (id: string) => void;
+  /** Toggle this id's membership in the selection (cmd / ctrl-click). */
+  toggleAssetSelection: (id: string) => void;
+  /**
+   * Range-select from the current anchor to this id (shift-click).
+   * If there's no anchor yet, behaves like `selectAsset`.
+   * Range walks `state.assets` insertion order — matches the visual
+   * layout the user sees.
+   */
+  selectAssetRange: (id: string) => void;
+  /** Clear the selection (e.g. on click outside the library). */
+  clearAssetSelection: () => void;
+
   clear: () => void;
 }
 
@@ -272,7 +302,60 @@ export const useAssetStore = create<AssetState>()(
           { kind: K }
         >[],
 
-      clear: () => set({ assets: [] }),
+      /* ────────────────────── Selection (Slice 5.5c) ─────────────────── */
+
+      selectedAssetIds: [],
+      selectionAnchorId: null,
+      selectAsset: (id) => {
+        set({ selectedAssetIds: [id], selectionAnchorId: id });
+      },
+      toggleAssetSelection: (id) => {
+        const current = get().selectedAssetIds;
+        const isAlreadyIn = current.includes(id);
+        set({
+          selectedAssetIds: isAlreadyIn
+            ? current.filter((x) => x !== id)
+            : [...current, id],
+          // Even when toggling-OFF, remember the id as the next anchor
+          // so shift-click after a cmd-click feels right.
+          selectionAnchorId: id,
+        });
+      },
+      selectAssetRange: (id) => {
+        const anchor = get().selectionAnchorId;
+        if (!anchor) {
+          // No anchor → behave like a plain click.
+          set({ selectedAssetIds: [id], selectionAnchorId: id });
+          return;
+        }
+        // Walk insertion order and pick everything between anchor and id
+        // (inclusive). Order is whatever index they sit at in `assets`.
+        const ids = get().assets.map((a) => a.id);
+        const a = ids.indexOf(anchor);
+        const b = ids.indexOf(id);
+        if (a < 0 || b < 0) {
+          // Edge case: the anchor or target was removed since last click.
+          set({ selectedAssetIds: [id], selectionAnchorId: id });
+          return;
+        }
+        const start = Math.min(a, b);
+        const end = Math.max(a, b);
+        set({
+          selectedAssetIds: ids.slice(start, end + 1),
+          // Anchor stays where it is — the user can shift-click again to
+          // grow / shrink the range from the same starting point. (Matches
+          // Finder + Photoshop layer-list behaviour.)
+        });
+      },
+      clearAssetSelection: () =>
+        set({ selectedAssetIds: [], selectionAnchorId: null }),
+
+      clear: () =>
+        set({
+          assets: [],
+          selectedAssetIds: [],
+          selectionAnchorId: null,
+        }),
     }),
     {
       name: "cookbook.assets",

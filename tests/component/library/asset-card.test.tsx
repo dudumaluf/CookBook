@@ -66,7 +66,7 @@ describe("<AssetCard />", () => {
     );
   });
 
-  it("setData on drag start uses our custom MIME and a valid payload", () => {
+  it("setData on drag start uses our custom MIME and the new multi-id payload shape", () => {
     useAssetStore.setState({ assets: [urlAsset] });
     render(<AssetCard asset={urlAsset} />);
     const card = screen.getByTitle("URL Cat");
@@ -77,9 +77,118 @@ describe("<AssetCard />", () => {
     expect(setData).toHaveBeenCalledTimes(1);
     const [mime, payload] = setData.mock.calls[0]!;
     expect(mime).toBe(ASSET_DRAG_MIME);
+    // Slice 5.5c: payload is { assetIds: [id], kind } even for a 1-asset
+    // drag — keeps the parser shape uniform.
     expect(parseAssetDrag(payload as string)).toEqual({
-      assetId: urlAsset.id,
+      assetIds: [urlAsset.id],
       kind: "image",
+    });
+  });
+
+  /* ──────────────────── Slice 5.5c: multi-select + drag ──────────────── */
+
+  describe("multi-select", () => {
+    const second: ImageAsset = {
+      ...urlAsset,
+      id: "asset_second",
+      name: "Second Cat",
+      source: { type: "url", url: "https://example.com/cat2.jpg" },
+    };
+    const third: ImageAsset = {
+      ...urlAsset,
+      id: "asset_third",
+      name: "Third Cat",
+      source: { type: "url", url: "https://example.com/cat3.jpg" },
+    };
+
+    it("plain click sets the selection to just this card", () => {
+      useAssetStore.setState({ assets: [urlAsset, second] });
+      render(<AssetCard asset={urlAsset} />);
+      fireEvent.click(screen.getByTitle("URL Cat"));
+      expect(useAssetStore.getState().selectedAssetIds).toEqual([urlAsset.id]);
+    });
+
+    it("cmd/ctrl-click toggles this card's membership in the selection", () => {
+      useAssetStore.setState({ assets: [urlAsset, second] });
+      render(<AssetCard asset={urlAsset} />);
+      const card = screen.getByTitle("URL Cat");
+
+      // First cmd-click adds.
+      fireEvent.click(card, { metaKey: true });
+      expect(useAssetStore.getState().selectedAssetIds).toEqual([urlAsset.id]);
+
+      // Second cmd-click removes.
+      fireEvent.click(card, { metaKey: true });
+      expect(useAssetStore.getState().selectedAssetIds).toEqual([]);
+    });
+
+    it("shift-click range-selects from the anchor through this card", () => {
+      useAssetStore.setState({ assets: [urlAsset, second, third] });
+      // Render the third one alone — but click anchor is set on the
+      // *first* via a plain click into the store's API directly (we
+      // don't need the AssetCard for that since selectAsset is the
+      // store action).
+      useAssetStore.getState().selectAsset(urlAsset.id);
+      render(<AssetCard asset={third} />);
+      fireEvent.click(screen.getByTitle("Third Cat"), { shiftKey: true });
+      // Range from urlAsset (idx 0) to third (idx 2) inclusive.
+      expect(useAssetStore.getState().selectedAssetIds).toEqual([
+        urlAsset.id,
+        second.id,
+        third.id,
+      ]);
+    });
+
+    it("dragging a card that's part of the selection ships ALL selected ids in the payload", () => {
+      useAssetStore.setState({ assets: [urlAsset, second, third] });
+      // Pre-select two of three.
+      useAssetStore.setState({
+        selectedAssetIds: [urlAsset.id, third.id],
+        selectionAnchorId: third.id,
+      });
+      render(<AssetCard asset={urlAsset} />);
+      const setData = vi.fn();
+      fireEvent.dragStart(screen.getByTitle("URL Cat"), {
+        dataTransfer: { setData, effectAllowed: "" },
+      });
+      const [, payload] = setData.mock.calls[0]!;
+      expect(parseAssetDrag(payload as string)).toEqual({
+        assetIds: [urlAsset.id, third.id],
+        kind: "image",
+      });
+    });
+
+    it("dragging an UNSELECTED card resets selection to it and ships only its id", () => {
+      // Matches Finder: dragging an unselected file first selects it.
+      useAssetStore.setState({ assets: [urlAsset, second] });
+      useAssetStore.setState({
+        selectedAssetIds: [second.id],
+        selectionAnchorId: second.id,
+      });
+      render(<AssetCard asset={urlAsset} />);
+      const setData = vi.fn();
+      fireEvent.dragStart(screen.getByTitle("URL Cat"), {
+        dataTransfer: { setData, effectAllowed: "" },
+      });
+      const [, payload] = setData.mock.calls[0]!;
+      expect(parseAssetDrag(payload as string)).toEqual({
+        assetIds: [urlAsset.id],
+        kind: "image",
+      });
+      // Selection state was reset to just the dragged card.
+      expect(useAssetStore.getState().selectedAssetIds).toEqual([urlAsset.id]);
+    });
+
+    it("renders a visible 'selected' state (via data-selected + accent border)", () => {
+      useAssetStore.setState({ assets: [urlAsset] });
+      useAssetStore.setState({
+        selectedAssetIds: [urlAsset.id],
+        selectionAnchorId: urlAsset.id,
+      });
+      render(<AssetCard asset={urlAsset} />);
+      const card = screen.getByTestId("asset-card");
+      expect(card.getAttribute("data-selected")).toBe("true");
+      expect(card.className).toMatch(/border-accent/);
     });
   });
 

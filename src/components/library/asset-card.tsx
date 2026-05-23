@@ -13,6 +13,7 @@ import {
   serializeAssetDrag,
 } from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { cn } from "@/lib/utils";
 import type { Asset, ImageAsset, SoulIdAsset } from "@/types/asset";
 
 interface AssetCardProps {
@@ -27,11 +28,38 @@ interface AssetCardProps {
  * other apps' URLs).
  *
  * Visual: square thumbnail + truncated name; hovering reveals a Delete chip.
- * Grid density and multi-select land in a later pass — design accommodates
- * by keeping the card self-contained.
+ *
+ * ## Multi-select (Slice 5.5c)
+ *
+ * Cards are click-aware:
+ *  - **Plain click** → set selection to just this card.
+ *  - **Cmd/Ctrl-click** → toggle this card's membership in the selection.
+ *  - **Shift-click** → range-select from the last anchor to this card
+ *    (matches Finder / Photoshop / Lightroom).
+ *
+ * Dragging a card writes a multi-payload (`{ assetIds[], kind }`) into
+ * `dataTransfer`:
+ *  - If the dragged card is **in the current selection**, the payload
+ *    carries every selected id (so dragging any one card moves the
+ *    whole selection).
+ *  - Otherwise the payload carries just this card's id (and the click
+ *    that started the drag also resets the selection to just this card —
+ *    matches Finder).
+ *
+ * The multi-asset → canvas drop logic lives in `canvas-flow.tsx`'s
+ * `onDrop`: a multi-payload landing on empty canvas spawns a new
+ * `image-iterator` populated with all the ids; landing on an existing
+ * iterator's body appends to its `assetIds`.
  */
 export function AssetCard({ asset }: AssetCardProps) {
   const removeAsset = useAssetStore((s) => s.removeAsset);
+  const selectedAssetIds = useAssetStore((s) => s.selectedAssetIds);
+  const selectAsset = useAssetStore((s) => s.selectAsset);
+  const toggleAssetSelection = useAssetStore((s) => s.toggleAssetSelection);
+  const selectAssetRange = useAssetStore((s) => s.selectAssetRange);
+
+  const isSelected = selectedAssetIds.includes(asset.id);
+
   // `source.url` is canonical for both remote-uploaded and free-URL assets —
   // no async resolver needed since we ditched the local IndexedDB blob layer.
   // For soul-id assets the thumbnail is Higgsfield's cover image.
@@ -43,17 +71,43 @@ export function AssetCard({ asset }: AssetCardProps) {
         : undefined;
   const FallbackIcon = asset.kind === "soul-id" ? User : ImageIcon;
 
+  function handleClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (event.shiftKey) {
+      selectAssetRange(asset.id);
+    } else if (event.metaKey || event.ctrlKey) {
+      toggleAssetSelection(asset.id);
+    } else {
+      selectAsset(asset.id);
+    }
+  }
+
+  function handleDragStart(event: React.DragEvent<HTMLDivElement>) {
+    // If the dragged card is part of the current selection, drag the
+    // whole selection. Otherwise drag just this card AND reset the
+    // selection to it (matches Finder: dragging an unselected file
+    // first selects it, then drags it).
+    const dragIds = isSelected ? [...selectedAssetIds] : [asset.id];
+    if (!isSelected) selectAsset(asset.id);
+    event.dataTransfer.setData(
+      ASSET_DRAG_MIME,
+      serializeAssetDrag({ assetIds: dragIds, kind: asset.kind }),
+    );
+    event.dataTransfer.effectAllowed = "copy";
+  }
+
   return (
     <div
       draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(
-          ASSET_DRAG_MIME,
-          serializeAssetDrag({ assetId: asset.id, kind: asset.kind }),
-        );
-        e.dataTransfer.effectAllowed = "copy";
-      }}
-      className="group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border border-border/60 bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing"
+      onDragStart={handleDragStart}
+      onClick={handleClick}
+      data-testid="asset-card"
+      data-selected={isSelected ? "true" : "false"}
+      className={cn(
+        "group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing",
+        isSelected
+          ? "border-accent ring-1 ring-accent/40"
+          : "border-border/60",
+      )}
       title={asset.name}
     >
       {thumbUrl ? (
@@ -82,7 +136,10 @@ export function AssetCard({ asset }: AssetCardProps) {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => removeAsset(asset.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              removeAsset(asset.id);
+            }}
             aria-label={`Delete asset ${asset.name}`}
             className="absolute right-1 top-1 h-5 w-5 text-muted-foreground opacity-0 transition-opacity group-hover/asset:opacity-100"
           >

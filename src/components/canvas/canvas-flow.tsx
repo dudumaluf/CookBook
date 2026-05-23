@@ -30,6 +30,7 @@ import {
   parseAssetDrag,
 } from "@/lib/library/asset-drag";
 import { assetToNode } from "@/lib/library/asset-to-node";
+import { dispatchAssetDrop } from "@/lib/library/dispatch-asset-drop";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 import { BaseNode } from "@/components/nodes/base-node";
@@ -308,7 +309,6 @@ function CanvasFlowInner() {
   const removeNode = useWorkflowStore((s) => s.removeNode);
   const removeEdge = useWorkflowStore((s) => s.removeEdge);
   const addEdge = useWorkflowStore((s) => s.addEdge);
-  const addNode = useWorkflowStore((s) => s.addNode);
   const resizeNode = useWorkflowStore((s) => s.resizeNode);
   const setSelectedNodeIds = useWorkflowStore((s) => s.setSelectedNodeIds);
   const setSelectedEdgeIds = useWorkflowStore((s) => s.setSelectedEdgeIds);
@@ -537,17 +537,98 @@ function CanvasFlowInner() {
       const payload = parseAssetDrag(raw);
       if (!payload) return;
 
-      const asset = useAssetStore.getState().getAsset(payload.assetId);
-      if (!asset) return;
+      // Hit-test: did the drop land on an existing React Flow node?
+      // RF renders every node as `.react-flow__node[data-id="…"]` so a
+      // `closest()` walk from the actual DOM target picks the deepest
+      // node ancestor (handles drops on the body / header / handles).
+      let dropNodeId: string | undefined;
+      let dropNodeKind: string | undefined;
+      const targetEl = event.target as HTMLElement | null;
+      const nodeEl = targetEl?.closest?.(
+        ".react-flow__node",
+      ) as HTMLElement | null;
+      if (nodeEl) {
+        const id = nodeEl.getAttribute("data-id") ?? undefined;
+        if (id) {
+          dropNodeId = id;
+          dropNodeKind = useWorkflowStore
+            .getState()
+            .nodes.find((n) => n.id === id)?.kind;
+        }
+      }
+
+      const actions = dispatchAssetDrop({
+        payload,
+        target:
+          dropNodeId && dropNodeKind
+            ? { nodeId: dropNodeId, nodeKind: dropNodeKind }
+            : undefined,
+      });
 
       const position = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
-      const { kind, initialConfig } = assetToNode(asset);
-      addNode(kind, position, initialConfig);
+      const ws = useWorkflowStore.getState();
+      const assetStore = useAssetStore.getState();
+
+      // Each action is small and idempotent; we run them in order.
+      // Multi-soul-id drops produce N spawn-node actions; we offset
+      // each subsequent spawn by a small delta so they don't stack
+      // exactly on top of each other.
+      let spawnIndex = 0;
+      for (const action of actions) {
+        if (action.type === "spawn-node") {
+          // For image / soul-id spawns coming from a 1-asset payload we
+          // round-trip through assetToNode so the node lands with the
+          // canonical { url } / { customReferenceId, … } config the
+          // legacy spawn produced. For image-iterator spawns we trust
+          // the dispatcher's initialConfig — it already carries the
+          // multi-asset shape.
+          let initialConfig = action.initialConfig;
+          if (
+            action.kind === "image" &&
+            typeof initialConfig.assetId === "string"
+          ) {
+            const asset = assetStore.getAsset(initialConfig.assetId);
+            if (asset) initialConfig = assetToNode(asset).initialConfig;
+          } else if (
+            action.kind === "soul-id" &&
+            typeof initialConfig.assetId === "string"
+          ) {
+            const asset = assetStore.getAsset(initialConfig.assetId);
+            if (asset) initialConfig = assetToNode(asset).initialConfig;
+          }
+          ws.addNode(
+            action.kind,
+            {
+              x: position.x + spawnIndex * 24,
+              y: position.y + spawnIndex * 24,
+            },
+            initialConfig,
+          );
+          spawnIndex++;
+        } else if (action.type === "append-to-iterator") {
+          // Append into an existing iterator's `assetIds` (de-duped so
+          // dropping the same asset twice doesn't bloat the bag).
+          const iterator = ws.nodes.find((n) => n.id === action.iteratorId);
+          if (!iterator) continue;
+          const cfg = (iterator.config ?? {}) as { assetIds?: string[] };
+          const existing = Array.isArray(cfg.assetIds) ? cfg.assetIds : [];
+          const merged = [...existing];
+          for (const id of action.assetIds) {
+            if (!merged.includes(id)) merged.push(id);
+          }
+          ws.updateNodeConfig(action.iteratorId, { assetIds: merged });
+        }
+        // "noop" → fall through; nothing to do.
+      }
+
+      // Drag landed → user committed; clear the library selection so
+      // the next click starts fresh (matches Finder).
+      useAssetStore.getState().clearAssetSelection();
     },
-    [screenToFlowPosition, addNode],
+    [screenToFlowPosition],
   );
 
   return (
