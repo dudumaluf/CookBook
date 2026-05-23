@@ -479,12 +479,20 @@ describe("workflow-store", () => {
   });
 
   /* ──────────────────────────────────────────────────────────────────── */
-  /* v8 migrate — Image Iterator goes from multi-edge to internal storage */
-  /* (ADR-0031, Slice 5.5).                                               */
+  /* v9 migrate — Image Iterator's internal assetIds become a linked       */
+  /* AssetGroup in the asset-store (ADR-0032, Slice 5.6).                  */
   /* ──────────────────────────────────────────────────────────────────── */
 
-  describe("v8 migrate (Image Iterator internal storage)", () => {
-    it("collapses 3 wired Image nodes into the iterator's internal `assetIds`, and drops the now-orphan edges", () => {
+  describe("v9 migrate (Image Iterator linked to AssetGroup)", () => {
+    // The migration calls useAssetStore.getState().createGroup, so we
+    // need the asset-store reset between tests for clean assertions.
+    beforeEach(async () => {
+      const { useAssetStore } = await import("@/lib/stores/asset-store");
+      useAssetStore.getState().clear();
+    });
+
+    it("collapses 3 wired Image nodes into a NEW Untitled AssetGroup and links the iterator", async () => {
+      const { useAssetStore } = await import("@/lib/stores/asset-store");
       const migrated = useWorkflowStore.persist.getOptions().migrate?.(
         {
           nodes: [
@@ -520,7 +528,6 @@ describe("workflow-store", () => {
             },
           ],
           edges: [
-            // 3 image → iterator wires (these get dropped post-migration).
             {
               id: "e1",
               source: "img-1",
@@ -542,7 +549,7 @@ describe("workflow-store", () => {
               target: "iter-1",
               targetHandle: "images",
             },
-            // iterator → gen wire (stays — this isn't an `images`-handle edge).
+            // iterator → gen wire (stays).
             {
               id: "e4",
               source: "iter-1",
@@ -559,22 +566,32 @@ describe("workflow-store", () => {
       };
 
       const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
-      expect(iter.config).toEqual({
-        assetIds: ["a-1", "a-2", "a-3"],
-        cursor: 0,
-        selectionMode: "all", // matches pre-5.5 fan-out-everything behaviour
-      });
+      const cfg = iter.config as {
+        groupId: string;
+        cursor: number;
+        selectionMode: string;
+      };
+      expect(typeof cfg.groupId).toBe("string");
+      expect(cfg.groupId.length).toBeGreaterThan(0);
+      expect(cfg.cursor).toBe(0);
+      expect(cfg.selectionMode).toBe("all");
+
+      // The materialised group landed in the asset store, isUntitled, with
+      // exactly the resolved asset ids in order.
+      const group = useAssetStore.getState().getAsset(cfg.groupId);
+      expect(group?.kind).toBe("asset-group");
+      if (group?.kind === "asset-group") {
+        expect(group.assetIds).toEqual(["a-1", "a-2", "a-3"]);
+        expect(group.isUntitled).toBe(true);
+      }
 
       // Orphan edges dropped, downstream edge preserved.
       const remainingIds = migrated.edges.map((e) => e.id).sort();
       expect(remainingIds).toEqual(["e4"]);
     });
 
-    it("ignores upstream edges from non-image kinds (no assetId to migrate)", () => {
-      // A Text node wired into the iterator's `images` handle (defensive
-      // — wouldn't have type-checked at edge creation, but legacy
-      // payloads might still carry it). The migration drops the edge
-      // and the iterator just ends up with an empty `assetIds`.
+    it("ignores upstream edges from non-image kinds (iterator gets an empty groupId, no group materialised)", async () => {
+      const { useAssetStore } = await import("@/lib/stores/asset-store");
       const migrated = useWorkflowStore.persist.getOptions().migrate?.(
         {
           nodes: [
@@ -608,16 +625,44 @@ describe("workflow-store", () => {
       };
 
       const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
-      expect(iter.config).toEqual({
-        assetIds: [],
-        cursor: 0,
-        selectionMode: "all",
-      });
-      // Stale edge still gets pruned even though there's nothing to import.
+      // Empty groupId — no assetIds were resolvable so the migration
+      // didn't bother creating an empty group.
+      expect((iter.config as { groupId: string }).groupId).toBe("");
       expect(migrated.edges).toEqual([]);
+      expect(useAssetStore.getState().assets).toEqual([]);
     });
 
-    it("is idempotent on a v8 payload — already-clean iterators pass through", () => {
+    it("is idempotent on a v9 payload — iterators with existing groupId pass through unchanged", () => {
+      const v9Payload = {
+        nodes: [
+          {
+            id: "iter-1",
+            kind: "image-iterator",
+            position: { x: 0, y: 0 },
+            config: {
+              groupId: "g-existing",
+              cursor: 1,
+              selectionMode: "fixed",
+            },
+          },
+        ],
+        edges: [],
+      };
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        v9Payload,
+        9,
+      ) as {
+        nodes: { config: Record<string, unknown> }[];
+      };
+      expect(migrated.nodes[0]?.config).toEqual({
+        groupId: "g-existing",
+        cursor: 1,
+        selectionMode: "fixed",
+      });
+    });
+
+    it("converts a v8 payload (assetIds in config) by materialising a group", async () => {
+      const { useAssetStore } = await import("@/lib/stores/asset-store");
       const v8Payload = {
         nodes: [
           {
@@ -635,61 +680,25 @@ describe("workflow-store", () => {
       };
       const migrated = useWorkflowStore.persist.getOptions().migrate?.(
         v8Payload,
-        7,
+        8,
       ) as {
         nodes: { config: Record<string, unknown> }[];
       };
-      expect(migrated.nodes[0]?.config).toEqual({
-        assetIds: ["a-1", "a-2"],
-        cursor: 1,
-        selectionMode: "fixed",
-      });
-    });
-
-    it("drops legacy `images`-handle edges even when the iterator already has assetIds (hand-edited payloads)", () => {
-      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
-        {
-          nodes: [
-            {
-              id: "img-1",
-              kind: "image",
-              position: { x: 0, y: 0 },
-              config: { url: "https://x/1.png", assetId: "a-1" },
-            },
-            {
-              id: "iter-1",
-              kind: "image-iterator",
-              position: { x: 200, y: 0 },
-              config: {
-                // already populated — don't double-import from edges.
-                assetIds: ["a-7"],
-                cursor: 0,
-                selectionMode: "all",
-              },
-            },
-          ],
-          edges: [
-            {
-              id: "e1",
-              source: "img-1",
-              sourceHandle: "out",
-              target: "iter-1",
-              targetHandle: "images",
-            },
-          ],
-        },
-        7,
-      ) as {
-        nodes: { id: string; config: Record<string, unknown> }[];
-        edges: { id: string }[];
+      const cfg = migrated.nodes[0]?.config as {
+        groupId: string;
+        cursor: number;
+        selectionMode: string;
       };
-      // assetIds preserved verbatim (no double import from `e1`).
-      const iter = migrated.nodes.find((n) => n.id === "iter-1")!;
-      expect((iter.config as { assetIds: string[] }).assetIds).toEqual([
-        "a-7",
-      ]);
-      // Stale edge still gets dropped so persisted JSON stays clean.
-      expect(migrated.edges).toEqual([]);
+      expect(cfg.cursor).toBe(1);
+      expect(cfg.selectionMode).toBe("fixed");
+      expect(typeof cfg.groupId).toBe("string");
+      expect(cfg.groupId.length).toBeGreaterThan(0);
+      const group = useAssetStore.getState().getAsset(cfg.groupId);
+      expect(group?.kind).toBe("asset-group");
+      if (group?.kind === "asset-group") {
+        expect(group.assetIds).toEqual(["a-1", "a-2"]);
+        expect(group.isUntitled).toBe(true);
+      }
     });
 
     it("sanitises a malformed text-iterator config (defensive against hand-edited payloads)", () => {

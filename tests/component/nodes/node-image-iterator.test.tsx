@@ -7,8 +7,16 @@ import {
 } from "@/components/nodes/node-image-iterator";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
-import type { ImageAsset } from "@/types/asset";
+import type { AssetGroupAsset, ImageAsset } from "@/types/asset";
 import type { StandardizedOutput } from "@/types/node";
+
+vi.mock("@/lib/library/upload-asset", () => ({
+  uploadImageAsset: vi.fn(),
+  deleteAssetObject: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Helpers                                                                    */
@@ -29,11 +37,32 @@ function seedImageAsset(id: string, url: string, name: string): ImageAsset {
   return asset;
 }
 
+function seedGroup(
+  id: string,
+  name: string,
+  assetIds: string[],
+  isUntitled = false,
+): AssetGroupAsset {
+  const group: AssetGroupAsset = {
+    id,
+    name,
+    tags: [],
+    scope: "project",
+    createdAt: 0,
+    updatedAt: 0,
+    kind: "asset-group",
+    assetIds,
+    isUntitled,
+  };
+  useAssetStore.setState((s) => ({ ...s, assets: [...s.assets, group] }));
+  return group;
+}
+
 function makeConfig(
   partial: Partial<ImageIteratorNodeConfig> = {},
 ): ImageIteratorNodeConfig {
   return {
-    assetIds: [],
+    groupId: "",
     cursor: 0,
     selectionMode: "all",
     ...partial,
@@ -41,7 +70,6 @@ function makeConfig(
 }
 
 beforeEach(() => {
-  // Clean both stores so leftover state from one test doesn't bleed.
   useAssetStore.setState((s) => ({ ...s, assets: [] }));
   useWorkflowStore.setState({ nodes: [], edges: [] });
 });
@@ -52,20 +80,18 @@ afterEach(() => {
 });
 
 /* ────────────────────────────────────────────────────────────────────────── */
-/* Schema shape (Slice 5.5: internal storage replaces multi-edge `images`)    */
+/* Schema shape (Slice 5.6: groupId replaces assetIds)                         */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-describe("imageIteratorNodeSchema (Slice 5.5)", () => {
-  it("declares the new schema shape — no inputs (storage moved to config)", () => {
+describe("imageIteratorNodeSchema (Slice 5.6)", () => {
+  it("declares the new schema shape — groupId replaces assetIds", () => {
     expect(imageIteratorNodeSchema.kind).toBe("image-iterator");
     expect(imageIteratorNodeSchema.category).toBe("iterator");
     expect(imageIteratorNodeSchema.reactive).toBe(true);
     // The fan-out flag stays on so the engine despatches one downstream
-    // run per item the iterator emits (degenerate-but-correct for
-    // single-item modes like `fixed` / `increment`).
+    // run per item the iterator emits.
     expect(imageIteratorNodeSchema.iterator).toBe(true);
-    // Storage moved to config → no input handles. This is the
-    // load-bearing change of Slice 5.5.
+    // Storage is the linked AssetGroup; iterator has no input handles.
     expect(imageIteratorNodeSchema.inputs).toEqual([]);
     expect(imageIteratorNodeSchema.outputs[0]).toEqual({
       id: "out",
@@ -74,32 +100,26 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
     });
   });
 
-  it("default config is the empty bag with `selectionMode: 'all'` (matches pre-5.5 fan-out behaviour)", () => {
+  it("default config is the empty-link with selectionMode 'all'", () => {
     expect(imageIteratorNodeSchema.defaultConfig).toEqual({
-      assetIds: [],
+      groupId: "",
       cursor: 0,
       selectionMode: "all",
     });
   });
 
-  it("declares horizontal-only resize (Slice 5.5a body is still single-row)", () => {
-    expect(imageIteratorNodeSchema.size?.resizable).toBe("horizontal");
-  });
-
   /* ───────────────────────── execute() — selection modes ─────────────── */
 
   describe("execute()", () => {
-    it("resolves assetIds via the asset store and emits image refs", async () => {
+    it("resolves group → assetIds → image refs and emits all in 'all' mode", async () => {
       seedImageAsset("a-1", "https://x/1.png", "First");
       seedImageAsset("a-2", "https://x/2.png", "Second");
       seedImageAsset("a-3", "https://x/3.png", "Third");
+      seedGroup("g-1", "My set", ["a-1", "a-2", "a-3"]);
 
       const result = await imageIteratorNodeSchema.execute!({
         nodeId: "iter-1",
-        config: makeConfig({
-          assetIds: ["a-1", "a-2", "a-3"],
-          selectionMode: "all",
-        }),
+        config: makeConfig({ groupId: "g-1", selectionMode: "all" }),
         inputs: {},
         signal: new AbortController().signal,
       });
@@ -116,21 +136,39 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
       });
     });
 
-    it("drops asset ids that don't resolve to an image asset (stale references)", async () => {
+    it("returns an empty array when groupId is empty (placeholder iterator)", async () => {
+      const result = await imageIteratorNodeSchema.execute!({
+        nodeId: "iter-1",
+        config: makeConfig({ groupId: "" }),
+        inputs: {},
+        signal: new AbortController().signal,
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("returns an empty array when the linked group was deleted", async () => {
+      // Iterator points to a group that no longer exists.
+      const result = await imageIteratorNodeSchema.execute!({
+        nodeId: "iter-1",
+        config: makeConfig({ groupId: "g-deleted" }),
+        inputs: {},
+        signal: new AbortController().signal,
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("drops asset ids that don't resolve to an image (stale references)", async () => {
       seedImageAsset("a-1", "https://x/1.png", "First");
-      // a-2 deliberately not seeded — simulates user deleting the asset.
+      // a-2 deliberately not seeded.
+      seedGroup("g-1", "My set", ["a-1", "a-missing", "a-2"]);
 
       const result = await imageIteratorNodeSchema.execute!({
         nodeId: "iter-1",
-        config: makeConfig({
-          assetIds: ["a-1", "a-missing", "a-2"],
-          selectionMode: "all",
-        }),
+        config: makeConfig({ groupId: "g-1", selectionMode: "all" }),
         inputs: {},
         signal: new AbortController().signal,
       });
       const arr = result as StandardizedOutput[];
-      // Only `a-1` resolves; the others vanish.
       expect(arr).toHaveLength(1);
       expect(arr[0]).toEqual({
         type: "image",
@@ -138,15 +176,16 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
       });
     });
 
-    it("`selectionMode: 'fixed'` emits exactly the cursor's item", async () => {
+    it("'fixed' mode emits exactly the cursor item from the group", async () => {
       seedImageAsset("a-1", "https://x/1.png", "First");
       seedImageAsset("a-2", "https://x/2.png", "Second");
       seedImageAsset("a-3", "https://x/3.png", "Third");
+      seedGroup("g-1", "My set", ["a-1", "a-2", "a-3"]);
 
       const result = await imageIteratorNodeSchema.execute!({
         nodeId: "iter-1",
         config: makeConfig({
-          assetIds: ["a-1", "a-2", "a-3"],
+          groupId: "g-1",
           cursor: 1,
           selectionMode: "fixed",
         }),
@@ -161,11 +200,10 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
       });
     });
 
-    it("`selectionMode: 'increment'` advances the persisted cursor for the next run", async () => {
+    it("'increment' mode advances the persisted cursor for the next run", async () => {
       seedImageAsset("a-1", "https://x/1.png", "First");
       seedImageAsset("a-2", "https://x/2.png", "Second");
-      // Seed an iterator node into the workflow store so updateNodeConfig
-      // has a target to write to.
+      seedGroup("g-1", "My set", ["a-1", "a-2"]);
       useWorkflowStore.setState({
         nodes: [
           {
@@ -173,7 +211,7 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
             kind: "image-iterator",
             position: { x: 0, y: 0 },
             config: makeConfig({
-              assetIds: ["a-1", "a-2"],
+              groupId: "g-1",
               cursor: 0,
               selectionMode: "increment",
             }),
@@ -185,7 +223,7 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
       const result = await imageIteratorNodeSchema.execute!({
         nodeId: "iter-1",
         config: makeConfig({
-          assetIds: ["a-1", "a-2"],
+          groupId: "g-1",
           cursor: 0,
           selectionMode: "increment",
         }),
@@ -193,13 +231,11 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
         signal: new AbortController().signal,
       });
       const arr = result as StandardizedOutput[];
-      // Emits cursor=0 item, then advances cursor to 1 for the *next* run.
       expect(arr).toHaveLength(1);
       expect(arr[0]).toEqual({
         type: "image",
         value: { url: "https://x/1.png" },
       });
-      // Cursor was bumped on the persisted node.
       const persisted = useWorkflowStore
         .getState()
         .nodes.find((n) => n.id === "iter-1");
@@ -207,51 +243,70 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
         (persisted?.config as ImageIteratorNodeConfig).cursor,
       ).toBe(1);
     });
-
-    it("returns an empty array when `assetIds` is empty (no run errors on a fresh iterator)", async () => {
-      const result = await imageIteratorNodeSchema.execute!({
-        nodeId: "iter-1",
-        config: makeConfig({ assetIds: [] }),
-        inputs: {},
-        signal: new AbortController().signal,
-      });
-      expect(result).toEqual([]);
-    });
   });
 
-  /* ───────────────────────── Body (Slice 5.5b: thumbnail + cursor) ─────── */
+  /* ──────────────────────── Body (Slice 5.6: linked) ───────────────────── */
 
-  describe("body — empty state", () => {
-    it("shows the 'no images yet' empty state with a 'drag from Library' hint", () => {
+  describe("body — empty states", () => {
+    it("shows the 'no group linked' empty state when groupId is empty", () => {
       const Body = imageIteratorNodeSchema.Body;
       render(
         <Body
           nodeId="iter-1"
-          config={makeConfig({ assetIds: [] })}
+          config={makeConfig({ groupId: "" })}
           updateConfig={() => undefined}
           selected={false}
         />,
       );
-      const empty = screen.getByTestId("image-iterator-empty");
-      expect(empty).toBeInTheDocument();
-      expect(empty.textContent).toMatch(/no images yet/i);
-      expect(empty.textContent).toMatch(/drag from the library/i);
-      // No cursor / mode chip when empty.
-      expect(screen.queryByTestId("iterator-cursor")).toBeNull();
+      const empty = screen.getByTestId("image-iterator-empty-no-group");
+      expect(empty.textContent).toMatch(/no group linked/i);
+      expect(empty.textContent).toMatch(/drag a library group/i);
+    });
+
+    it("shows the 'group is empty' state when the linked group has no assetIds", () => {
+      seedGroup("g-1", "Photoshoot", []);
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      const empty = screen.getByTestId("image-iterator-empty-group");
+      expect(empty.textContent).toMatch(/group is empty/i);
+      expect(empty.textContent).toMatch(/Photoshoot/);
+    });
+
+    it("shows the 'no group linked' state when groupId points to a deleted group", () => {
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-deleted" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(
+        screen.getByTestId("image-iterator-empty-no-group"),
+      ).toBeInTheDocument();
     });
   });
 
   describe("body — populated", () => {
-    it("renders the cursor's thumbnail, the 1-indexed counter, the mode chip, and the asset name", () => {
+    it("renders the cursor's thumbnail, counter, mode chip, and group name", () => {
       seedImageAsset("a-1", "https://x/1.png", "Subject ref");
       seedImageAsset("a-2", "https://x/2.png", "Backdrop");
+      seedGroup("g-1", "References", ["a-1", "a-2"]);
 
       const Body = imageIteratorNodeSchema.Body;
       render(
         <Body
           nodeId="iter-1"
           config={makeConfig({
-            assetIds: ["a-1", "a-2"],
+            groupId: "g-1",
             cursor: 0,
             selectionMode: "increment",
           })}
@@ -259,25 +314,56 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
           selected={false}
         />,
       );
-      // Thumbnail of cursor=0 (Subject ref).
       const img = screen.getByAltText("Subject ref") as HTMLImageElement;
       expect(img.src).toContain("https://x/1.png");
-      // Counter is 1-indexed.
       expect(
         screen.getByTestId("iterator-cursor-counter").textContent,
       ).toBe("1 / 2");
-      // Mode chip.
       expect(screen.getByTestId("image-iterator-mode-chip").textContent)
         .toBe("increment");
-      // Asset name.
+      const label = screen.getByTestId("image-iterator-group-label");
+      expect(label.textContent).toMatch(/References/);
+      expect(label.textContent).toMatch(/Subject ref/);
+    });
+
+    it("renders an 'Untitled' badge for auto-created groups", () => {
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedGroup("g-1", "Untitled 1", ["a-1"], /* isUntitled */ true);
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
       expect(
-        screen.getByTestId("image-iterator-current-name").textContent,
-      ).toBe("Subject ref");
+        screen.getByTestId("image-iterator-untitled-badge"),
+      ).toBeInTheDocument();
+    });
+
+    it("does NOT render the Untitled badge for renamed groups", () => {
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedGroup("g-1", "Photoshoot Paris", ["a-1"], /* isUntitled */ false);
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(
+        screen.queryByTestId("image-iterator-untitled-badge"),
+      ).toBeNull();
     });
 
     it("clicking the cursor's right arrow updates config.cursor via updateConfig", () => {
       seedImageAsset("a-1", "https://x/1.png", "First");
       seedImageAsset("a-2", "https://x/2.png", "Second");
+      seedGroup("g-1", "Pair", ["a-1", "a-2"]);
       const updateConfig = vi.fn();
 
       const Body = imageIteratorNodeSchema.Body;
@@ -285,7 +371,7 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
         <Body
           nodeId="iter-1"
           config={makeConfig({
-            assetIds: ["a-1", "a-2"],
+            groupId: "g-1",
             cursor: 0,
             selectionMode: "fixed",
           })}
@@ -300,15 +386,16 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
     });
   });
 
-  /* ────────────────────── Settings popover (Slice 5.5b) ─────────────────── */
+  /* ────────────────────── Settings popover (Slice 5.6) ─────────────────── */
 
   describe("settings content — selection mode picker", () => {
     it("renders the selection-mode dropdown with every mode option", () => {
+      seedGroup("g-1", "G", []);
       const SettingsContent = imageIteratorNodeSchema.settings!.Content;
       render(
         <SettingsContent
           nodeId="iter-1"
-          config={makeConfig({ assetIds: ["a-1"] })}
+          config={makeConfig({ groupId: "g-1" })}
           updateConfig={() => undefined}
           selected={false}
         />,
@@ -328,12 +415,13 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
     });
 
     it("changing the dropdown commits via updateConfig", () => {
+      seedGroup("g-1", "G", []);
       const updateConfig = vi.fn();
       const SettingsContent = imageIteratorNodeSchema.settings!.Content;
       render(
         <SettingsContent
           nodeId="iter-1"
-          config={makeConfig({ assetIds: ["a-1"] })}
+          config={makeConfig({ groupId: "g-1" })}
           updateConfig={updateConfig}
           selected={false}
         />,
@@ -345,11 +433,15 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
     });
 
     it("renders Start + End range inputs only when selectionMode === 'range'", () => {
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedImageAsset("a-2", "https://x/2.png", "Second");
+      seedImageAsset("a-3", "https://x/3.png", "Third");
+      seedGroup("g-1", "Set", ["a-1", "a-2", "a-3"]);
       const SettingsContent = imageIteratorNodeSchema.settings!.Content;
       const { rerender } = render(
         <SettingsContent
           nodeId="iter-1"
-          config={makeConfig({ assetIds: ["a-1"] })}
+          config={makeConfig({ groupId: "g-1" })}
           updateConfig={() => undefined}
           selected={false}
         />,
@@ -360,7 +452,7 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
         <SettingsContent
           nodeId="iter-1"
           config={makeConfig({
-            assetIds: ["a-1", "a-2", "a-3"],
+            groupId: "g-1",
             selectionMode: "range",
           })}
           updateConfig={() => undefined}
@@ -370,6 +462,34 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
       expect(screen.getByLabelText(/start \(1-indexed\)/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/end \(1-indexed\)/i)).toBeInTheDocument();
     });
+
+    it("renders the 'Detach from group' button only when a real group is linked", () => {
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      const { rerender } = render(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(
+        screen.queryByTestId("image-iterator-detach-button"),
+      ).toBeNull();
+
+      seedGroup("g-1", "Linked", []);
+      rerender(
+        <SettingsContent
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+      expect(
+        screen.getByTestId("image-iterator-detach-button"),
+      ).toBeInTheDocument();
+    });
   });
 
   /* ─────────────────────────── hasOverrides ───────────────────────────── */
@@ -377,19 +497,17 @@ describe("imageIteratorNodeSchema (Slice 5.5)", () => {
   describe("settings.hasOverrides", () => {
     it("returns false on a default-config iterator (mode='all', cursor=0)", () => {
       const has = imageIteratorNodeSchema.settings?.hasOverrides;
-      expect(has?.(makeConfig({ assetIds: ["a-1"] }))).toBe(false);
+      expect(has?.(makeConfig({ groupId: "g-1" }))).toBe(false);
     });
     it("returns true once selectionMode is anything other than 'all'", () => {
       const has = imageIteratorNodeSchema.settings?.hasOverrides;
       expect(
-        has?.(makeConfig({ assetIds: ["a-1"], selectionMode: "fixed" })),
+        has?.(makeConfig({ groupId: "g-1", selectionMode: "fixed" })),
       ).toBe(true);
     });
     it("returns true once cursor moved off 0", () => {
       const has = imageIteratorNodeSchema.settings?.hasOverrides;
-      expect(
-        has?.(makeConfig({ assetIds: ["a-1", "a-2"], cursor: 1 })),
-      ).toBe(true);
+      expect(has?.(makeConfig({ groupId: "g-1", cursor: 1 }))).toBe(true);
     });
   });
 });

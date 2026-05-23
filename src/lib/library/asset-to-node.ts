@@ -42,6 +42,17 @@ const SPAWN: { [K in AssetKind]: SpawnFn<Extract<Asset, { kind: K }>> } = {
       thumbnailUrl: asset.thumbnailUrl,
     },
   }),
+  // Asset group (Slice 5.6, ADR-0032). Drag of a group spawns an
+  // `image-iterator` linked to it via `groupId`. The iterator becomes a
+  // *view* of the group; library edits propagate naturally.
+  "asset-group": (asset) => ({
+    kind: "image-iterator",
+    initialConfig: {
+      groupId: asset.id,
+      cursor: 0,
+      selectionMode: "all",
+    },
+  }),
 };
 
 export function assetToNode(asset: Asset): AssetToNodeResult {

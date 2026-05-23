@@ -7,6 +7,7 @@ import {
 } from "@/lib/library/upload-asset";
 import type {
   Asset,
+  AssetGroupAsset,
   AssetKind,
   AssetScope,
   ImageAsset,
@@ -122,6 +123,68 @@ export interface AssetState {
   listByKind: <K extends AssetKind>(
     kind: K,
   ) => Extract<Asset, { kind: K }>[];
+
+  /* ─────────────────────────── Groups (Slice 5.6) ─────────────────────── */
+
+  /**
+   * Create an `AssetGroup` from a list of `image` asset ids. Order is
+   * preserved (the iterator's cursor walks the same order); duplicate
+   * ids in the input are silently de-duped (groups are sets visually,
+   * even if represented as arrays for ordering).
+   *
+   * `isUntitled` defaults to `false` — call sites for "auto-group from
+   * multi-drag" must set it to `true` so the cleanup rule applies.
+   * The default name is `"Untitled <N>"` where N is one more than the
+   * count of existing Untitled groups (so they render as a sequence
+   * even after deletes); pass `name` to override.
+   *
+   * Returns the new group id. The underlying `image` assets are NOT
+   * checked for existence — defensive consumers (the iterator's
+   * execute()) drop unresolvable ids at runtime.
+   */
+  createGroup: (params: {
+    name?: string;
+    assetIds: string[];
+    isUntitled?: boolean;
+    scope?: AssetScope;
+  }) => string;
+
+  /** Append asset ids to a group. De-duped against the existing array. */
+  addToGroup: (groupId: string, assetIds: string[]) => void;
+
+  /** Remove asset ids from a group. No-op for ids that aren't present. */
+  removeFromGroup: (groupId: string, assetIds: string[]) => void;
+
+  /**
+   * Rename a group. **Flips `isUntitled` to `false` on first rename**
+   * — the user just told us "this is a real group worth keeping", so
+   * the cleanup rule no longer applies.
+   */
+  renameGroup: (groupId: string, name: string) => void;
+
+  /**
+   * Drop a group from the library. Does NOT delete the underlying
+   * `image` assets — they outlive the group and may live in other
+   * groups or be referenced by free-floating Image nodes on the
+   * canvas. Drops the group's id from `selectedAssetIds` defensively.
+   */
+  removeGroup: (groupId: string) => void;
+
+  /**
+   * Cleanup rule (Slice 5.6e): if `groupId` resolves to an `Untitled`
+   * group AND no node in the workflow currently links to it, drop the
+   * group. Called by `canvas-flow.tsx` after deleting an iterator that
+   * was linked to it. The walk-the-workflow check is done by the
+   * caller and passed in via `linkedNodeIds` so this store stays
+   * decoupled from the workflow store.
+   *
+   * No-op for `false` `isUntitled`, missing groups, or non-empty
+   * `linkedNodeIds`. Idempotent.
+   */
+  cleanupUntitledGroupIfOrphan: (
+    groupId: string,
+    linkedNodeIds: readonly string[],
+  ) => void;
 
   /* ─────────────────────────── Selection (Slice 5.5c) ─────────────────── */
 
@@ -302,6 +365,123 @@ export const useAssetStore = create<AssetState>()(
           { kind: K }
         >[],
 
+      /* ──────────────────────── Groups (Slice 5.6) ───────────────────── */
+
+      createGroup: (params) => {
+        const id = makeAssetId();
+        const now = Date.now();
+        // De-dupe assetIds while preserving first-seen order.
+        const seen = new Set<string>();
+        const orderedIds: string[] = [];
+        for (const aid of params.assetIds) {
+          if (typeof aid !== "string" || aid.length === 0) continue;
+          if (seen.has(aid)) continue;
+          seen.add(aid);
+          orderedIds.push(aid);
+        }
+        const isUntitled = params.isUntitled ?? false;
+        // Default name: Untitled N (N counts existing Untitled groups so
+        // the sequence keeps growing even when middle entries get
+        // cleaned up — feels like Finder's "untitled folder 3").
+        let name = params.name?.trim();
+        if (!name) {
+          const untitledCount = get().assets.filter(
+            (a): a is AssetGroupAsset =>
+              a.kind === "asset-group" && a.isUntitled,
+          ).length;
+          name = `Untitled ${untitledCount + 1}`;
+        }
+        const asset: AssetGroupAsset = {
+          id,
+          kind: "asset-group",
+          name,
+          tags: [],
+          scope: params.scope ?? "project",
+          createdAt: now,
+          updatedAt: now,
+          assetIds: orderedIds,
+          isUntitled,
+        };
+        set((state) => ({ assets: [...state.assets, asset] }));
+        return id;
+      },
+
+      addToGroup: (groupId, assetIds) => {
+        if (assetIds.length === 0) return;
+        set((state) => ({
+          assets: state.assets.map((a) => {
+            if (a.id !== groupId || a.kind !== "asset-group") return a;
+            const existing = new Set(a.assetIds);
+            const merged = [...a.assetIds];
+            for (const id of assetIds) {
+              if (typeof id !== "string" || id.length === 0) continue;
+              if (existing.has(id)) continue;
+              existing.add(id);
+              merged.push(id);
+            }
+            // Skip the write if nothing changed (avoid render churn).
+            if (merged.length === a.assetIds.length) return a;
+            return { ...a, assetIds: merged, updatedAt: Date.now() };
+          }),
+        }));
+      },
+
+      removeFromGroup: (groupId, assetIds) => {
+        if (assetIds.length === 0) return;
+        const drop = new Set(assetIds);
+        set((state) => ({
+          assets: state.assets.map((a) => {
+            if (a.id !== groupId || a.kind !== "asset-group") return a;
+            const next = a.assetIds.filter((id) => !drop.has(id));
+            if (next.length === a.assetIds.length) return a;
+            return { ...a, assetIds: next, updatedAt: Date.now() };
+          }),
+        }));
+      },
+
+      renameGroup: (groupId, name) => {
+        const trimmed = name.trim();
+        if (trimmed.length === 0) return; // ignore empty rename
+        set((state) => ({
+          assets: state.assets.map((a) => {
+            if (a.id !== groupId || a.kind !== "asset-group") return a;
+            // Flip isUntitled the first time the user renames — the
+            // cleanup rule will leave this group alone from now on.
+            return {
+              ...a,
+              name: trimmed,
+              isUntitled: false,
+              updatedAt: Date.now(),
+            };
+          }),
+        }));
+      },
+
+      removeGroup: (groupId) => {
+        set((state) => ({
+          assets: state.assets.filter(
+            (a) => !(a.id === groupId && a.kind === "asset-group"),
+          ),
+          // Defensively scrub the id from the selection in case a group
+          // card was selected when deletion happened.
+          selectedAssetIds: state.selectedAssetIds.filter(
+            (id) => id !== groupId,
+          ),
+        }));
+      },
+
+      cleanupUntitledGroupIfOrphan: (groupId, linkedNodeIds) => {
+        if (linkedNodeIds.length > 0) return;
+        const group = get().assets.find(
+          (a): a is AssetGroupAsset =>
+            a.id === groupId && a.kind === "asset-group",
+        );
+        if (!group || !group.isUntitled) return;
+        set((state) => ({
+          assets: state.assets.filter((a) => a.id !== groupId),
+        }));
+      },
+
       /* ────────────────────── Selection (Slice 5.5c) ─────────────────── */
 
       selectedAssetIds: [],
@@ -360,7 +540,7 @@ export const useAssetStore = create<AssetState>()(
     {
       name: "cookbook.assets",
       storage: createJSONStorage(() => localStorage),
-      version: 4,
+      version: 5,
       /**
        * Migration ladder.
        *
@@ -373,6 +553,13 @@ export const useAssetStore = create<AssetState>()(
        *   asset whose required fields are malformed (missing
        *   customReferenceId or unknown variant). A clean v3 payload —
        *   which only contained image kinds — survives unchanged.
+       * v4 → v5: additive — adds the `asset-group` kind (Slice 5.6 /
+       *   ADR-0032). No existing asset payload changes shape; the new
+       *   kind only appears once a user creates a group post-v5. The
+       *   migration still runs a defensive sanity sweep that drops any
+       *   `asset-group` row whose required fields (`assetIds: string[]`,
+       *   `isUntitled: boolean`) are missing — protects against hand-
+       *   edited localStorage.
        *
        * Future versions fall through unchanged.
        */
@@ -419,6 +606,22 @@ export const useAssetStore = create<AssetState>()(
                 candidate.customReferenceId.length > 0 &&
                 typeof candidate.variant === "string" &&
                 validVariants.has(candidate.variant)
+              );
+            });
+          }
+          if (version < 5) {
+            // Defensive sweep on the new asset-group kind. Hand-edited
+            // payloads might be missing assetIds / isUntitled; we drop
+            // those rows so the iterator's resolver doesn't crash on
+            // `group.assetIds.map`. Clean v4 payloads (image + soul-id
+            // only) pass through untouched — asset-group didn't exist.
+            state.assets = state.assets.filter((raw) => {
+              const a = raw as Asset;
+              if (a.kind !== "asset-group") return true;
+              const candidate = a as Partial<AssetGroupAsset>;
+              return (
+                Array.isArray(candidate.assetIds) &&
+                typeof candidate.isUntitled === "boolean"
               );
             });
           }

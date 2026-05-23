@@ -159,4 +159,213 @@ describe("asset-store", () => {
       expect(after.updatedAt).toBeGreaterThanOrEqual(before.updatedAt);
     });
   });
+
+  /* ──────────────────────────────────────────────────────────────────── */
+  /* AssetGroup actions (Slice 5.6, ADR-0032)                              */
+  /* ──────────────────────────────────────────────────────────────────── */
+
+  describe("Groups (Slice 5.6)", () => {
+    describe("createGroup", () => {
+      it("creates a group with the given name + assetIds, scope defaults to project", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Photoshoot Paris",
+          assetIds: ["a-1", "a-2", "a-3"],
+        });
+        const group = useAssetStore.getState().getAsset(id);
+        expect(group?.kind).toBe("asset-group");
+        if (group?.kind === "asset-group") {
+          expect(group.name).toBe("Photoshoot Paris");
+          expect(group.assetIds).toEqual(["a-1", "a-2", "a-3"]);
+          expect(group.isUntitled).toBe(false);
+          expect(group.scope).toBe("project");
+        }
+      });
+
+      it("de-dupes assetIds while preserving first-seen order", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Has dupes",
+          assetIds: ["a-1", "a-2", "a-1", "a-3", "a-2"],
+        });
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          expect(group.assetIds).toEqual(["a-1", "a-2", "a-3"]);
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+
+      it("auto-names Untitled groups with an incrementing sequence", () => {
+        const id1 = useAssetStore.getState().createGroup({
+          assetIds: ["a-1"],
+          isUntitled: true,
+        });
+        const id2 = useAssetStore.getState().createGroup({
+          assetIds: ["a-2"],
+          isUntitled: true,
+        });
+        const g1 = useAssetStore.getState().getAsset(id1);
+        const g2 = useAssetStore.getState().getAsset(id2);
+        if (g1?.kind === "asset-group" && g2?.kind === "asset-group") {
+          expect(g1.name).toBe("Untitled 1");
+          expect(g2.name).toBe("Untitled 2");
+          expect(g1.isUntitled).toBe(true);
+          expect(g2.isUntitled).toBe(true);
+        } else {
+          throw new Error("expected two asset-groups");
+        }
+      });
+
+      it("isUntitled defaults to false when omitted", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Named",
+          assetIds: ["a-1"],
+        });
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          expect(group.isUntitled).toBe(false);
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+    });
+
+    describe("addToGroup", () => {
+      it("appends new ids in order, de-duping against existing", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Set",
+          assetIds: ["a-1", "a-2"],
+        });
+        useAssetStore.getState().addToGroup(id, ["a-2", "a-3", "a-1", "a-4"]);
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          // a-2 / a-1 already present (de-duped); a-3 / a-4 appended.
+          expect(group.assetIds).toEqual(["a-1", "a-2", "a-3", "a-4"]);
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+
+      it("is a no-op when called with an empty array", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Set",
+          assetIds: ["a-1"],
+        });
+        const before = useAssetStore.getState().getAsset(id);
+        useAssetStore.getState().addToGroup(id, []);
+        const after = useAssetStore.getState().getAsset(id);
+        // Same reference (no write happened).
+        expect(after).toBe(before);
+      });
+    });
+
+    describe("removeFromGroup", () => {
+      it("removes the requested ids, ignoring those not present", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Set",
+          assetIds: ["a-1", "a-2", "a-3", "a-4"],
+        });
+        useAssetStore.getState().removeFromGroup(id, ["a-2", "a-not-there"]);
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          expect(group.assetIds).toEqual(["a-1", "a-3", "a-4"]);
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+    });
+
+    describe("renameGroup", () => {
+      it("renames + flips isUntitled to false on first rename", () => {
+        const id = useAssetStore.getState().createGroup({
+          assetIds: ["a-1"],
+          isUntitled: true,
+        });
+        useAssetStore.getState().renameGroup(id, "Photoshoot Paris");
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          expect(group.name).toBe("Photoshoot Paris");
+          expect(group.isUntitled).toBe(false);
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+
+      it("ignores empty / whitespace-only names", () => {
+        const id = useAssetStore.getState().createGroup({
+          name: "Original",
+          assetIds: ["a-1"],
+        });
+        useAssetStore.getState().renameGroup(id, "  ");
+        const group = useAssetStore.getState().getAsset(id);
+        if (group?.kind === "asset-group") {
+          expect(group.name).toBe("Original");
+        } else {
+          throw new Error("expected an asset-group");
+        }
+      });
+    });
+
+    describe("removeGroup", () => {
+      it("drops the group but NOT the underlying image assets", async () => {
+        // Create an image asset + a group referencing it.
+        const imgId = await useAssetStore
+          .getState()
+          .createImageAssetFromFile(makeFile("cat.png"));
+        const groupId = useAssetStore.getState().createGroup({
+          name: "Set",
+          assetIds: [imgId],
+        });
+        // Drop the group — image survives.
+        useAssetStore.getState().removeGroup(groupId);
+        expect(useAssetStore.getState().getAsset(groupId)).toBeUndefined();
+        expect(useAssetStore.getState().getAsset(imgId)?.kind).toBe("image");
+      });
+    });
+
+    describe("cleanupUntitledGroupIfOrphan", () => {
+      it("drops an Untitled group when no nodes link to it", () => {
+        const id = useAssetStore.getState().createGroup({
+          assetIds: ["a-1"],
+          isUntitled: true,
+        });
+        useAssetStore.getState().cleanupUntitledGroupIfOrphan(id, []);
+        expect(useAssetStore.getState().getAsset(id)).toBeUndefined();
+      });
+
+      it("preserves an Untitled group when at least one node still links to it", () => {
+        const id = useAssetStore.getState().createGroup({
+          assetIds: ["a-1"],
+          isUntitled: true,
+        });
+        useAssetStore
+          .getState()
+          .cleanupUntitledGroupIfOrphan(id, ["iter-still-here"]);
+        expect(useAssetStore.getState().getAsset(id)?.kind).toBe(
+          "asset-group",
+        );
+      });
+
+      it("preserves a renamed group (isUntitled=false) even when orphaned", () => {
+        const id = useAssetStore.getState().createGroup({
+          assetIds: ["a-1"],
+          isUntitled: true,
+        });
+        // Rename promotes the group to a real one.
+        useAssetStore.getState().renameGroup(id, "Important set");
+        useAssetStore.getState().cleanupUntitledGroupIfOrphan(id, []);
+        expect(useAssetStore.getState().getAsset(id)?.kind).toBe(
+          "asset-group",
+        );
+      });
+
+      it("is a no-op for missing group ids (idempotent)", () => {
+        // Doesn't throw; doesn't change the store.
+        const before = useAssetStore.getState().assets.length;
+        useAssetStore
+          .getState()
+          .cleanupUntitledGroupIfOrphan("g-does-not-exist", []);
+        expect(useAssetStore.getState().assets.length).toBe(before);
+      });
+    });
+  });
 });

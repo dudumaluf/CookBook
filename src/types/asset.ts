@@ -106,10 +106,50 @@ export interface SoulIdAsset extends AssetCommon {
 }
 
 /**
+ * Asset group (Slice 5.6, ADR-0032).
+ *
+ * A named, ordered set of `image` asset ids. The library is the single
+ * source of truth for "which images are in this set"; the canvas's
+ * Image Iterator is just a *view* over that set (linked via
+ * `config.groupId`). Adding / removing / renaming happens here, and
+ * every iterator pointing at this group reflects the change naturally.
+ *
+ * `assetIds` only contains `image` ids today (M0a doesn't ship cross-
+ * kind groups — soul-id stays a singleton kind). Order matters; it's
+ * the order the iterator emits in `selectionMode: "all"` and the order
+ * the cursor walks in `increment` / `decrement`. Group nesting is
+ * out of scope for M0a (groups are flat).
+ *
+ * `isUntitled` is the "auto-created on multi-drag, never named" flag.
+ * It's the trigger for `cleanupUntitledGroupIfOrphan` — an iterator
+ * deletion that orphans an Untitled group also drops the group, so the
+ * library doesn't accumulate "Untitled 1" / "Untitled 2" / … the user
+ * never asked for. Renaming the group flips this to `false` (the user
+ * just told us "this is a real group worth keeping"), and the cleanup
+ * leaves it alone.
+ *
+ * No bytes — groups are pure metadata. The `image` ids inside survive
+ * group deletion (they're the durable thing); the group is just one
+ * way to organise them.
+ */
+export interface AssetGroupAsset extends AssetCommon {
+  kind: "asset-group";
+  /** Ordered `image` asset ids the group references. */
+  assetIds: string[];
+  /**
+   * `true` for groups created automatically (multi-drag from library →
+   * canvas, or the per-iterator workflow-store v8→v9 migration). The
+   * cleanup rule drops these when their last iterator goes away.
+   * Renaming the group flips this to `false` permanently.
+   */
+  isUntitled: boolean;
+}
+
+/**
  * The full Asset union. New kinds get added here and to
  * `lib/library/asset-to-node.ts`.
  */
-export type Asset = ImageAsset | SoulIdAsset;
+export type Asset = ImageAsset | SoulIdAsset | AssetGroupAsset;
 
 export type AssetKind = Asset["kind"];
 

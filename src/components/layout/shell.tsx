@@ -44,11 +44,17 @@ export function AppShell() {
   useLayoutShortcuts();
 
   // Rehydrate persisted stores after mount so SSR HTML == client first render.
+  // ORDER MATTERS: asset-store rehydrates BEFORE workflow-store because the
+  // workflow-store v8→v9 migration calls `useAssetStore.getState().createGroup`
+  // to materialise an Untitled group for every legacy iterator with `assetIds[]`
+  // in its config (ADR-0032, Slice 5.6). If workflow rehydrated first, its
+  // migrate would seed groups onto an empty asset-store that would then
+  // get OVERWRITTEN by the asset-store's own rehydrate seconds later.
   useEffect(() => {
     useLayoutStore.persist.rehydrate();
     useProjectStore.persist.rehydrate();
-    useWorkflowStore.persist.rehydrate();
     useAssetStore.persist.rehydrate();
+    useWorkflowStore.persist.rehydrate();
   }, []);
 
   return (

@@ -255,15 +255,21 @@ describe("LLM-callable recipe path — Soul Image Burst (mocked)", () => {
       .getState()
       .createImageAssetFromUrl({ url: "https://example.com/cc3.jpg" });
 
-    // Slice 5.5: Image Iterator stores assetIds directly in config; no
-    // more multi-edge wiring of separate Image nodes.
+    // Slice 5.6 (ADR-0032): Image Iterator is always linked to an
+    // AssetGroup in the library. Create the group first, then the
+    // iterator references it via `groupId`.
+    const groupId = useAssetStore.getState().createGroup({
+      name: "Test references",
+      assetIds: [ref1, ref2, ref3],
+      isUntitled: false,
+    });
     const store = useWorkflowStore.getState();
     const promptId = store.addNode("text", { x: 0, y: 0 }, { text: "go" });
     const soulId = store.addNode("soul-id", { x: 0, y: 200 }, {
       assetId: soulAssetId,
     });
     const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {
-      assetIds: [ref1, ref2, ref3],
+      groupId,
       cursor: 0,
       selectionMode: "all",
     });
@@ -557,10 +563,14 @@ describe("LLM-callable recipe path — full burst with Export saves to Library",
       { x: 0, y: 200 },
       { assetId: soulAssetId },
     );
-    // Slice 5.5: Image Iterator stores assetIds directly; no longer
-    // wired through standalone Image nodes + multi-edge handles.
-    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {
+    // Slice 5.6 (ADR-0032): Image Iterator links to an AssetGroup.
+    const groupId = useAssetStore.getState().createGroup({
+      name: "Burst refs",
       assetIds: [ref1, ref2, ref3],
+      isUntitled: false,
+    });
+    const iterId = store.addNode("image-iterator", { x: 200, y: 500 }, {
+      groupId,
       cursor: 0,
       selectionMode: "all",
     });
@@ -604,9 +614,10 @@ describe("LLM-callable recipe path — full burst with Export saves to Library",
     // Then 3 uploads to Library.
     expect(uploadFromUrlMock).toHaveBeenCalledTimes(3);
 
-    // Library: 1 SoulID + 3 image refs + 3 exported = 7 total.
+    // Library: 1 SoulID + 3 image refs + 1 AssetGroup (Slice 5.6) + 3
+    // exported = 8 total.
     const assets = useAssetStore.getState().assets;
-    expect(assets).toHaveLength(7);
+    expect(assets).toHaveLength(8);
     const exported = assets
       .filter((a) => a.kind === "image" && a.name.startsWith("Variant"))
       .map((a) => a.name)

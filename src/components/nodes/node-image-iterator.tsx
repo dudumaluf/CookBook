@@ -2,6 +2,7 @@
 
 import { Image as ImageIcon } from "lucide-react";
 import { useId } from "react";
+import { toast } from "sonner";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -12,58 +13,89 @@ import {
 } from "@/lib/iterators/selection-mode";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import type { AssetGroupAsset } from "@/types/asset";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
 
 /**
- * Image Iterator (Slice 5.5, ADR-0031) — N images stored INSIDE the node
- * with a selection mode + cursor controlling what gets emitted on a run.
+ * Image Iterator (Slice 5.6, ADR-0032) — a *view* over an `AssetGroup`
+ * in the library, with a selection mode + cursor controlling what gets
+ * emitted on a run.
  *
- * Replaces the Slice 4.4b multi-edge design. Storage moved from "edges
- * wired into the `images` handle" to "asset ids in `config.assetIds`",
- * for two reasons:
+ * The iterator is **always linked** to an AssetGroup via `config.groupId`.
+ * The library is the single source of truth for "which images are in
+ * this set"; editing the group there propagates to every iterator on
+ * the canvas linked to it. This replaces Slice 5.5's free-floating
+ * `assetIds[]` design — see ADR-0032 for the why.
  *
- *  1. **Direct manipulation**. Users drag images from the library straight
- *     onto the iterator surface (Slice 5.5c) instead of spawning N
- *     standalone Image nodes. The iterator becomes a *bag of references*
- *     with controls — closer to how Weavy / ComfyUI surface multi-asset
- *     inputs.
+ * Three ways an iterator gets a `groupId`:
  *
- *  2. **Selection modes**. The iterator can emit a subset of its bag —
- *     `fixed` (cursor item only), `increment` / `decrement` (advance per
- *     run), `random`, `range`, or `all` (full fan-out, the legacy
- *     behaviour). The cursor is part of the iterator's identity so the
- *     body's preview matches what the next run will actually emit.
+ *  1. **Drag a group from the library** → iterator spawns with
+ *     `groupId = group.id`. Multiple iterators can point at the same
+ *     group; editing the group fans out to all of them.
  *
- * Engine hookup is unchanged. Schema flag `iterator: true` is still set;
- * the engine fan-outs whenever `execute()` returns a `StandardizedOutput[]`
- * landing on a single-input downstream handle. For modes that emit only
- * one item (`fixed | increment | decrement | random`), the fan-out branch
- * runs once — same code path, same cache contract, just degenerate.
+ *  2. **Drag N images from the library (multi-select)** → an `Untitled`
+ *     group is auto-created with `isUntitled: true`, and the iterator
+ *     spawns linked to it. Renaming the group flips `isUntitled` to
+ *     false (the user opted in to "this is a real group"); deleting
+ *     the iterator triggers `cleanupUntitledGroupIfOrphan` so the
+ *     auto-group doesn't accumulate as cruft.
  *
- * Cache key: `{ kind, config, deps }` — config now includes `assetIds`,
- * `cursor`, `selectionMode`, `range`. Changing the cursor in `fixed` mode
- * busts the iterator's hash and every downstream — exactly what we want
- * (user picked a different item, downstream needs to re-run).
+ *  3. **Workflow-store v8→v9 migration** materialises an Untitled group
+ *     for every legacy iterator that had `assetIds[]` in its config.
+ *
+ * Engine hookup is unchanged. Schema flag `iterator: true` stays on;
+ * `execute()` resolves `groupId → group.assetIds → image refs` at
+ * runtime, applies the selection mode, and returns the array. The
+ * fan-out branch in run-workflow.ts (ADR-0030) is bit-identical to
+ * Slice 5.5.
+ *
+ * Cache key: `{ kind, config, deps }` — config now reads `{ groupId,
+ * cursor, selectionMode, range? }`. Adding/removing images in the
+ * linked group bumps the iterator's hash via the standard upstream-
+ * resolution path inside execute() (the resolved urls are part of
+ * what the next downstream sees), so cached runs replay correctly.
+ *
+ * "Detach from group" affordance lives in the settings popover (Slice
+ * 5.6e): creates a NEW group with `name = "<source> (copy)"` referencing
+ * the SAME `image` ids (no byte duplication), then re-links the
+ * iterator to the new group. Mirrors Figma's "Detach instance".
  */
 export interface ImageIteratorNodeConfig {
-  /** Asset ids referenced from the asset store. Order matters — it's the user's order. */
-  assetIds: string[];
-  /** Pointer into `assetIds` used by `fixed` / `increment` / `decrement` / `random`. */
+  /**
+   * Linked `AssetGroup` id. **Always set on a real iterator** (defaults
+   * to `""` only as a transient placeholder for the moment between
+   * `addNode()` and the dispatcher's `groupId` write).
+   */
+  groupId: string;
+  /** Pointer into `group.assetIds` used by `fixed`/`increment`/`decrement`/`random`. */
   cursor: number;
-  /** What slice of `assetIds` to emit on a run. See `selection-mode.ts`. */
+  /** What slice of `group.assetIds` to emit on a run. See `selection-mode.ts`. */
   selectionMode: SelectionMode;
   /** Inclusive `[start, end]` slice for `selectionMode === "range"`. */
   range?: SelectionRange;
 }
 
+/* ────────────────────────────────────────────────────────────────────── */
+/* Body                                                                   */
+/* ────────────────────────────────────────────────────────────────────── */
+
 function ImageIteratorNodeBody({
   config,
   updateConfig,
 }: NodeBodyProps<ImageIteratorNodeConfig>) {
+  // Subscribe broadly so library renames / membership changes propagate.
   const assets = useAssetStore((s) => s.assets);
-  const assetIds = config.assetIds ?? [];
+  const group =
+    config.groupId && config.groupId.length > 0
+      ? (assets.find(
+          (a): a is AssetGroupAsset =>
+            a.id === config.groupId && a.kind === "asset-group",
+        ) ?? undefined)
+      : undefined;
+
+  const assetIds = group?.assetIds ?? [];
   const count = assetIds.length;
   const safeCursor = clampCursor(config.cursor ?? 0, count);
   const currentId = assetIds[safeCursor];
@@ -75,8 +107,10 @@ function ImageIteratorNodeBody({
 
   return (
     <div className="flex w-full min-w-[220px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
-      {count === 0 ? (
-        <EmptyState />
+      {!group ? (
+        <EmptyStateMissingGroup />
+      ) : count === 0 ? (
+        <EmptyStateEmptyGroup groupName={group.name} />
       ) : (
         <>
           {/* Square thumbnail of the current cursor item. Falls through
@@ -113,32 +147,67 @@ function ImageIteratorNodeBody({
               {config.selectionMode ?? "all"}
             </span>
           </div>
-          {currentAsset?.name ? (
-            <p
-              data-testid="image-iterator-current-name"
-              className="truncate px-0.5 text-[10.5px] text-muted-foreground/80"
-            >
-              {currentAsset.name}
-            </p>
-          ) : null}
+
+          <div
+            data-testid="image-iterator-group-label"
+            className="flex items-center gap-1 px-0.5 text-[10.5px] text-muted-foreground/80"
+          >
+            <span className="truncate">
+              <span className="text-foreground/70">{group.name}</span>
+              {group.isUntitled ? (
+                <span
+                  data-testid="image-iterator-untitled-badge"
+                  className="ml-1 rounded bg-foreground/[0.05] px-1 py-px text-[9.5px] text-muted-foreground"
+                >
+                  Untitled
+                </span>
+              ) : null}
+            </span>
+            {currentAsset?.name ? (
+              <span
+                data-testid="image-iterator-current-name"
+                className="ml-auto truncate text-muted-foreground/60"
+              >
+                {currentAsset.name}
+              </span>
+            ) : null}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function EmptyState() {
+function EmptyStateMissingGroup() {
   return (
     <div
-      data-testid="image-iterator-empty"
+      data-testid="image-iterator-empty-no-group"
       className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-border/40 bg-foreground/[0.02] text-center"
     >
       <ImageIcon className="h-5 w-5 text-muted-foreground/50" />
       <span className="px-3 text-[11px] leading-tight text-muted-foreground">
-        No images yet
+        No group linked
       </span>
       <span className="px-3 text-[10px] leading-tight text-muted-foreground/70">
-        Drag from the Library to populate
+        Drag a Library group or images here to populate
+      </span>
+    </div>
+  );
+}
+
+function EmptyStateEmptyGroup({ groupName }: { groupName: string }) {
+  return (
+    <div
+      data-testid="image-iterator-empty-group"
+      className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed border-border/40 bg-foreground/[0.02] text-center"
+    >
+      <ImageIcon className="h-5 w-5 text-muted-foreground/50" />
+      <span className="px-3 text-[11px] leading-tight text-muted-foreground">
+        Group is empty
+      </span>
+      <span className="px-3 text-[10px] leading-tight text-muted-foreground/70">
+        Drop images here or add to{" "}
+        <span className="text-foreground/75">{groupName}</span> in the Library
       </span>
     </div>
   );
@@ -149,6 +218,7 @@ function EmptyState() {
 /* ────────────────────────────────────────────────────────────────────── */
 
 function ImageIteratorSettingsContent({
+  nodeId,
   config,
   updateConfig,
 }: NodeBodyProps<ImageIteratorNodeConfig>) {
@@ -156,9 +226,41 @@ function ImageIteratorSettingsContent({
   const startId = useId();
   const endId = useId();
 
-  const count = (config.assetIds ?? []).length;
+  const assets = useAssetStore((s) => s.assets);
+  const group =
+    config.groupId && config.groupId.length > 0
+      ? (assets.find(
+          (a): a is AssetGroupAsset =>
+            a.id === config.groupId && a.kind === "asset-group",
+        ) ?? undefined)
+      : undefined;
+
+  const count = group?.assetIds.length ?? 0;
   const mode = config.selectionMode ?? "all";
   const range = config.range;
+
+  function handleDetach() {
+    if (!group) return;
+    const store = useAssetStore.getState();
+    // Pick a name like "<source> (copy)" or "<source> (copy 2)" if
+    // there's already a copy. We avoid a deeper conflict resolver
+    // since the user can rename right away if they want.
+    const baseName = `${group.name} (copy)`;
+    const newGroupId = store.createGroup({
+      name: baseName,
+      assetIds: [...group.assetIds],
+      isUntitled: false,
+      scope: group.scope,
+    });
+    updateConfig({ groupId: newGroupId });
+    // Reset cursor to 0 — the user expects a fresh navigation when
+    // they detach (the new group is independent).
+    updateConfig({ cursor: 0 });
+    toast.success(`Detached from "${group.name}" — created "${baseName}"`);
+    // `nodeId` is part of the prop contract but we don't need it here
+    // (updateConfig is already bound to the right node by GenericNode).
+    void nodeId;
+  }
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -237,10 +339,35 @@ function ImageIteratorSettingsContent({
       ) : null}
 
       <div className="rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[10.5px] text-muted-foreground">
-        {count === 0
-          ? "No images yet — selection mode picks up once images are present."
-          : `${count} image${count === 1 ? "" : "s"} available.`}
+        {!group ? (
+          "Drag a Library group (or N images) onto this iterator to link it."
+        ) : count === 0 ? (
+          <>
+            Linked to <span className="text-foreground/80">{group.name}</span>{" "}
+            (empty group).
+          </>
+        ) : (
+          <>
+            Linked to <span className="text-foreground/80">{group.name}</span>{" "}
+            · {count} image{count === 1 ? "" : "s"}.
+          </>
+        )}
       </div>
+
+      {group ? (
+        <button
+          type="button"
+          data-testid="image-iterator-detach-button"
+          onClick={handleDetach}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="rounded-md border border-border/60 px-2 py-1.5 text-[11px] text-foreground/85 transition-colors hover:bg-foreground/[0.04]"
+        >
+          Detach from group
+          <span className="ml-1 text-muted-foreground/70">
+            (creates &ldquo;{group.name} (copy)&rdquo;)
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -274,22 +401,34 @@ export const imageIteratorNodeSchema = defineNode<ImageIteratorNodeConfig>({
   category: "iterator",
   title: "Image Iterator",
   description:
-    "Holds N images. Selection mode + cursor pick what gets emitted on a run.",
+    "A view over a Library group. Selection mode + cursor pick what gets emitted on a run.",
   icon: ImageIcon,
   inputs: [],
   outputs: [{ id: "out", label: "out", dataType: "image" }],
   defaultConfig: {
-    assetIds: [],
+    // Empty groupId is a transient placeholder. The dispatcher
+    // (canvas-flow.tsx onDrop) writes a real groupId immediately
+    // after `addNode`. AddNodeMenu spawns also use this default; the
+    // user then drags a group / N images on top to link.
+    groupId: "",
     cursor: 0,
     selectionMode: "all",
   },
   reactive: true,
   iterator: true,
   execute: async ({ nodeId, config }) => {
-    const assetIds = config.assetIds ?? [];
+    const groupId = config.groupId ?? "";
+    if (groupId.length === 0) return [];
+
     const store = useAssetStore.getState();
+    const group = store.getAsset(groupId);
+    if (!group || group.kind !== "asset-group") return [];
+
+    // Resolve assetIds → image refs. Drop ids that don't resolve to an
+    // image asset (defensive against the user removing an asset from
+    // the library directly while it's still listed in the group).
     const refs: StandardizedOutput[] = [];
-    for (const id of assetIds) {
+    for (const id of group.assetIds) {
       const asset = store.getAsset(id);
       if (asset?.kind !== "image") continue;
       refs.push({ type: "image", value: { url: asset.source.url } });

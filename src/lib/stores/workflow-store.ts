@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import { nodeRegistry } from "@/lib/engine/registry";
+import { useAssetStore } from "@/lib/stores/asset-store";
 
 /**
  * Workflow store: the *data* of the current canvas graph.
@@ -289,7 +290,19 @@ export const useWorkflowStore = create<WorkflowState>()(
       // behaviour bit-for-bit). The orphan edges are then dropped. The
       // text-iterator node is brand new in v8 — no migration path needed
       // (no legacy graphs reference it).
-      version: 8,
+      // v9: Image Iterator's storage moved AGAIN — from
+      // `{ assetIds: string[] }` to `{ groupId: string }` linking to a
+      // real `AssetGroup` in the library (ADR-0032, Slice 5.6). For
+      // every existing image-iterator with non-empty `assetIds[]`, the
+      // migration creates an `Untitled` AssetGroup via
+      // `useAssetStore.getState().createGroup` and rewrites the
+      // iterator's config to `{ groupId, cursor, selectionMode, range? }`.
+      // Iterators with no `assetIds` (newly-spawned, not yet linked)
+      // get `groupId: ""` — the dispatcher will fill it in on first
+      // drop. NOTE: this requires the asset-store to be rehydrated
+      // BEFORE the workflow-store; AppShell's `useEffect` does exactly
+      // that (asset-store first, then workflow-store).
+      version: 9,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -492,14 +505,25 @@ export const useWorkflowStore = create<WorkflowState>()(
             return { ...nRaw, config: next };
           }
 
-          // image-iterator. Collect existing assetIds (idempotent path) or
-          // fall through to harvesting wired upstream edges.
+          // image-iterator. Three input shapes possible:
+          //   - v9-shaped already: `{ groupId: string, ... }` → idempotent.
+          //   - v8-shaped: `{ assetIds: string[], ... }` → materialise
+          //     an Untitled group, swap to `{ groupId, ... }`.
+          //   - pre-v8 multi-edge: assetIds derived from edges, then
+          //     run through the v8→v9 same-as-above.
+          const existingGroupId =
+            typeof old.groupId === "string" && old.groupId.length > 0
+              ? old.groupId
+              : undefined;
+
+          // Collect existing assetIds (idempotent path) or fall through
+          // to harvesting wired upstream edges (pre-v8).
           const assetIds = Array.isArray(old.assetIds)
             ? old.assetIds.filter(
                 (id): id is string => typeof id === "string" && id.length > 0,
               )
             : [];
-          if (assetIds.length === 0) {
+          if (assetIds.length === 0 && !existingGroupId) {
             // Walk edges targeting `images` and resolve each source.
             for (const edge of persistedEdges) {
               if (
@@ -513,10 +537,9 @@ export const useWorkflowStore = create<WorkflowState>()(
               if (upstreamAssetId) assetIds.push(upstreamAssetId);
             }
           } else {
-            // If the iterator already carries assetIds (hand-edited or
-            // round-tripped from v8), still drop any stale edges targeting
-            // the now-defunct `images` handle so the persisted JSON stays
-            // clean.
+            // If the iterator already carries assetIds OR a groupId,
+            // still drop any stale edges targeting the now-defunct
+            // `images` handle so the persisted JSON stays clean.
             for (const edge of persistedEdges) {
               if (edge.target === nRaw.id && edge.targetHandle === "images") {
                 orphanEdgeIds.add(edge.id);
@@ -524,8 +547,21 @@ export const useWorkflowStore = create<WorkflowState>()(
             }
           }
 
+          // v9: materialise an Untitled group when we have assetIds
+          // but no groupId yet. Asset-store is already rehydrated
+          // (AppShell ordering — asset-store first, then workflow).
+          let groupId = existingGroupId ?? "";
+          if (!groupId && assetIds.length > 0) {
+            groupId = useAssetStore.getState().createGroup({
+              name: "Set from canvas",
+              assetIds,
+              isUntitled: true,
+              scope: "project",
+            });
+          }
+
           const next: Record<string, unknown> = {
-            assetIds,
+            groupId,
             cursor: sanitiseCursor(old.cursor),
             selectionMode: sanitiseSelectionMode(old.selectionMode),
           };
