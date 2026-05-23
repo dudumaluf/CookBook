@@ -84,15 +84,28 @@ describe("dispatchAssetDrop (Slice 5.6d, ADR-0032)", () => {
 
   /* ──────────────────────────── N images ─────────────────────────── */
 
-  it("N images, empty canvas → create-group-and-spawn-iterator (Untitled)", () => {
+  it("N images, empty canvas → spawn N Image nodes (Slice 5.6.1; was create-group-and-spawn-iterator in 5.6d)", () => {
+    // User feedback (live test 1.4 of Slice 5.6): "I'd rather it just
+    // put 3 Image nodes on the canvas. Iterator is for groups."
+    // Iterator now only spawns from a deliberate group-card drag.
     const actions = dispatchAssetDrop({
       payload: { assetIds: ["a-1", "a-2", "a-3"], kind: "image" },
     });
     expect(actions).toEqual([
       {
-        type: "create-group-and-spawn-iterator",
-        assetIds: ["a-1", "a-2", "a-3"],
-        isUntitled: true,
+        type: "spawn-node",
+        kind: "image",
+        initialConfig: { assetId: "a-1" },
+      },
+      {
+        type: "spawn-node",
+        kind: "image",
+        initialConfig: { assetId: "a-2" },
+      },
+      {
+        type: "spawn-node",
+        kind: "image",
+        initialConfig: { assetId: "a-3" },
       },
     ]);
   });

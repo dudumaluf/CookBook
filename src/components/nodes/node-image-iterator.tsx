@@ -1,8 +1,7 @@
 "use client";
 
 import { Image as ImageIcon } from "lucide-react";
-import { useId } from "react";
-import { toast } from "sonner";
+import { useId, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -11,8 +10,14 @@ import {
   type SelectionMode,
   type SelectionRange,
 } from "@/lib/iterators/selection-mode";
+import {
+  ASSET_DRAG_MIME,
+  parseAssetDrag,
+} from "@/lib/library/asset-drag";
+import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { cn } from "@/lib/utils";
 import type { AssetGroupAsset } from "@/types/asset";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
@@ -82,6 +87,7 @@ export interface ImageIteratorNodeConfig {
 /* ────────────────────────────────────────────────────────────────────── */
 
 function ImageIteratorNodeBody({
+  nodeId,
   config,
   updateConfig,
 }: NodeBodyProps<ImageIteratorNodeConfig>) {
@@ -105,8 +111,69 @@ function ImageIteratorNodeBody({
   const currentUrl =
     currentAsset?.kind === "image" ? currentAsset.source.url : undefined;
 
+  // Slice 5.6.1 — body-level drop handling. Library drags weren't
+  // reliably bubbling up to canvas-flow's onDrop when the cursor was
+  // over an iterator's body, so the iterator owns its own listeners.
+  // Same dispatcher / handler used by the canvas root.
+  const [isDropTarget, setIsDropTarget] = useState(false);
+
+  function handleDragOver(event: React.DragEvent) {
+    if (!event.dataTransfer.types.includes(ASSET_DRAG_MIME)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDropTarget(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent) {
+    // Only clear when leaving the wrapper itself, not its children.
+    if (event.currentTarget === event.target) setIsDropTarget(false);
+  }
+
+  function handleDrop(event: React.DragEvent) {
+    setIsDropTarget(false);
+    const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
+    if (!raw) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const payload = parseAssetDrag(raw);
+    if (!payload) return;
+
+    // We pass `target` so the dispatcher routes to `append-to-group`
+    // when the iterator is linked. If groupId is empty (placeholder
+    // iterator), the dispatcher falls through to spawn — but the
+    // canvas-flow root is the right surface for that, not the
+    // iterator's body. We still call the helper; spawning a node on
+    // top of an iterator is rare but harmless (the new node lands at
+    // the iterator's position).
+    handleAssetDrop({
+      payload,
+      target: {
+        nodeId,
+        nodeKind: "image-iterator",
+        iteratorGroupId: config.groupId ?? "",
+      },
+      // The iterator's body has no flow-coords; we use { 0, 0 } for
+      // the spawn-fallback case. In practice the iterator only emits
+      // `append-to-group` actions, which don't read `position`.
+      position: { x: 0, y: 0 },
+    });
+    // Mirror canvas-flow's library-selection clear so the next click
+    // in the library starts fresh.
+    useAssetStore.getState().clearAssetSelection();
+  }
+
   return (
-    <div className="flex w-full min-w-[220px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
+    <div
+      data-testid="image-iterator-body"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={cn(
+        "flex w-full min-w-[220px] flex-col gap-2 px-3 pb-2.5 pt-0.5 transition-colors",
+        isDropTarget && "bg-accent/5 ring-1 ring-accent/40 rounded-md",
+      )}
+    >
       {!group ? (
         <EmptyStateMissingGroup />
       ) : count === 0 ? (
@@ -239,28 +306,8 @@ function ImageIteratorSettingsContent({
   const mode = config.selectionMode ?? "all";
   const range = config.range;
 
-  function handleDetach() {
-    if (!group) return;
-    const store = useAssetStore.getState();
-    // Pick a name like "<source> (copy)" or "<source> (copy 2)" if
-    // there's already a copy. We avoid a deeper conflict resolver
-    // since the user can rename right away if they want.
-    const baseName = `${group.name} (copy)`;
-    const newGroupId = store.createGroup({
-      name: baseName,
-      assetIds: [...group.assetIds],
-      isUntitled: false,
-      scope: group.scope,
-    });
-    updateConfig({ groupId: newGroupId });
-    // Reset cursor to 0 — the user expects a fresh navigation when
-    // they detach (the new group is independent).
-    updateConfig({ cursor: 0 });
-    toast.success(`Detached from "${group.name}" — created "${baseName}"`);
-    // `nodeId` is part of the prop contract but we don't need it here
-    // (updateConfig is already bound to the right node by GenericNode).
-    void nodeId;
-  }
+  // `nodeId` is part of the prop contract; not used in this body.
+  void nodeId;
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -340,7 +387,7 @@ function ImageIteratorSettingsContent({
 
       <div className="rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[10.5px] text-muted-foreground">
         {!group ? (
-          "Drag a Library group (or N images) onto this iterator to link it."
+          "Drag a Library group onto this iterator to link it."
         ) : count === 0 ? (
           <>
             Linked to <span className="text-foreground/80">{group.name}</span>{" "}
@@ -353,21 +400,6 @@ function ImageIteratorSettingsContent({
           </>
         )}
       </div>
-
-      {group ? (
-        <button
-          type="button"
-          data-testid="image-iterator-detach-button"
-          onClick={handleDetach}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="rounded-md border border-border/60 px-2 py-1.5 text-[11px] text-foreground/85 transition-colors hover:bg-foreground/[0.04]"
-        >
-          Detach from group
-          <span className="ml-1 text-muted-foreground/70">
-            (creates &ldquo;{group.name} (copy)&rdquo;)
-          </span>
-        </button>
-      ) : null}
     </div>
   );
 }

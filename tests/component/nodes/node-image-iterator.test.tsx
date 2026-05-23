@@ -463,22 +463,13 @@ describe("imageIteratorNodeSchema (Slice 5.6)", () => {
       expect(screen.getByLabelText(/end \(1-indexed\)/i)).toBeInTheDocument();
     });
 
-    it("renders the 'Detach from group' button only when a real group is linked", () => {
-      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
-      const { rerender } = render(
-        <SettingsContent
-          nodeId="iter-1"
-          config={makeConfig({ groupId: "" })}
-          updateConfig={() => undefined}
-          selected={false}
-        />,
-      );
-      expect(
-        screen.queryByTestId("image-iterator-detach-button"),
-      ).toBeNull();
-
+    it("does NOT render a Detach-from-group button (Slice 5.6.1: removed; forking is a future polish)", () => {
+      // Slice 5.6e shipped this button; live testing showed it
+      // surprised users ("creates more groups, is that it?"), so
+      // 5.6.1 removed it. Quick regression guard.
       seedGroup("g-1", "Linked", []);
-      rerender(
+      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
+      render(
         <SettingsContent
           nodeId="iter-1"
           config={makeConfig({ groupId: "g-1" })}
@@ -487,58 +478,8 @@ describe("imageIteratorNodeSchema (Slice 5.6)", () => {
         />,
       );
       expect(
-        screen.getByTestId("image-iterator-detach-button"),
-      ).toBeInTheDocument();
-    });
-
-    it("clicking 'Detach from group' creates a (copy) group and re-links the iterator", () => {
-      // Seed an image asset and a real (non-Untitled) source group.
-      seedImageAsset("a-1", "https://x/1.png", "First");
-      seedImageAsset("a-2", "https://x/2.png", "Second");
-      seedGroup("g-source", "Photoshoot Paris", ["a-1", "a-2"]);
-
-      const updateConfig = vi.fn();
-      const SettingsContent = imageIteratorNodeSchema.settings!.Content;
-      render(
-        <SettingsContent
-          nodeId="iter-1"
-          config={makeConfig({
-            groupId: "g-source",
-            cursor: 1,
-            selectionMode: "fixed",
-          })}
-          updateConfig={updateConfig}
-          selected={false}
-        />,
-      );
-      fireEvent.click(
-        screen.getByTestId("image-iterator-detach-button"),
-      );
-
-      // Two updateConfig calls: groupId rewrite + cursor reset.
-      const calls = updateConfig.mock.calls.map((c) => c[0]);
-      const groupIdCall = calls.find(
-        (c) => typeof c?.groupId === "string",
-      );
-      const cursorCall = calls.find((c) => c?.cursor === 0);
-      expect(groupIdCall).toBeDefined();
-      expect(cursorCall).toBeDefined();
-      const newGroupId = (groupIdCall as { groupId: string }).groupId;
-      // The new group exists in the asset store, named "<source> (copy)",
-      // referencing the SAME asset ids (no byte duplication).
-      const newGroup = useAssetStore.getState().getAsset(newGroupId);
-      expect(newGroup?.kind).toBe("asset-group");
-      if (newGroup?.kind === "asset-group") {
-        expect(newGroup.name).toBe("Photoshoot Paris (copy)");
-        expect(newGroup.assetIds).toEqual(["a-1", "a-2"]);
-        expect(newGroup.isUntitled).toBe(false);
-      }
-      // Source group survives unchanged.
-      const source = useAssetStore.getState().getAsset("g-source");
-      if (source?.kind === "asset-group") {
-        expect(source.name).toBe("Photoshoot Paris");
-        expect(source.assetIds).toEqual(["a-1", "a-2"]);
-      }
+        screen.queryByTestId("image-iterator-detach-button"),
+      ).toBeNull();
     });
   });
 
@@ -558,6 +499,104 @@ describe("imageIteratorNodeSchema (Slice 5.6)", () => {
     it("returns true once cursor moved off 0", () => {
       const has = imageIteratorNodeSchema.settings?.hasOverrides;
       expect(has?.(makeConfig({ groupId: "g-1", cursor: 1 }))).toBe(true);
+    });
+  });
+
+  /* ────────────── Slice 5.6.1: body-level drag/drop handlers ────────────── */
+
+  describe("body drag-and-drop (Slice 5.6.1)", () => {
+    function makeAssetDataTransfer(payload: string): DataTransfer {
+      // happy-dom's DataTransfer is incomplete; build a stub that
+      // covers the API surface we touch in the handler.
+      const map = new Map<string, string>();
+      map.set("application/x-cookbook-asset", payload);
+      return {
+        types: Array.from(map.keys()),
+        getData: (key: string) => map.get(key) ?? "",
+        setData: () => undefined,
+        dropEffect: "none",
+        effectAllowed: "all",
+        files: [] as unknown as FileList,
+        items: [] as unknown as DataTransferItemList,
+        clearData: () => undefined,
+        setDragImage: () => undefined,
+      } as unknown as DataTransfer;
+    }
+
+    it("dropping a library image onto the iterator's body adds the id to the linked group via addToGroup", () => {
+      seedImageAsset("a-1", "https://x/1.png", "First");
+      seedImageAsset("a-2", "https://x/2.png", "Second");
+      seedGroup("g-1", "Linked", ["a-1"]);
+
+      // Seed the workflow store so handle-asset-drop can resolve.
+      useWorkflowStore.setState({
+        nodes: [
+          {
+            id: "iter-1",
+            kind: "image-iterator",
+            position: { x: 0, y: 0 },
+            config: makeConfig({ groupId: "g-1" }),
+          },
+        ],
+        edges: [],
+      });
+
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+
+      const body = screen.getByTestId("image-iterator-body");
+      const payload = JSON.stringify({
+        assetIds: ["a-2"],
+        kind: "image",
+      });
+
+      fireEvent.dragOver(body, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+      fireEvent.drop(body, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+
+      // Group g-1 should now carry both ids in order.
+      const group = useAssetStore.getState().getAsset("g-1") as AssetGroupAsset;
+      expect(group.assetIds).toEqual(["a-1", "a-2"]);
+    });
+
+    it("dragOver of an unrelated MIME does NOT preventDefault (lets the browser handle native drops)", () => {
+      seedGroup("g-1", "Linked", []);
+      const Body = imageIteratorNodeSchema.Body;
+      render(
+        <Body
+          nodeId="iter-1"
+          config={makeConfig({ groupId: "g-1" })}
+          updateConfig={() => undefined}
+          selected={false}
+        />,
+      );
+
+      const body = screen.getByTestId("image-iterator-body");
+      // text/plain (foreign drag) — handler should ignore.
+      const dt = {
+        types: ["text/plain"],
+        getData: () => "",
+        setData: () => undefined,
+        dropEffect: "none",
+        effectAllowed: "all",
+      } as unknown as DataTransfer;
+
+      const event = new Event("dragover", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: dt });
+      const preventDefault = vi.spyOn(event, "preventDefault");
+      body.dispatchEvent(event);
+
+      expect(preventDefault).not.toHaveBeenCalled();
     });
   });
 });

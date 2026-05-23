@@ -2,6 +2,21 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-23 — M0a Slice 5.6.1: feedback fixes from live-testing 5.6 (ADR-0032 §8 amendment)
+
+Four UX gaps surfaced when the user took Slice 5.6 for a real spin. The data model from ADR-0032 holds — every Image Iterator stays linked to a library group; the library is the single source of truth for image sets. But three affordances were defaulting to the wrong behaviour for the user's actual mental model, and one was a real bug. All four land in a single sub-slice without touching the underlying store APIs.
+
+The four fixes:
+
+- **Multi-image drag spawns N Image nodes, not an iterator.** Cmd-click on 3 image cards in the library + drag onto canvas now puts 3 standalone Image nodes on the canvas (each offset by 24 px, mirroring the Soul-ID loop). Iterator only spawns from a deliberate group-card drag. The Slice 5.6d `create-group-and-spawn-iterator` branch is replaced with N `spawn-node` actions in `dispatchAssetDrop`. Auto-Untitled groups now only come from the import-as-group dialog (explicit user choice) or the v8→v9 migration (one-time).
+- **Grouped images hide from the top-level "Images" section.** `LibraryContent`'s top-level view now filters `imageAssets` by `!groupedImageIds.has(a.id)` — every image that's a member of any group is invisible at the top level (visible only inside the group's subview). Matches Finder's folder model. Removing the image from the group, or deleting the group, brings it back to "Images" naturally because the filter re-evaluates. No data shape change.
+- **The Detach-from-group button on the iterator's settings popover is removed.** Live testing showed the implicit "fork into a new group" model surprised users ("creates more groups, is that it?"). Iterators are now locked to their group for life. Replacement affordance ("Duplicate group" via right-click on the library card) is added to the ROADMAP polish backlog as a Slice 5.6f+ item. The corresponding `handleDetach` function + 2 component tests are removed; 1 regression-guard test is added (no Detach button in the popover when a group is linked).
+- **Drag from library onto an existing iterator now actually works.** Slice 5.6d shipped the `append-to-group` dispatcher branch but the canvas-root `onDrop` listener wasn't catching drops that landed on an iterator's body. Fix: extract the action-loop from `canvas-flow.tsx#onDrop` into a shared helper `src/lib/library/handle-asset-drop.ts`; mount `onDragOver` + `onDrop` directly on the iterator's body wrapper in `node-image-iterator.tsx`, delegating to the same helper. Both call sites use the same code path; the iterator body intercepts first and stops propagation. Bonus: the iterator's body gets a subtle accent ring while a drag hovers over it, making the drop affordance discoverable without explanatory copy.
+
+Tests: 577 → 584 (+7 net). One dispatcher test rewritten (N images branch), 2 component tests added for grouped-images visibility filter, 2 detach tests dropped + 1 regression-guard added, 5 new helper tests in `tests/unit/library/handle-asset-drop.test.ts`, 2 new component tests for the iterator's body-level drag handler. All four checks (`npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run docs:check`) green.
+
+Documentation: ADR-0032 §8 ("5.6.1 amendment") records the four design corrections in the same ADR that introduced the model. ROADMAP polish backlog gains "Duplicate group from library" as the future Detach replacement.
+
 ## 2026-05-23 — M0a Slice 5.6: AssetGroup as first-class library kind; Iterator always linked (ADR-0032)
 
 User came back after Slice 5.5 with a higher-order observation: dragging multi-selected images onto the canvas worked, but **organisationally** the library still had a flat list of N images for every batch — no way to revisit, rename, or reuse the curated set. Slice 5.6 promotes the batch to a first-class `AssetGroup` in the library and rewires the canvas so every Image Iterator is now a *view* over a group (`config.groupId` always set; Slice 5.5's `assetIds[]` is gone). The library is the single source of truth for "which images are in this set"; multiple iterators sharing the same group stay in sync naturally.

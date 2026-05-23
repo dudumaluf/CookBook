@@ -1,5 +1,5 @@
 /**
- * Drop dispatcher (Slice 5.6d, ADR-0032 — supersedes Slice 5.5c).
+ * Drop dispatcher (Slice 5.6.1, supersedes Slice 5.6d's N-images branch).
  *
  * Decides what happens when an asset payload from the library lands on
  * the canvas. Pure / framework-agnostic — takes the dispatched payload
@@ -8,14 +8,18 @@
  * action(s); the caller (`canvas-flow.tsx`'s `onDrop`) is responsible
  * for wiring each action into the right store mutation.
  *
- * The decision tree (post-5.6):
+ * The decision tree (post-5.6.1):
  *
  *   1 image asset, dropped on empty canvas
- *      → spawn 1 Image node (legacy single-image behaviour preserved)
+ *      → spawn 1 Image node
  *   1 image asset, dropped on an existing Image Iterator
  *      → `append-to-group` on the iterator's linked group
  *   N (>=2) image assets, dropped on empty canvas
- *      → `create-group-and-spawn-iterator` (auto Untitled group)
+ *      → spawn N Image nodes (one per id), offset slightly
+ *        ** Slice 5.6.1 change: was `create-group-and-spawn-iterator`
+ *           in Slice 5.6d. The user's expectation is "N drops = N
+ *           nodes"; auto-grouping into an iterator was unexpected.
+ *           Iterator now requires an explicit group drag. **
  *   N (>=2) image assets, dropped on an existing Image Iterator
  *      → `append-to-group` on the iterator's linked group
  *
@@ -202,25 +206,13 @@ export function dispatchAssetDrop({
     ];
   }
 
-  if (payload.assetIds.length === 1) {
-    // 1 image, empty canvas → spawn 1 Image node.
-    return [
-      {
-        type: "spawn-node",
-        kind: "image",
-        initialConfig: { assetId: payload.assetIds[0]! },
-      },
-    ];
-  }
-
-  // N images, empty canvas → create an Untitled group + spawn an
-  // iterator linked to it. The caller does both store writes and
-  // wires the freshly-minted groupId into the iterator's config.
-  return [
-    {
-      type: "create-group-and-spawn-iterator",
-      assetIds: payload.assetIds,
-      isUntitled: true,
-    },
-  ];
+  // 1 image OR N images on empty canvas → spawn one Image node per id
+  // (Slice 5.6.1). Multi-drag is "put each one on the canvas",
+  // matching Finder semantics. Iterator only spawns from a deliberate
+  // group-card drag (the asset-group branch above).
+  return payload.assetIds.map((id) => ({
+    type: "spawn-node" as const,
+    kind: "image",
+    initialConfig: { assetId: id },
+  }));
 }

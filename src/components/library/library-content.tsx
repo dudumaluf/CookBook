@@ -146,8 +146,20 @@ function TopLevelView({
     (a): a is AssetGroupAsset => a.kind === "asset-group",
   );
 
+  // Slice 5.6.1 — images that are members of any group hide from the
+  // top-level "Images" section. The user enters the group via the
+  // subview to see them. removeFromGroup / removeGroup brings them
+  // back to Images naturally because the filter re-evaluates. Matches
+  // Finder's folder model: a file lives in one place at a time.
+  const groupedImageIds = new Set(
+    groupAssets.flatMap((g) => g.assetIds),
+  );
+  const bareImageAssets = imageAssets.filter(
+    (a) => !groupedImageIds.has(a.id),
+  );
+
   if (
-    imageAssets.length === 0 &&
+    bareImageAssets.length === 0 &&
     soulIdAssets.length === 0 &&
     groupAssets.length === 0
   ) {
@@ -187,10 +199,10 @@ function TopLevelView({
           </div>
         </Section>
       ) : null}
-      {imageAssets.length > 0 ? (
-        <Section title="Images" count={imageAssets.length}>
+      {bareImageAssets.length > 0 ? (
+        <Section title="Images" count={bareImageAssets.length}>
           <div className="grid grid-cols-2 gap-1.5">
-            {imageAssets.map((asset) => (
+            {bareImageAssets.map((asset) => (
               <AssetCard key={asset.id} asset={asset} onOpen={onAssetOpen} />
             ))}
           </div>

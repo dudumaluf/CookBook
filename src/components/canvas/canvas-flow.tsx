@@ -29,9 +29,8 @@ import {
   ASSET_DRAG_MIME,
   parseAssetDrag,
 } from "@/lib/library/asset-drag";
-import { assetToNode } from "@/lib/library/asset-to-node";
 import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
-import { dispatchAssetDrop } from "@/lib/library/dispatch-asset-drop";
+import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 import { BaseNode } from "@/components/nodes/base-node";
@@ -576,6 +575,10 @@ function CanvasFlowInner() {
       // RF renders every node as `.react-flow__node[data-id="…"]` so a
       // `closest()` walk from the actual DOM target picks the deepest
       // node ancestor (handles drops on the body / header / handles).
+      // Note: when the drop lands on an iterator, the iterator's body
+      // listener (Slice 5.6.1) usually handles it FIRST and stops
+      // propagation. The hit-test below is defensive in case the
+      // event still bubbles up — same dispatcher / same action set.
       let dropNodeId: string | undefined;
       let dropNodeKind: string | undefined;
       let dropIteratorGroupId: string | undefined;
@@ -591,8 +594,6 @@ function CanvasFlowInner() {
           const targetNode = wsState.nodes.find((n) => n.id === id);
           dropNodeKind = targetNode?.kind;
           if (targetNode?.kind === "image-iterator") {
-            // Resolve the iterator's linked group so the dispatcher
-            // can pick `append-to-group` (Slice 5.6, ADR-0032).
             const cfg = (targetNode.config ?? {}) as { groupId?: unknown };
             if (typeof cfg.groupId === "string") {
               dropIteratorGroupId = cfg.groupId;
@@ -601,7 +602,12 @@ function CanvasFlowInner() {
         }
       }
 
-      const actions = dispatchAssetDrop({
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      handleAssetDrop({
         payload,
         target:
           dropNodeId && dropNodeKind
@@ -611,88 +617,8 @@ function CanvasFlowInner() {
                 iteratorGroupId: dropIteratorGroupId,
               }
             : undefined,
+        position,
       });
-
-      const position = screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
-      });
-      const ws = useWorkflowStore.getState();
-      const assetStore = useAssetStore.getState();
-
-      // Each action is small and idempotent; we run them in order.
-      // Multi-soul-id drops produce N spawn-node actions; we offset
-      // each subsequent spawn by a small delta so they don't stack
-      // exactly on top of each other.
-      let spawnIndex = 0;
-      for (const action of actions) {
-        if (action.type === "spawn-node") {
-          // For image / soul-id spawns coming from a 1-asset payload we
-          // round-trip through assetToNode so the node lands with the
-          // canonical { url } / { customReferenceId, … } config the
-          // legacy spawn produced. For image-iterator spawns we trust
-          // the dispatcher's initialConfig — it already carries the
-          // groupId.
-          let initialConfig = action.initialConfig;
-          if (
-            (action.kind === "image" || action.kind === "soul-id") &&
-            typeof initialConfig.assetId === "string"
-          ) {
-            const asset = assetStore.getAsset(initialConfig.assetId);
-            if (asset) initialConfig = assetToNode(asset).initialConfig;
-          }
-          ws.addNode(
-            action.kind,
-            {
-              x: position.x + spawnIndex * 24,
-              y: position.y + spawnIndex * 24,
-            },
-            initialConfig,
-          );
-          spawnIndex++;
-        } else if (action.type === "create-group-and-spawn-iterator") {
-          // 5.6d: N images dropped on empty canvas → create an
-          // `Untitled` group on the fly + spawn an iterator linked to
-          // it. The asset-store's createGroup handles auto-naming
-          // (`Untitled <N>`).
-          const newGroupId = useAssetStore.getState().createGroup({
-            assetIds: action.assetIds,
-            isUntitled: action.isUntitled,
-            scope: "project",
-          });
-          ws.addNode(
-            "image-iterator",
-            {
-              x: position.x + spawnIndex * 24,
-              y: position.y + spawnIndex * 24,
-            },
-            { groupId: newGroupId, cursor: 0, selectionMode: "all" },
-          );
-          spawnIndex++;
-        } else if (action.type === "append-to-group") {
-          // Propagate the dropped ids into the iterator's linked
-          // group. Two cases: a raw image-id list, or a single
-          // sentinel "@group:<id>" that needs expansion.
-          const expandedIds: string[] = [];
-          for (const id of action.assetIds) {
-            if (typeof id === "string" && id.startsWith("@group:")) {
-              const sourceGroupId = id.slice("@group:".length);
-              const sourceGroup = assetStore.getAsset(sourceGroupId);
-              if (sourceGroup?.kind === "asset-group") {
-                expandedIds.push(...sourceGroup.assetIds);
-              }
-            } else {
-              expandedIds.push(id);
-            }
-          }
-          if (expandedIds.length > 0) {
-            useAssetStore
-              .getState()
-              .addToGroup(action.groupId, expandedIds);
-          }
-        }
-        // "noop" → fall through; nothing to do.
-      }
 
       // Drag landed → user committed; clear the library selection so
       // the next click starts fresh (matches Finder).
