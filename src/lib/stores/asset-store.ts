@@ -80,6 +80,14 @@ export interface AssetState {
     name: string;
     tags?: string[];
     scope?: AssetScope;
+    /**
+     * Optional pixel dimensions (Slice 5.6.2). The Export node now
+     * passes these through after `uploadImageFromUrl` measures the
+     * downloaded image; node previews use them directly for
+     * `aspect-ratio` styling without a re-measure.
+     */
+    width?: number;
+    height?: number;
   }) => string;
 
   /**
@@ -235,6 +243,8 @@ export const useAssetStore = create<AssetState>()(
 
       createImageAssetFromFile: async (file, params) => {
         // Upload first; if Supabase fails we never commit a half-built record.
+        // The uploader also captures pixel dimensions before the upload
+        // (Slice 5.6.2) so the asset ships with width/height when present.
         const uploaded = await uploadImageAsset(file);
         const id = makeAssetId();
         const now = Date.now();
@@ -252,6 +262,8 @@ export const useAssetStore = create<AssetState>()(
             mime: uploaded.mime,
             sizeBytes: uploaded.sizeBytes,
           },
+          ...(uploaded.width !== undefined ? { width: uploaded.width } : {}),
+          ...(uploaded.height !== undefined ? { height: uploaded.height } : {}),
           createdAt: now,
           updatedAt: now,
         };
@@ -296,6 +308,8 @@ export const useAssetStore = create<AssetState>()(
             mime: params.mime,
             sizeBytes: params.sizeBytes,
           },
+          ...(params.width !== undefined ? { width: params.width } : {}),
+          ...(params.height !== undefined ? { height: params.height } : {}),
           createdAt: now,
           updatedAt: now,
         };

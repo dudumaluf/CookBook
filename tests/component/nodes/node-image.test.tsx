@@ -26,6 +26,30 @@ beforeEach(() => {
   }));
 });
 
+function seedAssetWithDimensions(width?: number, height?: number): string {
+  const asset: ImageAsset = {
+    id: "asset_with_dims",
+    kind: "image",
+    name: "Sized Cat",
+    tags: [],
+    scope: "project",
+    createdAt: 1,
+    updatedAt: 1,
+    source: {
+      type: "remote",
+      bucket: "cookbook-assets",
+      key: "images/abc/cat.png",
+      url: "https://cdn.supabase.test/cookbook-assets/images/abc/cat.png",
+      mime: "image/png",
+      sizeBytes: 1234,
+    },
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
+  };
+  useAssetStore.setState({ assets: [asset] });
+  return asset.id;
+}
+
 function seedRemoteAsset(name = "My Cat"): string {
   const asset: ImageAsset = {
     id: "asset_remote",
@@ -311,17 +335,51 @@ describe("imageNodeSchema", () => {
     });
   });
 
-  describe("schema.size — width-only resize (height follows aspect-square) — ADR-0028", () => {
-    it("declares horizontal-only resize because the preview is aspect-square", () => {
-      // Vertical or 'both' would be confusing — the image wouldn't actually
-      // stretch since its container is `aspect-square`. Width-only keeps
-      // the affordance honest.
+  describe("schema.size — width-only resize (height follows aspect ratio) — ADR-0028", () => {
+    it("declares horizontal-only resize because the preview's height follows the linked asset's aspect", () => {
+      // Vertical or 'both' would be confusing — the container's height is
+      // derived from style.aspectRatio (Slice 5.6.2), so a manual vertical
+      // drag wouldn't actually stretch the image.
       expect(imageNodeSchema.size?.resizable).toBe("horizontal");
     });
 
     it("caps width range so the preview stays useful but doesn't dominate the canvas", () => {
       expect(imageNodeSchema.size?.minWidth).toBe(200);
       expect(imageNodeSchema.size?.maxWidth).toBe(480);
+    });
+  });
+
+  describe("Body — preview aspect ratio (Slice 5.6.2)", () => {
+    it("uses the linked asset's width / height as a CSS aspect-ratio when present", () => {
+      const id = seedAssetWithDimensions(1920, 1080);
+      const Body = imageNodeSchema.Body;
+      render(
+        <Body
+          nodeId="image_1"
+          config={{ url: "", assetId: id }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const preview = screen.getByTestId("image-preview");
+      expect(preview.style.aspectRatio).toBe("1920 / 1080");
+    });
+
+    it("falls back to '1 / 1' when the linked asset has no stored dimensions", () => {
+      const id = seedAssetWithDimensions(); // no width / height
+      const Body = imageNodeSchema.Body;
+      render(
+        <Body
+          nodeId="image_1"
+          config={{ url: "", assetId: id }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const preview = screen.getByTestId("image-preview");
+      // happy-dom can't load <img> for real, so naturalDimensions never
+      // populates. Default '1 / 1' is the expected fallback at this point.
+      expect(preview.style.aspectRatio).toBe("1 / 1");
     });
   });
 });

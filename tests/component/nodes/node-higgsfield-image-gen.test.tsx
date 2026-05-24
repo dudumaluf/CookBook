@@ -150,6 +150,73 @@ describe("higgsfieldImageGenNodeSchema", () => {
         screen.getByText(/connect a prompt then click run/i),
       ).toBeTruthy();
     });
+
+    /* ─────────────── Slice 5.6.2: aspect-ratio-aware preview ─────── */
+
+    it("running placeholder respects config.aspectRatio (9:16 portrait)", async () => {
+      const { useExecutionStore } = await import("@/lib/stores/execution-store");
+      useExecutionStore.setState({
+        records: new Map([["n1", { status: "running" } as never]]),
+      });
+
+      const Body = higgsfieldImageGenNodeSchema.Body;
+      render(
+        <Body
+          nodeId="n1"
+          config={{ aspectRatio: "9:16" }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const placeholder = screen.getByTestId("higgsfield-running");
+      expect(placeholder.style.aspectRatio).toBe("9 / 16");
+    });
+
+    it("running placeholder falls back to 1:1 when no aspectRatio is set", async () => {
+      const { useExecutionStore } = await import("@/lib/stores/execution-store");
+      useExecutionStore.setState({
+        records: new Map([["n1", { status: "running" } as never]]),
+      });
+
+      const Body = higgsfieldImageGenNodeSchema.Body;
+      render(
+        <Body
+          nodeId="n1"
+          config={{}}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const placeholder = screen.getByTestId("higgsfield-running");
+      expect(placeholder.style.aspectRatio).toBe("1 / 1");
+    });
+
+    it("single-result preview uses config.aspectRatio (16:9 landscape)", async () => {
+      const { useExecutionStore } = await import("@/lib/stores/execution-store");
+      useExecutionStore.setState({
+        records: new Map([
+          [
+            "n1",
+            {
+              status: "done",
+              output: { type: "image", value: { url: "https://x.test/a.png" } },
+            } as never,
+          ],
+        ]),
+      });
+
+      const Body = higgsfieldImageGenNodeSchema.Body;
+      render(
+        <Body
+          nodeId="n1"
+          config={{ aspectRatio: "16:9" }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      const result = screen.getByTestId("higgsfield-result-single");
+      expect(result.style.aspectRatio).toBe("16 / 9");
+    });
   });
 
   /* ─────────────────────────── execute() ───────────────────────────── */

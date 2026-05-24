@@ -18,6 +18,14 @@ vi.mock("@/lib/supabase/client", () => {
   };
 });
 
+// `uploadImageAsset` now measures pixel dimensions (Slice 5.6.2) before
+// Supabase round-trip via `extractImageDimensions`. happy-dom doesn't
+// load images, so the helper would hang. Stub it module-wide; the
+// helper has its own focused tests in extract-image-dimensions.test.ts.
+vi.mock("@/lib/library/extract-image-dimensions", () => ({
+  extractImageDimensions: vi.fn(async () => ({ width: 1920, height: 1080 })),
+}));
+
 const supabaseClient = (await import("@/lib/supabase/client")) as unknown as {
   __mocks: {
     upload: ReturnType<typeof vi.fn>;
@@ -112,6 +120,23 @@ describe("uploadImageAsset", () => {
     expect(
       supabaseClient.__mocks.upload.mock.calls[0]?.[2]?.contentType,
     ).toBe("application/octet-stream");
+  });
+
+  // Slice 5.6.2 — width / height propagation
+  it("propagates width / height onto the descriptor when extractImageDimensions resolves", async () => {
+    const file = new File(["x"], "ratio.png", { type: "image/png" });
+    const out = await uploadImageAsset(file);
+    expect(out.width).toBe(1920);
+    expect(out.height).toBe(1080);
+  });
+
+  it("omits width / height when extractImageDimensions resolves to null (no measurement)", async () => {
+    const extract = await import("@/lib/library/extract-image-dimensions");
+    vi.mocked(extract.extractImageDimensions).mockResolvedValueOnce(null);
+    const file = new File(["x"], "ratio.png", { type: "image/png" });
+    const out = await uploadImageAsset(file);
+    expect(out.width).toBeUndefined();
+    expect(out.height).toBeUndefined();
   });
 });
 

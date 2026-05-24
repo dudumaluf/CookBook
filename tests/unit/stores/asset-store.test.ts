@@ -71,6 +71,51 @@ describe("asset-store", () => {
       ).rejects.toThrow(/network down/);
       expect(useAssetStore.getState().assets).toHaveLength(0);
     });
+
+    /* ─────────────── Slice 5.6.2: width / height propagation ──────────── */
+
+    it("propagates width / height from the uploader onto the ImageAsset record", async () => {
+      uploadMock.mockResolvedValueOnce({
+        bucket: "cookbook-assets",
+        key: "images/aaa/cat.png",
+        url: "https://cdn.supabase.test/cookbook-assets/images/aaa/cat.png",
+        mime: "image/png",
+        sizeBytes: 100,
+        width: 1920,
+        height: 1080,
+      });
+      const id = await useAssetStore
+        .getState()
+        .createImageAssetFromFile(makeFile("cat.png"));
+      const asset = useAssetStore.getState().getAsset(id);
+      if (asset?.kind === "image") {
+        expect(asset.width).toBe(1920);
+        expect(asset.height).toBe(1080);
+      } else {
+        throw new Error("expected an image asset");
+      }
+    });
+
+    it("omits width / height when the uploader couldn't measure (e.g. malformed file)", async () => {
+      uploadMock.mockResolvedValueOnce({
+        bucket: "cookbook-assets",
+        key: "images/aaa/cat.png",
+        url: "https://cdn.supabase.test/cookbook-assets/images/aaa/cat.png",
+        mime: "image/png",
+        sizeBytes: 100,
+        // No width / height — measurement failed.
+      });
+      const id = await useAssetStore
+        .getState()
+        .createImageAssetFromFile(makeFile("cat.png"));
+      const asset = useAssetStore.getState().getAsset(id);
+      if (asset?.kind === "image") {
+        expect(asset.width).toBeUndefined();
+        expect(asset.height).toBeUndefined();
+      } else {
+        throw new Error("expected an image asset");
+      }
+    });
   });
 
   describe("createImageAssetFromUrl (secondary, paste-a-URL escape hatch)", () => {

@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { defineNode } from "@/lib/engine/define-node";
 import { importImageFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { aspectFromImageDimensions } from "@/lib/utils/aspect-ratio";
 import type { NodeBodyProps } from "@/types/node";
 
 /**
@@ -55,6 +56,26 @@ function ImageNodeBody({
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [urlDisclosed, setUrlDisclosed] = useState(false);
 
+  // Slice 5.6.2 — render the preview at the image's true aspect ratio
+  // instead of forcing a square crop. Three signal sources, fastest-first:
+  //   1. linked asset's stored width / height (set on upload, no flicker).
+  //   2. fallback: <img onLoad> measures naturalDimensions and sets state.
+  //   3. ultimate fallback: 1:1 (matches the old square behavior).
+  const [imgNaturalDimensions, setImgNaturalDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const linkedDims =
+    linkedAsset?.kind === "image" &&
+    linkedAsset.width !== undefined &&
+    linkedAsset.height !== undefined
+      ? { width: linkedAsset.width, height: linkedAsset.height }
+      : null;
+  const previewDims = linkedDims ?? imgNaturalDimensions;
+  const previewCssAspect = previewDims
+    ? aspectFromImageDimensions(previewDims.width, previewDims.height)
+    : "1 / 1";
+
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setIsUploading(true);
@@ -94,12 +115,29 @@ function ImageNodeBody({
     // gap is small to match the tightened chrome.
     <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       {hasImage ? (
-        <div className="relative">
+        <div
+          className="relative"
+          data-testid="image-preview"
+          style={{ aspectRatio: previewCssAspect }}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={effectiveUrl}
             alt="Image source"
-            className="aspect-square w-full rounded-md bg-foreground/5 object-cover"
+            className="h-full w-full rounded-md bg-foreground/5 object-cover"
+            onLoad={(e) => {
+              // Measure-on-load for legacy assets that have no stored
+              // width / height. Skip when we already have linked dims to
+              // avoid stomping over a known-good signal.
+              if (linkedDims) return;
+              const img = e.currentTarget;
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                setImgNaturalDimensions({
+                  width: img.naturalWidth,
+                  height: img.naturalHeight,
+                });
+              }
+            }}
             onError={(e) => {
               (e.target as HTMLImageElement).style.display = "none";
             }}
@@ -267,12 +305,12 @@ export const imageNodeSchema = defineNode<ImageNodeConfig>({
     return { type: "image", value: { url: config.url } };
   },
   Body: ImageNodeBody,
-  // Size contract (ADR-0028). Width-only resize because the preview is
-  // `aspect-square`: height naturally follows width, so a "both" handle
-  // would be redundant and a vertical-only handle would be confusing
-  // (the image wouldn't actually stretch). Horizontal range tuned so a
-  // preview stays useful (≥ 200 px) but doesn't dominate the canvas
-  // (≤ 480 px).
+  // Size contract (ADR-0028). Width-only resize: the preview's aspect
+  // ratio is derived from the linked asset (or the loaded image) — height
+  // naturally follows width, so a "both" handle would be redundant and a
+  // vertical-only handle would be confusing (the image wouldn't actually
+  // stretch). Horizontal range tuned so a preview stays useful (≥ 200 px)
+  // but doesn't dominate the canvas (≤ 480 px).
   size: {
     defaultWidth: 240,
     minWidth: 200,

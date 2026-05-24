@@ -18,12 +18,27 @@
 
 import { getAssetsBucket, getSupabaseClient } from "@/lib/supabase/client";
 
+import { extractImageDimensions } from "./extract-image-dimensions";
+
 export interface UploadedImageDescriptor {
   bucket: string;
   key: string;
   url: string;
   mime: string;
   sizeBytes: number;
+  /**
+   * Image pixel dimensions captured BEFORE upload via an off-screen
+   * `Image` element (Slice 5.6.2). Stored on the resulting
+   * `ImageAsset` so node previews can render with the correct
+   * `aspect-ratio` from day one — no `<img onLoad>` flicker.
+   *
+   * Optional because `extractImageDimensions` resolves to `null` on
+   * malformed images / non-image MIMEs (rather than blocking the
+   * upload). When omitted, downstream renderers fall back to the
+   * `<img onLoad>` measurement path.
+   */
+  width?: number;
+  height?: number;
 }
 
 /** Strip / replace anything that's not safe in a storage object key. */
@@ -67,6 +82,13 @@ export async function uploadImageAsset(
   const bucket = getAssetsBucket();
   const key = buildObjectKey(file.name);
 
+  // Capture pixel dimensions BEFORE the network round-trip so the
+  // resulting `ImageAsset` ships with `width / height` on day one
+  // (Slice 5.6.2). Failures resolve to `null` and the upload
+  // continues — "uploaded with no dimensions" is strictly better
+  // than "no upload at all because we couldn't measure".
+  const dimensions = await extractImageDimensions(file);
+
   const { error } = await supabase.storage.from(bucket).upload(key, file, {
     contentType: file.type || "application/octet-stream",
     cacheControl: "31536000", // 1y; objects are immutable per key
@@ -87,6 +109,7 @@ export async function uploadImageAsset(
     url: data.publicUrl,
     mime: file.type || "application/octet-stream",
     sizeBytes: file.size,
+    ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
   };
 }
 

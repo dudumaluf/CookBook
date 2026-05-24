@@ -2,6 +2,35 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-24 — ADR-0033 + M0a Slice 5.6.2: production-first development + dynamic aspect ratio in node previews
+
+Two surgical commits. ADR-0033 cristalliza a regra "production-first development" — Cookbook lives in production at [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app); Vercel + Supabase + Higgsfield + Fal são o stack canônico; webhooks são caminho primário (não polling); URLs absolutas em todo lugar; smoke test em prod é parte da definição-de-pronto. 8 seções, sem código, ~110 linhas. Documenta o padrão emergente das slices anteriores e fixa a regra para frente.
+
+Slice 5.6.2 corrige o problema concreto que motivou a ADR: previews quadrados em todo lugar. Higgsfield gera 720×1280 (9:16) → o thumb na canvas era esmagado num quadrado, com `object-cover` cortando a imagem. UX feio + perde sinal visual ("isso vai gerar vertical").
+
+Estratégia híbrida em três camadas:
+
+- **Capture-on-upload (primary).** `extractImageDimensions(file)` mede `naturalWidth / naturalHeight` via off-screen `Image` element + ObjectURL **antes** do upload pro Supabase. `uploadImageAsset` propaga as dimensões pro descriptor; `createImageAssetFromFile` / `createImageAssetFromUploaded` salvam em `ImageAsset.width / .height`. Forever there. Zero flicker no render.
+- **Auto-detect-on-load (fallback).** Pra assets antigos sem dimensions: `<img onLoad>` lê `naturalWidth/Height` e atualiza state local. Não persiste (read-only fallback) — nova upload já entra na rota primária.
+- **Config-as-source (Higgsfield).** O placeholder idle/running do `node-higgsfield-image-gen.tsx` usa `parseAspectRatio(config.aspectRatio)` direto: 9:16 selecionado → placeholder portrait imediatamente, antes mesmo do gen rodar. Resultado single-image herda o mesmo ratio (config = real). Grid 2×2 / 4× preserva células quadradas — é layout, não preview de conteúdo.
+
+Files novos:
+
+- `src/lib/utils/aspect-ratio.ts` — `parseAspectRatio("16:9") → { ratio: 16/9, cssAspect: "16 / 9" }` (returns null em input inválido) e `aspectFromImageDimensions(1920, 1080) → "1920 / 1080"` (defensive: zero/negative → `"1 / 1"`). Pure helpers, zero deps.
+- `src/lib/library/extract-image-dimensions.ts` — `extractImageDimensions(file)`. Resolve com `null` em qualquer falha (não bloqueia upload). Cleanup do ObjectURL via `URL.revokeObjectURL`.
+
+Files modificados:
+
+- `src/lib/library/upload-asset.ts`: `UploadedImageDescriptor` ganha `width? / height?`; `uploadImageAsset` mede antes do round-trip.
+- `src/lib/stores/asset-store.ts`: `createImageAssetFromFile` propaga `uploaded.width/height`; `createImageAssetFromUploaded` aceita `width? / height?` opcionais (Export node passa adiante).
+- `src/components/nodes/node-image.tsx`: preview wrapper usa `style={{ aspectRatio: previewCssAspect }}`. Empty state mantém square (sem ratio conhecido até subir).
+- `src/components/nodes/node-image-iterator.tsx`: thumbnail do cursor item usa `style.aspectRatio` baseado no `currentAsset.width/height` (ou `<img onLoad>` fallback).
+- `src/components/nodes/node-higgsfield-image-gen.tsx`: idle/running/single-result usam `parseAspectRatio(config.aspectRatio)`; grid 2×2 mantém quadrado.
+
+Tests: 586 → 605 (+19 net). 10 unit em `tests/unit/utils/aspect-ratio.test.ts` + `tests/unit/library/extract-image-dimensions.test.ts`. 2 store em `tests/unit/stores/asset-store.test.ts` (width/height propagation + null fallback). 3 upload em `tests/unit/library/upload-asset.test.ts` (mock do `extractImageDimensions` pra evitar timeout em happy-dom). 4 component em `tests/component/nodes/node-image.test.tsx` + `tests/component/nodes/node-higgsfield-image-gen.test.tsx`. All four checks (`npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run docs:check`) verde.
+
+Smoke em prod: per ADR-0033 §6, após push o user abre `artificial-cookbook.vercel.app`, gera uma 9:16 com Higgsfield e confirma que o preview agora respeita o ratio (em vez de virar quadrado esmagado). Out-of-scope explicitamente: library card thumbnails (grid 2×2 precisa silhueta uniforme), queue thumbnails (mesmo motivo), retroactive width/height migration de assets antigos (lazy-upgrade via `<img onLoad>` cobre o display).
+
 ## 2026-05-24 — M0a Slice 5.6.1b: drag image card onto group card inside the library
 
 Fifth feedback fix from live testing, follow-up to Slice 5.6.1. User asked: "should I be able to drag a single asset into a group inside the asset panel also?". Yes — and now you can. Drag any image card onto any group card in the library and the image is added to the group via `addToGroup`. Mirrors Finder ("drag file into folder").

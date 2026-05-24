@@ -29,7 +29,7 @@ import {
 } from "@/lib/higgsfield/types";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { useExecutionStore } from "@/lib/stores/execution-store";
-import { cn } from "@/lib/utils";
+import { parseAspectRatio } from "@/lib/utils/aspect-ratio";
 import type {
   ImageRef,
   NodeBodyProps,
@@ -114,6 +114,13 @@ function HiggsfieldImageGenNodeBody({
         ? [record.output.value.url]
         : [];
 
+  // Slice 5.6.2 — drive the placeholder + single-result preview off the
+  // configured `aspectRatio` (so a "9:16" generation paints a portrait
+  // box even before the image lands). Grid cells in 2x2 / 4x batches
+  // stay square — that's a layout tile, not an aspect-faithful preview.
+  const configuredAspect =
+    parseAspectRatio(config.aspectRatio)?.cssAspect ?? "1 / 1";
+
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       {/* Status / metadata strip — always present, very small. */}
@@ -137,16 +144,40 @@ function HiggsfieldImageGenNodeBody({
           {record.error}
         </p>
       ) : status === "running" ? (
-        <div className="flex aspect-square w-full items-center justify-center rounded-md bg-foreground/[0.04] text-muted-foreground">
+        <div
+          data-testid="higgsfield-running"
+          className="flex w-full items-center justify-center rounded-md bg-foreground/[0.04] text-muted-foreground"
+          style={{ aspectRatio: configuredAspect }}
+        >
           <Loader2 className="h-5 w-5 animate-spin" />
         </div>
-      ) : imageUrls.length > 0 ? (
-        <div
-          className={cn(
-            "grid gap-1.5",
-            imageUrls.length === 1 ? "grid-cols-1" : "grid-cols-2",
-          )}
+      ) : imageUrls.length === 1 ? (
+        // Single-result path: aspect-faithful preview — the result was
+        // generated AT the configured ratio so config = real.
+        <a
+          href={imageUrls[0]!}
+          target="_blank"
+          rel="noreferrer noopener"
+          onPointerDown={(e) => e.stopPropagation()}
+          data-testid="higgsfield-result-single"
+          className="block w-full overflow-hidden rounded-md bg-foreground/5"
+          style={{ aspectRatio: configuredAspect }}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageUrls[0]!}
+            alt="Generated"
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        </a>
+      ) : imageUrls.length > 1 ? (
+        // Multi-result grid: cells stay square. The grid is a layout
+        // tile, not a preview of the content — uniform squares give a
+        // legible 2x2 / 4x silhouette regardless of the source ratio.
+        <div className="grid grid-cols-2 gap-1.5">
           {imageUrls.map((url, i) => (
             <a
               key={`${url}-${i}`}

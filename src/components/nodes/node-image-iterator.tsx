@@ -18,6 +18,7 @@ import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { cn } from "@/lib/utils";
+import { aspectFromImageDimensions } from "@/lib/utils/aspect-ratio";
 import type { AssetGroupAsset } from "@/types/asset";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
@@ -111,6 +112,24 @@ function ImageIteratorNodeBody({
   const currentUrl =
     currentAsset?.kind === "image" ? currentAsset.source.url : undefined;
 
+  // Slice 5.6.2 — preview reflects the cursor item's true aspect ratio.
+  // Linked-asset width/height (set on upload) gives a flicker-free
+  // initial render; legacy assets fall back to <img onLoad> measurement.
+  const [imgNaturalDimensions, setImgNaturalDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const linkedDims =
+    currentAsset?.kind === "image" &&
+    currentAsset.width !== undefined &&
+    currentAsset.height !== undefined
+      ? { width: currentAsset.width, height: currentAsset.height }
+      : null;
+  const previewDims = linkedDims ?? imgNaturalDimensions;
+  const previewCssAspect = previewDims
+    ? aspectFromImageDimensions(previewDims.width, previewDims.height)
+    : "1 / 1";
+
   // Slice 5.6.1 — body-level drop handling. Library drags weren't
   // reliably bubbling up to canvas-flow's onDrop when the cursor was
   // over an iterator's body, so the iterator owns its own listeners.
@@ -180,15 +199,31 @@ function ImageIteratorNodeBody({
         <EmptyStateEmptyGroup groupName={group.name} />
       ) : (
         <>
-          {/* Square thumbnail of the current cursor item. Falls through
-              to the icon glyph if the asset is missing or its url 404s. */}
-          <div className="relative aspect-square w-full overflow-hidden rounded-md bg-foreground/5">
+          {/* Aspect-ratio-aware thumbnail of the current cursor item.
+              Defaults to 1:1 when no dimensions are known yet. Falls
+              through to the icon glyph if the asset is missing or its
+              url 404s. */}
+          <div
+            data-testid="image-iterator-preview"
+            className="relative w-full overflow-hidden rounded-md bg-foreground/5"
+            style={{ aspectRatio: previewCssAspect }}
+          >
             {currentUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={currentUrl}
                 alt={currentAsset?.name ?? "iterator current"}
                 className="h-full w-full object-cover"
+                onLoad={(e) => {
+                  if (linkedDims) return;
+                  const img = e.currentTarget;
+                  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                    setImgNaturalDimensions({
+                      width: img.naturalWidth,
+                      height: img.naturalHeight,
+                    });
+                  }
+                }}
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = "none";
                 }}
