@@ -1045,3 +1045,108 @@ After Slice 5.6 shipped, live-testing surfaced four UX gaps that contradicted th
 - **Drag from library onto an existing iterator now actually works.** Slice 5.6d shipped the dispatcher's `append-to-group` branch, but the canvas-root `onDrop` listener wasn't seeing drops that landed on an iterator's body — likely a React Flow internals interaction with `nodrag`-marked descendants. **Fix shape**: extract the action-loop from `canvas-flow.tsx#onDrop` into a shared helper `src/lib/library/handle-asset-drop.ts`. Mount `onDragOver` + `onDrop` directly on the iterator's body wrapper in `node-image-iterator.tsx`, delegating to the same helper. Both the canvas root and the iterator body now go through one code path; the iterator body intercepts first and stops propagation, falling back to the canvas root if the drop missed the iterator. **Bonus**: the iterator's body gets a subtle ring while the user drags an asset over it (`isDropTarget` state), making the drop affordance discoverable without copy.
 
 The four changes together preserve the AssetGroup-as-substantive model from §1 while making the affordances match how users actually reach for them. The data layer (asset store + workflow store) and the engine fan-out are bit-identical to Slice 5.6.
+
+## ADR-0033 — Production-first development; Vercel + Supabase + Higgsfield + Fal as the canonical deployed stack (M0a, post-Slice 5.6.1b)
+
+- **Date**: 2026-05-24
+- **Status**: convention lock-in. Cristalliza a regra que emergiu durante o setup de produção do Cookbook: *"vamos testar tudo online, não codar coisas que só funciona local"* (verbatim do usuário). Não descreve uma feature; descreve **como** features são construídas a partir daqui. Cada slice nova vai aderir a essa convenção; as anteriores são grandfathered (foram construídas antes do Vercel deploy estar verde, então OK ter rodado só local).
+- **Context**: ADR-0024 (Fal OpenRouter route) e ADR-0029 (Higgsfield Cloud route) já documentavam *como* falar com cada serviço externo do servidor. ADR-0033 sobe um nível: documenta que o app inteiro vive em quatro integrações deployadas, e que **cada nova feature precisa funcionar end-to-end na URL pública** antes de fechar. A motivação concreta: durante o setup do Vercel, descobri que feature de "Soul ID training" pediria webhook callback (Higgsfield → nosso server quando treino completa). Em dev local sem URL pública, webhook não chega — então polling vira fallback, mas em produção webhook é estritamente melhor. Sem essa ADR, eu (ou o próximo agente) ia codar polling-only "porque dev local", e o webhook ficaria parqueado pra "depois". Não — em produção webhooks são o caminho primário, e qualquer feature pensa primeiro em "como isso roda em prod".
+
+### 1. Stack canônico
+
+```mermaid
+flowchart LR
+  user["User browser"] --> vercel["Vercel<br/>(Next 16 SSR + Edge functions)"]
+  vercel -->|"server routes"| higgsfield["Higgsfield Cloud<br/>(Soul ID, generation,<br/>training)"]
+  vercel -->|"server routes"| fal["Fal OpenRouter<br/>(LLM Text + Vision)"]
+  vercel -->|"client + server"| supabase["Supabase<br/>(Storage bucket:<br/>cookbook-assets)"]
+  higgsfield -->|"future webhooks"| vercel
+  fal -.->|"polling on subscribe"| vercel
+```
+
+- **Vercel** — host + serverless runtime + auto-deploy on push to `main`. URL pública canônica: `https://artificial-cookbook.vercel.app`.
+- **Supabase** — bucket `cookbook-assets` pra image bytes (uploaded direto do browser via publishable key). Bucket public: true. Único storage de imagens do app.
+- **Higgsfield Cloud** — Soul ID training/listing, image generation. Dual-auth scheme (ADR-0029). Server-only via `import "server-only"` wrappers.
+- **Fal OpenRouter** — LLM text + vision. Server-only (ADR-0024). Único provedor de LLM no Cookbook (não usamos Anthropic / OpenAI direto).
+
+### 2. Branch + deploy strategy
+
+- `main` direto = production deploy. Cada commit triggera `vercel deploy`. Auto-promovido (sem manual approval).
+- Sem feature branches em M0a. Trabalho em `main` é o ritmo: pequeno, contínuo, com testes verdes.
+- Rollback: `vercel rollback` ou `vercel promote <previous-deployment>` se um deploy quebrar prod. Histórico fica preservado (cada deploy é imutável; só o alias canônico aponta).
+- Quando M0c (assistente DSL) chegar, podemos abrir feature branches + preview deploys per-PR. Por agora é overhead.
+
+### 3. Webhooks são caminho primário
+
+Toda integração que precisa de callback assíncrono (training Higgsfield, future video gens, batch job completion) **usa webhook**. Polling é o fallback explícito quando webhook não der.
+
+**Convenção de path:** `POST /api/<service>/<feature>-webhook` — exemplo: `POST /api/higgsfield/training-webhook`. Verifica signature/secret no header.
+
+**Convenção de URL:** o submit chama o serviço externo passando `webhook.url = ${appUrl}/api/.../webhook`. O `appUrl` resolve por:
+
+1. `process.env.NEXT_PUBLIC_APP_URL` se definido (override manual).
+2. `https://${process.env.VERCEL_URL}` em deploys Vercel (auto-set pelo Vercel; preview deploys têm URL própria, prod tem `artificial-cookbook.vercel.app`).
+3. Fallback `http://localhost:3000` em dev — caso em que o webhook não vai chegar; o caller precisa cair em polling.
+
+**Quando polling é necessário:**
+
+- Dev local sem ngrok/tunnel.
+- Serviços que não suportam webhook (raro hoje; Higgsfield e Fal ambos suportam).
+- Estados que mudam por ação do usuário (não temos hoje, mas eventualmente cancel-in-flight).
+
+### 4. URLs absolutas em todo lugar que sai do servidor
+
+Qualquer URL que **sai do nosso server pra um serviço externo** (Higgsfield input image, webhook target, future webhook signature URL) precisa ser absoluta. Nunca `http://localhost:3001`. Nunca path relativo.
+
+Implicação prática:
+
+- `ImageRef.url` em `StandardizedOutput` deve ser uma URL Supabase pública (já é hoje; ADR-0018b cobriu isso).
+- Quando passar URL ao Higgsfield (`image_url` em soul/v2/standard, ou input_images em training), usa o `source.url` do asset que **já é absolute Supabase URL**.
+- Webhook target = absolute, vendo da convenção §3.
+
+### 5. Env vars (snapshot atual)
+
+8 keys em production no Vercel:
+
+| Key | Scope | Source |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase project |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public (anon-only INSERT policy) | Supabase project |
+| `NEXT_PUBLIC_SUPABASE_ASSETS_BUCKET` | Public | Constant: `cookbook-assets` |
+| `FAL_KEY` | Server-only | fal.ai dashboard |
+| `LLM_PROVIDER` | Server-only | Constant: `fal` |
+| `LLM_MODEL` | Server-only | Constant: `anthropic/claude-sonnet-4.5` |
+| `HIGGSFIELD_API_KEY` | Server-only | cloud.higgsfield.ai dashboard |
+| `HIGGSFIELD_API_SECRET` | Server-only | cloud.higgsfield.ai dashboard |
+
+Setadas via `vercel env add <KEY> production` (ou via dashboard). Ler do `.env.local` em dev. CI / Vercel build pega automaticamente.
+
+**Nova feature que precisa de nova env var:** adiciona ao `.env.local` localmente, então roda `vercel env add NEW_KEY production` antes do primeiro deploy que usa. Nunca commita o valor.
+
+### 6. Smoke test em prod é parte da definição-de-pronto
+
+Toda slice nova precisa **um path verificável live** em `artificial-cookbook.vercel.app` antes de ser considerada fechada. Pode ser:
+
+- **Manual** — eu (ou o agente) abro a URL no Chrome / Safari e exercito o fluxo. Reporta o resultado.
+- **Curl** — um curl-script (`scripts/smoke-prod-<feature>.ts`) que faz request contra os endpoints deployados, parseia a resposta, fail-fast em qualquer erro.
+- **Browser-use subagent** — um agente headless que executa o fluxo e screenshot.
+
+A regra: **não fechar slice sem essa validação.** Testes locais (vitest) garantem que a lógica funciona; smoke test em prod garante que **está rodando deployada**.
+
+Hoje o smoke pra cada slice anterior foi feito manualmente pelo usuário. Vou começar a deixar `scripts/smoke-prod-<feature>.ts` checked-in onde fizer sentido.
+
+### 7. Trade-offs aceitos
+
+- **Dev local sem tunneling não recebe webhooks.** Quem precisa testar webhook localmente: `ngrok http 3000` + setar `NEXT_PUBLIC_APP_URL=https://<ngrok-url>` no `.env.local`. Documentado quando feature de webhook chegar (Slice M0b.0).
+- **Vercel free-tier limits** — 100 GB-hr por mês, 100 deployments por dia. M0a (single user, baixo volume) cabe folgado. Quando M0c (assistente DSL) escalar, talvez upgrade pra Pro.
+- **Cada deploy custa ~30s** (Next 16 + Turbopack rápido). Pequenos commits têm overhead. Aceito porque rollback é instantâneo e o sinal "prod tá quebrada" chega em < 1min.
+- **Sem CI separado** — o build do Vercel **é** o CI. Falha de build = deploy não promove. Vitest local + Vercel build = duas linhas de defesa. CI dedicado (GitHub Actions com vitest) entra se / quando vier mais de um dev.
+- **Sem feature flags hoje.** Cada commit em `main` vai pra prod. Quem quiser feature flagging em algum sub-componente futuro adiciona com `process.env.NEXT_PUBLIC_FF_<NAME>` localmente + Vercel.
+
+### 8. Cross-references
+
+- ADR-0024 (Fal OpenRouter route) — pattern do server route + import "server-only". ADR-0033 generaliza isso pra todas as integrações externas.
+- ADR-0029 (Higgsfield Cloud route) — dual-auth scheme + endpoint dispatch. Mesmo padrão server-only.
+- ADR-0018b (Cloud-canonical asset storage) — Supabase URLs são canônicos; ADR-0033 reforça que essas URLs são as que saem pro Higgsfield/Fal.
+
+ADR-0033 não substitui nada acima — sobe pra cima e formaliza o conjunto.

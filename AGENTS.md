@@ -15,6 +15,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ## Where we are right now
 
 - **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
+- **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Higgsfield Cloud + Fal OpenRouter. See **ADR-0033** (production-first development) for the deployment convention.
 - **Last shipped slice**: **Slice 5.6.1b — drag image card into group card inside the library** (extends 5.6.1's feedback fixes). Group cards in the library are now drop targets for the asset-drag MIME — drag an image card onto a group and it's added via `addToGroup`. Group→group merge / soul-id-into-group are silently ignored (parked for Slice 5.6f's right-click menu). Multi-select drag works (drag any selected card onto group → all selected ids land). Snapshot still [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md). Tests green at 586 / 586.
 - **Next up**: **Slice 5.6f — library polish** (right-click context menu on cards, multi-delete via Backspace, double-click rename on `image` and `soul-id` cards). Then **Slice 5.7 — `Array` / `List` / `Number` nodes** (was 5.6 in the previous roadmap; bumped). After 5.7: **Slice 5.8** (Run-here button + per-node history) and **Slice 5.9** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
 
