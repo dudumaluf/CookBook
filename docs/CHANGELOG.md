@@ -2,6 +2,21 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-24 — M0a Slice 5.6.1b: drag image card onto group card inside the library
+
+Fifth feedback fix from live testing, follow-up to Slice 5.6.1. User asked: "should I be able to drag a single asset into a group inside the asset panel also?". Yes — and now you can. Drag any image card onto any group card in the library and the image is added to the group via `addToGroup`. Mirrors Finder ("drag file into folder").
+
+Implementation lives entirely in `src/components/library/asset-card.tsx`:
+
+- Group cards become drop targets for the existing `application/x-cookbook-asset` MIME. `onDragOver` accepts only when the card's kind is `asset-group`, sets `dropEffect: "copy"`, and lights up an accent ring (`isDropTarget` state) so the affordance is discoverable without copy.
+- `onDrop` parses the payload and calls `addToGroup(thisGroup.id, payload.assetIds)` only when `payload.kind === "image"`. Other payload kinds (`asset-group`, `soul-id`) are silently ignored — group→group merge and cross-kind groups belong to Slice 5.6f's right-click menu where they can be offered explicitly.
+- Multi-select still works: cmd-click 3 image cards then drag one of them onto a group card → all 3 ids land in the group's `assetIds`. The drag payload already carried the full selection from Slice 5.5c; the group's `addToGroup` de-dupes against existing members.
+- After the drop, `clearAssetSelection` runs (mirrors canvas-flow's drop) so the next click in the library starts fresh.
+
+Tests: +2 cases in `tests/component/library/asset-card.test.tsx` (image dropped on group → addToGroup with the dragged ids in append order; group payload dropped on group → silently ignored / target unchanged).
+
+584 → 586 (+2). All four checks (`npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run docs:check`) green.
+
 ## 2026-05-23 — M0a Slice 5.6.1: feedback fixes from live-testing 5.6 (ADR-0032 §8 amendment)
 
 Four UX gaps surfaced when the user took Slice 5.6 for a real spin. The data model from ADR-0032 holds — every Image Iterator stays linked to a library group; the library is the single source of truth for image sets. But three affordances were defaulting to the wrong behaviour for the user's actual mental model, and one was a real bug. All four land in a single sub-slice without touching the underlying store APIs.

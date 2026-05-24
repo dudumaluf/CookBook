@@ -15,7 +15,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ## Where we are right now
 
 - **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
-- **Last shipped slice**: **Slice 5.6.1 — feedback fixes from live-testing 5.6** (ADR-0032 §8 amendment). Four UX gaps fixed atop Slice 5.6 (`AssetGroup` model intact): multi-image drag → N Image nodes (not iterator); grouped images hide from top-level "Images" section; Detach-from-group button removed (replaced by future Duplicate-group library action); drag from library onto iterator body now actually works (mounted listeners on iterator body via shared `handleAssetDrop` helper). Snapshot still [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md) (5.6.1 is an amendment, not a new milestone). Tests green at 584 / 584.
+- **Last shipped slice**: **Slice 5.6.1b — drag image card into group card inside the library** (extends 5.6.1's feedback fixes). Group cards in the library are now drop targets for the asset-drag MIME — drag an image card onto a group and it's added via `addToGroup`. Group→group merge / soul-id-into-group are silently ignored (parked for Slice 5.6f's right-click menu). Multi-select drag works (drag any selected card onto group → all selected ids land). Snapshot still [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md). Tests green at 586 / 586.
 - **Next up**: **Slice 5.6f — library polish** (right-click context menu on cards, multi-delete via Backspace, double-click rename on `image` and `soul-id` cards). Then **Slice 5.7 — `Array` / `List` / `Number` nodes** (was 5.6 in the previous roadmap; bumped). After 5.7: **Slice 5.8** (Run-here button + per-node history) and **Slice 5.9** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
 
 ## Read these first (in order; ~10 min total)
@@ -36,7 +36,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ```bash
 npm install              # once
 npm run dev              # Next 16 + Turbopack on :3000
-npm test                 # Vitest, all 584 tests, ~5 s
+npm test                 # Vitest, all 586 tests, ~5 s
 npm run test:watch       # while iterating
 npx tsc --noEmit         # type check (no `npm run` wrapper for this one)
 npm run lint             # ESLint

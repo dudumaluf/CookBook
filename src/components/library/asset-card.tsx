@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   ASSET_DRAG_MIME,
+  parseAssetDrag,
   serializeAssetDrag,
 } from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
@@ -67,6 +68,7 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
   const removeAsset = useAssetStore((s) => s.removeAsset);
   const removeGroup = useAssetStore((s) => s.removeGroup);
   const renameGroup = useAssetStore((s) => s.renameGroup);
+  const addToGroup = useAssetStore((s) => s.addToGroup);
   const selectedAssetIds = useAssetStore((s) => s.selectedAssetIds);
   const selectAsset = useAssetStore((s) => s.selectAsset);
   const toggleAssetSelection = useAssetStore((s) => s.toggleAssetSelection);
@@ -74,6 +76,49 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
 
   const isSelected = selectedAssetIds.includes(asset.id);
   const isGroup = asset.kind === "asset-group";
+
+  // Slice 5.6.1b — group cards become drop targets for image drags
+  // INSIDE the library. Drop an image card on a group card and the
+  // group's `assetIds` grows. Mirrors Finder ("drag file into folder").
+  // Only image payloads accepted today; other kinds (group→group merge,
+  // soul-id) are ignored, leaving the surface free for Slice 5.6f's
+  // right-click menu to introduce them explicitly.
+  const [isDropTarget, setIsDropTarget] = useState(false);
+
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+    if (!isGroup) return;
+    if (!event.dataTransfer.types.includes(ASSET_DRAG_MIME)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDropTarget(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    if (!isGroup) return;
+    if (event.currentTarget === event.target) setIsDropTarget(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    if (!isGroup) return;
+    setIsDropTarget(false);
+    const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
+    if (!raw) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const payload = parseAssetDrag(raw);
+    // Only image-kind payloads merge into groups (5.6.1b).
+    // group→group / soul-id silently ignored — those operations belong
+    // to the future right-click menu (Slice 5.6f).
+    if (!payload || payload.kind !== "image") return;
+    // Don't drag a card onto its own group (no-op even though
+    // addToGroup is de-duped — explicit guard avoids visual flicker).
+    if (payload.assetIds.length === 0) return;
+    addToGroup(asset.id, payload.assetIds);
+    // Clear library selection so the next click starts fresh
+    // (matches the canvas-flow drop behaviour).
+    useAssetStore.getState().clearAssetSelection();
+  }
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     if (event.shiftKey) {
@@ -115,16 +160,22 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
     <div
       draggable
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       data-testid="asset-card"
       data-asset-kind={asset.kind}
       data-selected={isSelected ? "true" : "false"}
+      data-drop-target={isDropTarget ? "true" : "false"}
       className={cn(
         "group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing",
         isSelected
           ? "border-accent ring-1 ring-accent/40"
-          : "border-border/60",
+          : isDropTarget
+            ? "border-accent/70 bg-accent/5 ring-1 ring-accent/30"
+            : "border-border/60",
       )}
       title={asset.name}
     >

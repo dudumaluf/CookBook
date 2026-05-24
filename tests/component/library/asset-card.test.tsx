@@ -358,5 +358,98 @@ describe("<AssetCard />", () => {
       fireEvent.doubleClick(screen.getByTestId("asset-group-mosaic"));
       expect(onOpen).toHaveBeenCalledWith(group);
     });
+
+    /* ─────── Slice 5.6.1b: image dropped on group → addToGroup ─────── */
+
+    function makeAssetDataTransfer(payload: string): DataTransfer {
+      const map = new Map<string, string>();
+      map.set("application/x-cookbook-asset", payload);
+      return {
+        types: Array.from(map.keys()),
+        getData: (key: string) => map.get(key) ?? "",
+        setData: () => undefined,
+        dropEffect: "none",
+        effectAllowed: "all",
+        files: [] as unknown as FileList,
+        items: [] as unknown as DataTransferItemList,
+        clearData: () => undefined,
+        setDragImage: () => undefined,
+      } as unknown as DataTransfer;
+    }
+
+    it("dropping an image card onto a group card adds the id to the group via addToGroup", () => {
+      const img = seedImageAsset("a-new", "https://x/new.png");
+      const group = makeGroup({ assetIds: ["a-existing"] });
+      useAssetStore.setState({
+        assets: [seedImageAsset("a-existing", "https://x/existing.png"), img, group],
+      });
+
+      render(<AssetCard asset={group} />);
+
+      const card = screen.getByTestId("asset-card");
+      const payload = JSON.stringify({
+        assetIds: [img.id],
+        kind: "image",
+      });
+
+      fireEvent.dragOver(card, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+      fireEvent.drop(card, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+
+      // Group's assetIds grew by one, in append order.
+      const after = useAssetStore.getState().getAsset(group.id);
+      if (after?.kind === "asset-group") {
+        expect(after.assetIds).toEqual(["a-existing", "a-new"]);
+      } else {
+        throw new Error("expected an asset-group");
+      }
+    });
+
+    it("dropping an asset-group payload on a group card is silently ignored (group→group merge is parked for Slice 5.6f)", () => {
+      const sourceGroup = makeGroup({
+        id: "g-source",
+        name: "Source",
+        assetIds: ["a-1"],
+      });
+      const targetGroup = makeGroup({
+        id: "g-target",
+        name: "Target",
+        assetIds: ["a-target-existing"],
+      });
+      useAssetStore.setState({
+        assets: [
+          seedImageAsset("a-1", "https://x/1.png"),
+          seedImageAsset("a-target-existing", "https://x/2.png"),
+          sourceGroup,
+          targetGroup,
+        ],
+      });
+
+      render(<AssetCard asset={targetGroup} />);
+
+      const card = screen.getByTestId("asset-card");
+      const payload = JSON.stringify({
+        assetIds: [sourceGroup.id],
+        kind: "asset-group",
+      });
+
+      fireEvent.dragOver(card, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+      fireEvent.drop(card, {
+        dataTransfer: makeAssetDataTransfer(payload),
+      });
+
+      // Target group unchanged.
+      const after = useAssetStore.getState().getAsset(targetGroup.id);
+      if (after?.kind === "asset-group") {
+        expect(after.assetIds).toEqual(["a-target-existing"]);
+      } else {
+        throw new Error("expected target group to survive");
+      }
+    });
   });
 });
