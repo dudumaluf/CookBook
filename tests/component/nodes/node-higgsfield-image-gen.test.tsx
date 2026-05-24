@@ -77,12 +77,20 @@ describe("higgsfieldImageGenNodeSchema", () => {
     });
   });
 
-  it("declares both-axis resize with sensible width / height ranges", () => {
+  it("declares horizontal-only resize so height follows aspect ratio (Slice 5.6.2)", () => {
+    // Both-axis resize would let the user drag a height that doesn't
+    // match the preview's intrinsic ratio (driven by config.aspectRatio
+    // for the placeholder / single-result, square for grid 2×2). The
+    // inner <a> would then overflow the card. Width-only resize keeps
+    // the same contract as Image and Image Iterator: height tracks
+    // aspect, no transbordo.
     const size = higgsfieldImageGenNodeSchema.size;
-    expect(size?.resizable).toBe("both");
+    expect(size?.resizable).toBe("horizontal");
     expect(size!.minWidth).toBeGreaterThan(0);
     expect(size!.maxWidth).toBeGreaterThan(size!.minWidth!);
-    expect(size!.maxHeight).toBeGreaterThan(size!.minHeight!);
+    // No min/maxHeight either — height is driven entirely by content.
+    expect(size?.minHeight).toBeUndefined();
+    expect(size?.maxHeight).toBeUndefined();
   });
 
   it("declares a settings slot with hasOverrides predicate", () => {

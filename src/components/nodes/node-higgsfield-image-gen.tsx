@@ -635,13 +635,19 @@ export const higgsfieldImageGenNodeSchema =
       Content: HiggsfieldImageGenSettingsContent,
       hasOverrides: hasHiggsfieldImageGenOverrides,
     },
+    // Width-only resize. Slice 5.6.2 made the preview aspect-ratio-aware
+    // (placeholder uses `config.aspectRatio`, single-result follows the
+    // same, grid 2x2 stays square). A "both"-axis handle would let the
+    // user drag a height that doesn't match the preview's intrinsic
+    // ratio — the inner `<a>` would then either overflow the card
+    // (current bug) or letterbox with empty bands. Locking to horizontal
+    // is the same contract as Image and Image Iterator (ADR-0028 +
+    // Slice 5.6.2): height always follows aspect.
     size: {
       defaultWidth: 320,
       minWidth: 280,
       maxWidth: 720,
-      minHeight: 120,
-      maxHeight: 560,
-      resizable: "both",
+      resizable: "horizontal",
     },
   });
 
