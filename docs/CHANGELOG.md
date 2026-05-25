@@ -2,6 +2,58 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-25 — M0a Slices 5.6f + 5.7 + 5.8: library polish, Number/Array/List nodes, Run-here + history
+
+Three sequential slices shipped as a single coherent package, fechando o cluster ADR-0031 (iterators + library afordances) e abrindo caminho pra Run-here com history. 609 → 675 testes (+66 net), 3 commits separados, todos os 4 checks (`npm test`, `tsc`, `lint`, `docs:check`) verde, smoke 200 em produção depois de cada deploy.
+
+### Slice 5.6f — library polish
+
+User flagged in 5.6.1: "como editamos o nome ou deletamos ou agrupamos assets na assets panel? botao direito menu de contexto, double click do titulo para editar etc?". Slice 5.6f closes those gaps without changing the data model.
+
+- **Right-click context menu** (per-card, kind-aware). New shadcn `ContextMenu` primitive (uses `@base-ui`, no new deps). New `<AssetContextMenu>` wrapper renders items per kind:
+  - image (single): Rename, Add to group (submenu listing existing groups + "New group…"), Train Soul ID (disabled — lands in M0b), Delete.
+  - soul-id (single): Rename, Delete.
+  - group (single): Rename, Duplicate group, Delete.
+  - multi-select with target in selection: hides Rename (no plural rename), shows "Delete N items" + "Add N items to group".
+  - Group→group merge / soul-id-to-group silently ignored (same policy as in-library drag).
+- **Duplicate group** replaces the Detach button removed in 5.6.1 (per ADR-0032 §8) — creates a new group with the same `assetIds[]` and a `(copy)` name suffix, no byte duplication.
+- **Shared inline rename** component (`<InlineRename>`) extracted from `GroupCardName`. Single source of truth for Enter / Escape / blur semantics. Image and Soul ID cards now also rename via this path (right-click → Rename). GroupCardName component deleted, GroupSubview header rewritten to use the shared component too.
+- **Multi-delete via Backspace / Delete**. New `removeAssets(ids[])` action routes group ids to `removeGroup` and image/soul-id ids to `removeAsset` via `Promise.allSettled`. Library panel mounts a scoped keydown listener that bails when focus is in `INPUT/TEXTAREA/SELECT/contenteditable`. Toast on success.
+
+Tests: 609 → 635 (+26). New: `tests/component/library/inline-rename.test.tsx` (8), `tests/component/library/asset-context-menu.test.tsx` (10). Extended: `tests/unit/stores/asset-store.test.ts` (+4 batch deletes), `tests/component/library/library-content.test.tsx` (+4 Backspace + Delete + INPUT-bail).
+
+Commit: `284530c`. Deploy + smoke 200.
+
+### Slice 5.7 — Number, Array, List utility nodes
+
+Closes ADR-0031 §3 promise. Three small nodes that round out the iterator family without any engine changes.
+
+- **Number** (`kind: "number"`, category `"input"`, output `dataType: "number"`). Modes: `fixed | increment | decrement | random`. Increment / decrement bump `value` by `step` (default 1) with optional wrap inside `[min, max]`. Random emits an integer in `[min, max]` (or `[0, 1)` when bounds aren't set). Mutation persists via `useWorkflowStore.updateNodeConfig`.
+- **Array** (`kind: "array"`, category `"transform"`, `iterator: true`). Inputs: `text`. Outputs: `text` (multiple). Splits on `delimiter` (defaults to `","`); empty delimiter → per-character split. `trim` flag drops empty items after trimming.
+- **List** (`kind: "list"`, category `"transform"`, NOT iterator). Inputs: `items` (`any[]`, multiple) + `cursor` (`number`, single). Outputs: `any` — preserves the upstream `StandardizedOutput` type discriminator. Same selection vocab as Number — `fixed | increment | decrement | random` (no `range` / `all`). External cursor input wins over internal cursor + mode (chained Number → List drives selection per run, ComfyUI-style). Negative / out-of-bounds external cursors clamp via modular wrap.
+
+Tests: 635 → 662 (+27). New: `tests/component/nodes/node-number.test.tsx` (9), `tests/component/nodes/node-array.test.tsx` (8), `tests/component/nodes/node-list.test.tsx` (10).
+
+Commit: `73f1a0b`. Deploy + smoke 200.
+
+### Slice 5.8 — Run-here button + per-node history (view-only)
+
+Adds the "▶" run-here button to every executable node and a 10-entry history ring buffer the user can navigate via cursor on the Higgsfield + LLM Text bodies.
+
+- **Engine — `endAtNodeId` option**. New `RunWorkflowOptions.endAtNodeId?: string`. When set, the engine computes the upstream subgraph (BFS reverse over edges) and runs ONLY that subset. Nodes outside the subgraph never receive pending emits / cancelled records, so unrelated UI state survives the partial run. New helper `computeAncestorSubgraph(endNodeId, nodes, edges)`. Defensive: missing endNodeId returns empty subgraph (no-op); cycles upstream don't loop (BFS visit-set); dangling edges skipped on output. Empty-subgraph short-circuit returns `ok: true` with empty records map.
+- **Execution-store — `startRunFrom`**. Mirrors `startRun` but passes `endAtNodeId` through and PRESERVES existing records (no `new Map()` reset). New internal `launchRun()` consolidates runId guard + abort wiring + isRunning lifecycle so both entry points stay byte-aligned.
+- **History ring buffer** on `ExecutionRecord.history?: ExecutionHistoryEntry[]` (cap = 10). Populated on `done` records that carry actual output. Cached replays don't add entries. Non-`done` transitions (pending / running) PRESERVE prior history so the body cursor keeps pointing at past entries while the current run is in flight. New type: `ExecutionHistoryEntry` (`output, usage?, elapsedMs?, runId, timestamp`).
+- **Run-here button** in BaseNode header — renders between the status chip and the `⋯` settings trigger, only for schemas with `execute()` defined (no button on Text / Image / Number / Iterator). Disabled while a run is in flight. `onPointerDown stopPropagation` keeps it from initiating a node drag.
+- **History UI** in `node-higgsfield-image-gen.tsx` and `node-llm-text.tsx`. Both bodies get an `<IteratorCursor>` under the metadata strip / model chip, hidden until 2+ entries exist. Navigating swaps which entry's output renders — VIEW-ONLY, no fork / pin yet (parked for a future slice). Local component state owns the cursor; `null` means "follow latest", a number pins to a specific index.
+
+Tests: 662 → 675 (+13). New / extended: `tests/unit/engine/run-workflow.test.ts` (+7 — `computeAncestorSubgraph` + `endAtNodeId` plumbed through `runWorkflow`), `tests/unit/stores/execution-store.test.ts` (+5 — `startRunFrom` + history append + cached-no-append), `tests/component/nodes/base-node.test.tsx` (+1 — Run-here visibility).
+
+Commit: `fa83f12`. Deploy + smoke 200.
+
+---
+
+End-state of the package: 675 / 675 tests, all four checks green, three commits on `main`. ROADMAP marked 5.6f / 5.7 / 5.8 as shipped; 5.9 (SQLite via Drizzle) and Slice 6 (Assistant DSL) are next.
+
 ## 2026-05-24 — Higgsfield Soul V2: fix style + Soul ID strength (post-5.6.2 hotfix)
 
 User flagged in live testing that style presets weren't behaving like the official UI: selecting "Retro BW" + a short prompt on `higgsfield.ai/ai/image?model=soul-v2` produces a perfect black-and-white vintage editorial; doing the same through our API returned a colorful image with the BW preset barely showing. Same Soul ID, same style_id, same prompt — but completely different output strength.
