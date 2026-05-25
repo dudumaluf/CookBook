@@ -2,6 +2,30 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-24 — Higgsfield Soul V2: fix style + Soul ID strength (post-5.6.2 hotfix)
+
+User flagged in live testing that style presets weren't behaving like the official UI: selecting "Retro BW" + a short prompt on `higgsfield.ai/ai/image?model=soul-v2` produces a perfect black-and-white vintage editorial; doing the same through our API returned a colorful image with the BW preset barely showing. Same Soul ID, same style_id, same prompt — but completely different output strength.
+
+Investigation:
+
+- Cross-checked the canonical sources: docs.higgsfield.ai (public REST docs), the official Python SDK at github.com/higgsfield-ai/higgsfield-client (verified BASE_URL, auth header, body shape on lines 865 + 1042-1049), and the open-source `@higgsfield/cli` MODELS.md. **Endpoint, auth, and flat body shape were already correct in our code.** The "envelope `{requests:[...]}`" the Higgsfield Supercomputer LLM suggested doesn't exist in the SDK — it hallucinated.
+- Empirical curl probes against `/higgsfield-ai/soul/v2/standard` in production: the endpoint **accepts** three undocumented body fields that the public REST docs don't mention but the Web UI sends — `enhance_prompt`, `style_strength`, `custom_reference_strength`. Without them, style presets render as a faint mood layer; with `style_strength: 1.0` + `enhance_prompt: true`, the same prompt + style produces output indistinguishable from the official UI.
+
+Fix:
+
+- [`src/lib/higgsfield/types.ts`](src/lib/higgsfield/types.ts): extended `higgsfieldImageRequestSchema` with three new optional fields — `enhancePrompt: boolean`, `styleStrength: number 0..1`, `customReferenceStrength: number 0..1`. Defensive Zod bounds, all undocumented-field provenance noted in the doc comments.
+- [`src/lib/higgsfield/higgsfield-api.ts`](src/lib/higgsfield/higgsfield-api.ts): always send `enhance_prompt` (default `true`) since UI parity demands it on every render. Conditionally send `style_strength` (default `1.0`, only when `mode === "style"` + non-cinema variant). Conditionally send `custom_reference_strength` (default `1.0`, only when `soulId` is set). Caller can still override every default via `HiggsfieldImageRequest` — wiring through the wrapper, schema, and route is byte-clean.
+- No UI knob exposure in this hotfix. Strength sliders in the settings popover are parked as polish backlog — `1.0` defaults already replicate the UI's bold stylization for 95% of use cases.
+
+Risk register:
+
+- The three fields are **undocumented**, so Higgsfield could rename or change semantics without notice. Mitigation: ADR-0033 §6 smoke testing in production catches a regression in hours, not days. As a fallback, generation still works without these fields (style just becomes weaker again) — graceful degradation.
+- `1.0` likeness strength can override style intent for highly stylized presets (illustration, heavy filter). Polish backlog tracks exposing the slider.
+
+Tests: 605 → 609 (+4). All in [`tests/unit/higgsfield/higgsfield-api.test.ts`](tests/unit/higgsfield/higgsfield-api.test.ts) — `enhance_prompt: true` always, `style_strength: 1.0` default in style mode, `custom_reference_strength: 1.0` default with soulId, caller override of all three. All four checks (`npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run docs:check`) green.
+
+Smoke: deployed to artificial-cookbook.vercel.app, curl-tested with Retro BW + Soul ID + "man in the street" — output is now P&B vintage matching the UI parity bar.
+
 ## 2026-05-24 — ADR-0033 + M0a Slice 5.6.2: production-first development + dynamic aspect ratio in node previews
 
 Two surgical commits. ADR-0033 cristalliza a regra "production-first development" — Cookbook lives in production at [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app); Vercel + Supabase + Higgsfield + Fal são o stack canônico; webhooks são caminho primário (não polling); URLs absolutas em todo lugar; smoke test em prod é parte da definição-de-pronto. 8 seções, sem código, ~110 linhas. Documenta o padrão emergente das slices anteriores e fixa a regra para frente.

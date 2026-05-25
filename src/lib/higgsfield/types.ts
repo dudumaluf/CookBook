@@ -115,6 +115,41 @@ export const higgsfieldImageRequestSchema = z
       .optional(),
     /** Optional negative prompt. */
     negativePrompt: z.string().optional(),
+    /**
+     * Tell Higgsfield to internally expand the prompt for richer
+     * conditioning. Empirically required for style presets to render
+     * with the same intensity as the official UI does — without it,
+     * "Retro BW" + a short prompt comes back colorful, defeating the
+     * preset (Slice post-5.6.2 fix).
+     *
+     * Field is **undocumented** in the public REST docs but accepted
+     * by the endpoint and used by the official Web UI. We default to
+     * `true` server-side; pass `false` to keep the prompt verbatim
+     * (rare — only useful when the caller has its own prompt
+     * expansion / curation pipeline).
+     */
+    enhancePrompt: z.boolean().optional(),
+    /**
+     * Modulates how strongly the style preset (`styleId`) influences
+     * the render, on a 0..1 scale. 1 = bold stylization, 0.5 = subtle.
+     * Only meaningful when `mode === "style"`. We default to `1.0`.
+     *
+     * Undocumented but accepted by the endpoint (see ADR-0029
+     * amendment). Mirrors the third-party Segmind doc which
+     * documents the same semantics.
+     */
+    styleStrength: z.number().min(0).max(1).optional(),
+    /**
+     * Modulates how strongly the Soul ID (`soulId →
+     * custom_reference_id`) preserves the trained likeness, on a
+     * 0..1 scale. 1 = maximum likeness fidelity. Lower values let the
+     * style/scene blend more naturally into the face — useful when
+     * the chosen `styleId` is highly stylized (e.g. illustration,
+     * heavy filter). We default to `1.0` (likeness wins).
+     *
+     * Undocumented but accepted by the endpoint.
+     */
+    customReferenceStrength: z.number().min(0).max(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.mode === "reference" && !value.referenceUrl) {

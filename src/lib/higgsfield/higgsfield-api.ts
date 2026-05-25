@@ -427,6 +427,12 @@ export async function generateSoulImage(
     aspect_ratio: args.aspectRatio ?? "1:1",
     resolution: args.resolution ?? "720p",
     batch_size: args.batchSize ?? 1,
+    // `enhance_prompt` is undocumented in the public REST docs but
+    // accepted by the endpoint and used by the official Web UI. Empirically
+    // it's what makes style presets render with the same intensity as the
+    // UI does (without it, "Retro BW" + a short prompt comes back colorful).
+    // Default `true` to match UI parity; caller can pass `false`.
+    enhance_prompt: args.enhancePrompt ?? true,
   };
   if (args.soulId) {
     // Per Prism's empirically-validated note: Higgsfield's Cloud API takes
@@ -434,6 +440,10 @@ export async function generateSoulImage(
     // side). The plain `soul_id` field is silently ignored — the model
     // renders without any character lock.
     body.custom_reference_id = args.soulId;
+    // Likeness strength (0..1, undocumented but accepted). 1.0 = max
+    // likeness fidelity. Lower values let the style blend more into the
+    // face — useful when the style preset is highly stylized.
+    body.custom_reference_strength = args.customReferenceStrength ?? 1.0;
   }
   if (args.mode === "reference" && args.referenceUrl) {
     body.image_url = args.referenceUrl;
@@ -448,6 +458,9 @@ export async function generateSoulImage(
     args.variant !== "cinema"
   ) {
     body.style_id = args.styleId;
+    // Style strength (0..1, undocumented but accepted). 1.0 = bold
+    // stylization (matches UI behavior); 0.5 = subtle.
+    body.style_strength = args.styleStrength ?? 1.0;
   }
   if (typeof args.seed === "number") body.seed = args.seed;
   if (args.negativePrompt) body.negative_prompt = args.negativePrompt;

@@ -576,6 +576,160 @@ describe("generateSoulImage", () => {
     expect(body.negative_prompt).toBe("blur, low quality");
   });
 
+  /* ─── post-5.6.2: undocumented strength fields (UI-parity defaults) ─── */
+
+  it("always sends enhance_prompt: true by default (mode 'none', no soulId, no styleId)", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-eh1",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-eh1",
+        images: [{ url: "https://cdn.example/x.png" }],
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await generateSoulImage(
+      defaultRequest({ prompt: "minimal" }),
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.enhance_prompt).toBe(true);
+    // Strength fields are absent when their owning fields aren't set.
+    expect(body.style_strength).toBeUndefined();
+    expect(body.custom_reference_strength).toBeUndefined();
+  });
+
+  it("sends style_strength: 1.0 by default when mode === 'style' and a styleId is provided", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-eh2",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-eh2",
+        images: [{ url: "https://cdn.example/x.png" }],
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await generateSoulImage(
+      {
+        prompt: "man in the street",
+        mode: "style",
+        variant: "v2",
+        styleId: "069f5a5f-8c4b-4591-a3dd-bde488672228", // Retro BW
+      } as HiggsfieldImageRequest,
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.style_id).toBe("069f5a5f-8c4b-4591-a3dd-bde488672228");
+    expect(body.style_strength).toBe(1.0);
+    expect(body.enhance_prompt).toBe(true);
+  });
+
+  it("sends custom_reference_strength: 1.0 by default whenever soulId is set", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-eh3",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-eh3",
+        images: [{ url: "https://cdn.example/x.png" }],
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await generateSoulImage(
+      {
+        prompt: "portrait",
+        mode: "none",
+        variant: "v2",
+        soulId: SOUL_ID_UUID,
+      } as HiggsfieldImageRequest,
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.custom_reference_id).toBe(SOUL_ID_UUID);
+    expect(body.custom_reference_strength).toBe(1.0);
+    expect(body.style_strength).toBeUndefined();
+  });
+
+  it("caller-provided strength + enhance_prompt overrides win over defaults", async () => {
+    setEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "queued",
+        request_id: "req-eh4",
+        status_url: "x",
+        cancel_url: "x",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: "completed",
+        request_id: "req-eh4",
+        images: [{ url: "https://cdn.example/x.png" }],
+      }),
+    );
+
+    const { generateSoulImage } = await import(
+      "@/lib/higgsfield/higgsfield-api"
+    );
+    await generateSoulImage(
+      {
+        prompt: "portrait",
+        mode: "style",
+        variant: "v2",
+        soulId: SOUL_ID_UUID,
+        styleId: "069f5a5f-8c4b-4591-a3dd-bde488672228",
+        enhancePrompt: false,
+        styleStrength: 0.5,
+        customReferenceStrength: 0.85,
+      } as HiggsfieldImageRequest,
+      new AbortController().signal,
+      { pollIntervalMs: 1, timeoutMs: 5_000 },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.enhance_prompt).toBe(false);
+    expect(body.style_strength).toBe(0.5);
+    expect(body.custom_reference_strength).toBe(0.85);
+  });
+
   it("throws code='upstream_error' when 'completed' returns no image urls", async () => {
     setEnv();
     fetchMock.mockResolvedValueOnce(
