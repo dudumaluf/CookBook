@@ -115,6 +115,16 @@ export interface AssetState {
    */
   removeAsset: (id: string) => Promise<void>;
   /**
+   * Batch counterpart of `removeAsset` (Slice 5.6f). Deletes every id in
+   * parallel — individual failures are swallowed via `Promise.allSettled`
+   * so a single bad id doesn't strand the rest. Useful for multi-select
+   * Backspace and the right-click context menu's "Delete N items" item.
+   *
+   * Group ids land on `removeGroup` (their members survive). Image / Soul
+   * ID kinds delegate to `removeAsset`.
+   */
+  removeAssets: (ids: readonly string[]) => Promise<void>;
+  /**
    * Patch fields on an existing asset. `kind` and `source` are immutable
    * via this API (replace the asset if you need to swap source); `updatedAt`
    * is bumped automatically.
@@ -354,6 +364,32 @@ export const useAssetStore = create<AssetState>()(
         if (asset?.kind === "image" && asset.source.type === "remote") {
           await deleteAssetObject(asset.source.bucket, asset.source.key);
         }
+      },
+
+      removeAssets: async (ids) => {
+        // Snapshot the per-kind buckets BEFORE the optimistic drop so
+        // group ids route to `removeGroup` (which only drops the group
+        // record) and image/soul-id ids route to `removeAsset` (which
+        // also fires the remote bucket cleanup). Using the synchronous
+        // store methods so each id keeps its existing semantics
+        // (group cleanup vs remote object delete) without us having to
+        // reimplement them here.
+        const targets = get().assets.filter((a) => ids.includes(a.id));
+        const groupIds = targets
+          .filter((a) => a.kind === "asset-group")
+          .map((a) => a.id);
+        const otherIds = targets
+          .filter((a) => a.kind !== "asset-group")
+          .map((a) => a.id);
+        for (const groupId of groupIds) {
+          get().removeGroup(groupId);
+        }
+        // Run remote deletes in parallel; swallow individual failures
+        // (Supabase 404 / transient blip) so the rest of the batch
+        // still drops locally.
+        await Promise.allSettled(
+          otherIds.map((id) => get().removeAsset(id)),
+        );
       },
 
       updateAsset: (id, patch) => {

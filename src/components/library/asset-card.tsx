@@ -1,7 +1,7 @@
 "use client";
 
 import { Image as ImageIcon, Trash2, User } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,9 @@ import type {
   ImageAsset,
   SoulIdAsset,
 } from "@/types/asset";
+
+import { AssetContextMenu } from "./asset-context-menu";
+import { InlineRename } from "./inline-rename";
 
 interface AssetCardProps {
   asset: Asset;
@@ -68,6 +71,7 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
   const removeAsset = useAssetStore((s) => s.removeAsset);
   const removeGroup = useAssetStore((s) => s.removeGroup);
   const renameGroup = useAssetStore((s) => s.renameGroup);
+  const updateAsset = useAssetStore((s) => s.updateAsset);
   const addToGroup = useAssetStore((s) => s.addToGroup);
   const selectedAssetIds = useAssetStore((s) => s.selectedAssetIds);
   const selectAsset = useAssetStore((s) => s.selectAsset);
@@ -76,6 +80,22 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
 
   const isSelected = selectedAssetIds.includes(asset.id);
   const isGroup = asset.kind === "asset-group";
+
+  // Imperative handle into <InlineRename> — lets the right-click context
+  // menu's Rename item open edit mode without lifting the editing state
+  // up into AssetCard.
+  const startInlineRenameRef = useRef<(() => void) | null>(null);
+  function handleRequestRename() {
+    startInlineRenameRef.current?.();
+  }
+
+  function handleRename(next: string) {
+    if (asset.kind === "asset-group") {
+      renameGroup(asset.id, next);
+    } else {
+      updateAsset(asset.id, { name: next });
+    }
+  }
 
   // Slice 5.6.1b — group cards become drop targets for image drags
   // INSIDE the library. Drop an image card on a group card and the
@@ -157,65 +177,90 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
   }
 
   return (
-    <div
-      draggable
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
-      data-testid="asset-card"
-      data-asset-kind={asset.kind}
-      data-selected={isSelected ? "true" : "false"}
-      data-drop-target={isDropTarget ? "true" : "false"}
-      className={cn(
-        "group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing",
-        isSelected
-          ? "border-accent ring-1 ring-accent/40"
-          : isDropTarget
-            ? "border-accent/70 bg-accent/5 ring-1 ring-accent/30"
-            : "border-border/60",
-      )}
-      title={asset.name}
-    >
-      <CardThumbnail asset={asset} />
+    <AssetContextMenu asset={asset} onRequestRename={handleRequestRename}>
+      <div
+        draggable
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
+        data-testid="asset-card"
+        data-asset-kind={asset.kind}
+        data-selected={isSelected ? "true" : "false"}
+        data-drop-target={isDropTarget ? "true" : "false"}
+        className={cn(
+          "group/asset relative flex cursor-grab flex-col gap-1 rounded-lg border bg-card/60 p-1.5 transition-colors hover:border-border hover:bg-card active:cursor-grabbing",
+          isSelected
+            ? "border-accent ring-1 ring-accent/40"
+            : isDropTarget
+              ? "border-accent/70 bg-accent/5 ring-1 ring-accent/30"
+              : "border-border/60",
+        )}
+        title={asset.name}
+      >
+        <CardThumbnail asset={asset} />
 
-      {isGroup ? (
-        <GroupCardName
-          asset={asset as AssetGroupAsset}
-          onRename={(name) => renameGroup(asset.id, name)}
+        <InlineRename
+          value={asset.name}
+          onCommit={handleRename}
+          ariaLabel={
+            isGroup
+              ? `Rename group ${asset.name}`
+              : `Rename asset ${asset.name}`
+          }
+          startEditingRef={startInlineRenameRef}
+          renderLabel={({ startEditing }) => (
+            <p
+              onDoubleClick={
+                isGroup ? startEditing : (e) => e.stopPropagation()
+              }
+              className="truncate px-0.5 text-[10.5px] text-foreground/80"
+              // Only group cards advertise "double-click to rename" via
+              // tooltip — image / soul-id renames go through the
+              // right-click context menu's Rename item to keep the
+              // double-click slot free for canvas open / future preview.
+              title={isGroup ? "Double-click to rename" : undefined}
+            >
+              {asset.name}
+              {isGroup && (asset as AssetGroupAsset).isUntitled ? (
+                <span
+                  data-testid="asset-group-untitled-badge"
+                  className="ml-1 rounded bg-foreground/[0.05] px-1 py-px text-[9px] text-muted-foreground"
+                >
+                  Untitled
+                </span>
+              ) : null}
+            </p>
+          )}
         />
-      ) : (
-        <p className="truncate px-0.5 text-[10.5px] text-foreground/80">
-          {asset.name}
-        </p>
-      )}
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete();
-            }}
-            aria-label={
-              isGroup
-                ? `Delete group ${asset.name}`
-                : `Delete asset ${asset.name}`
-            }
-            className="absolute right-1 top-1 h-5 w-5 text-muted-foreground opacity-0 transition-opacity group-hover/asset:opacity-100"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="left">
-          {isGroup ? "Delete group" : "Delete asset"}
-        </TooltipContent>
-      </Tooltip>
-    </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete();
+              }}
+              aria-label={
+                isGroup
+                  ? `Delete group ${asset.name}`
+                  : `Delete asset ${asset.name}`
+              }
+              className="absolute right-1 top-1 h-5 w-5 text-muted-foreground opacity-0 transition-opacity group-hover/asset:opacity-100"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">
+            {isGroup ? "Delete group" : "Delete asset"}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </AssetContextMenu>
   );
 }
 
@@ -326,81 +371,3 @@ function GroupMosaic({ group }: { group: AssetGroupAsset }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────── */
-/* Group card name — double-click to rename                                */
-/* ────────────────────────────────────────────────────────────────────── */
-
-function GroupCardName({
-  asset,
-  onRename,
-}: {
-  asset: AssetGroupAsset;
-  onRename: (name: string) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(asset.name);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
-
-  function startEditing(e: React.MouseEvent) {
-    e.stopPropagation();
-    setDraft(asset.name);
-    setIsEditing(true);
-  }
-
-  function commit() {
-    setIsEditing(false);
-    const trimmed = draft.trim();
-    if (trimmed.length > 0 && trimmed !== asset.name) {
-      onRename(trimmed);
-    }
-  }
-
-  if (isEditing) {
-    return (
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            setIsEditing(false);
-          }
-        }}
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-        aria-label={`Rename group ${asset.name}`}
-        className="w-full rounded-sm bg-background/70 px-1 py-px text-[10.5px] text-foreground outline-none ring-1 ring-accent/60"
-      />
-    );
-  }
-
-  return (
-    <p
-      onDoubleClick={startEditing}
-      className="truncate px-0.5 text-[10.5px] text-foreground/80"
-      title="Double-click to rename"
-    >
-      {asset.name}
-      {asset.isUntitled ? (
-        <span
-          data-testid="asset-group-untitled-badge"
-          className="ml-1 rounded bg-foreground/[0.05] px-1 py-px text-[9px] text-muted-foreground"
-        >
-          Untitled
-        </span>
-      ) : null}
-    </p>
-  );
-}

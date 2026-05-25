@@ -194,3 +194,73 @@ describe("<LibraryContent /> — Slice 5.6b Groups section + subview", () => {
     expect(screen.getByText(/this group is empty/i)).toBeInTheDocument();
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────── */
+/* Slice 5.6f: multi-delete via Backspace / Delete                         */
+/* ────────────────────────────────────────────────────────────────────── */
+
+describe("<LibraryContent /> — Slice 5.6f Backspace multi-delete", () => {
+  it("Backspace with non-empty selection batch-deletes via removeAssets", async () => {
+    useAssetStore.setState({
+      assets: [
+        makeImageAsset("a-1", "https://x/1.png"),
+        makeImageAsset("a-2", "https://x/2.png"),
+        makeImageAsset("a-3", "https://x/3.png"),
+      ],
+      selectedAssetIds: ["a-1", "a-2"],
+    });
+    const { container } = renderLibrary();
+    // Fire keydown on the panel root (the listener is mounted there).
+    const panel = container.firstElementChild as HTMLElement;
+    fireEvent.keyDown(panel, { key: "Backspace" });
+    // Wait a microtask for the async removeAssets to settle.
+    await Promise.resolve();
+    expect(useAssetStore.getState().getAsset("a-1")).toBeUndefined();
+    expect(useAssetStore.getState().getAsset("a-2")).toBeUndefined();
+    expect(useAssetStore.getState().getAsset("a-3")).toBeTruthy();
+    expect(useAssetStore.getState().selectedAssetIds).toEqual([]);
+  });
+
+  it("Backspace with EMPTY selection is a no-op", () => {
+    useAssetStore.setState({
+      assets: [makeImageAsset("a-1", "https://x/1.png")],
+      selectedAssetIds: [],
+    });
+    const { container } = renderLibrary();
+    const panel = container.firstElementChild as HTMLElement;
+    fireEvent.keyDown(panel, { key: "Backspace" });
+    // Asset still alive — no delete fired.
+    expect(useAssetStore.getState().getAsset("a-1")).toBeTruthy();
+  });
+
+  it("Delete key is also accepted (alias of Backspace)", async () => {
+    useAssetStore.setState({
+      assets: [makeImageAsset("a-1", "https://x/1.png")],
+      selectedAssetIds: ["a-1"],
+    });
+    const { container } = renderLibrary();
+    const panel = container.firstElementChild as HTMLElement;
+    fireEvent.keyDown(panel, { key: "Delete" });
+    await Promise.resolve();
+    expect(useAssetStore.getState().getAsset("a-1")).toBeUndefined();
+  });
+
+  it("Backspace inside an INPUT element is ignored (so the inline-rename keystroke isn't intercepted)", () => {
+    useAssetStore.setState({
+      assets: [makeImageAsset("a-1", "https://x/1.png")],
+      selectedAssetIds: ["a-1"],
+    });
+    const { container } = renderLibrary();
+    // Simulate focus inside an input — for this we synthesize an
+    // input element, focus it, then fire the keystroke on the panel.
+    const fakeInput = document.createElement("input");
+    document.body.appendChild(fakeInput);
+    fakeInput.focus();
+    expect(document.activeElement).toBe(fakeInput);
+    const panel = container.firstElementChild as HTMLElement;
+    fireEvent.keyDown(panel, { key: "Backspace" });
+    // Asset still alive — listener bailed because focus was in an input.
+    expect(useAssetStore.getState().getAsset("a-1")).toBeTruthy();
+    document.body.removeChild(fakeInput);
+  });
+});

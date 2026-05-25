@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowLeft } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import type {
 
 import { AssetCard } from "./asset-card";
 import { ImportAsGroupDialog } from "./import-as-group-dialog";
+import { InlineRename } from "./inline-rename";
 
 /**
  * LibraryContent
@@ -42,6 +43,45 @@ export function LibraryContent() {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   /** "Import as group?" dialog state — see Slice 5.6c. */
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Slice 5.6f — multi-delete via Backspace / Delete.
+  //
+  // Listens at the panel root so the keyboard works whenever the user
+  // is "in the library" (mouse hovered, focus inside, etc.). We bail
+  // when focus is in an input / textarea / contenteditable so we don't
+  // intercept typing in the inline-rename or any future filter input.
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Backspace" && event.key !== "Delete") return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) {
+        const tag = active.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          active.isContentEditable
+        ) {
+          return;
+        }
+      }
+      const ids = useAssetStore.getState().selectedAssetIds;
+      if (ids.length === 0) return;
+      event.preventDefault();
+      void useAssetStore.getState().removeAssets(ids);
+      useAssetStore.getState().clearAssetSelection();
+      toast.success(
+        `Deleted ${ids.length} ${ids.length === 1 ? "asset" : "assets"}`,
+      );
+    }
+    // Only fire when the keystroke originated within this panel — using
+    // a window listener would snipe Backspace from the canvas.
+    node.addEventListener("keydown", onKeyDown);
+    return () => node.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Re-resolve the group on every render so renames / membership
   // changes propagate while inside the subview. If the active group
@@ -85,6 +125,12 @@ export function LibraryContent() {
 
   return (
     <div
+      ref={containerRef}
+      // tabIndex makes this div a focusable container so keydown bubbles
+      // up to the listener installed in `useEffect` above. We do NOT
+      // visibly outline-on-focus — the focus is purely for keyboard
+      // routing. Cards inside still capture clicks normally.
+      tabIndex={-1}
       onDragOver={(e) => {
         // Only react to OS file drags — never to the in-app asset drag MIME
         // (which targets the canvas, not the library).
@@ -101,7 +147,7 @@ export function LibraryContent() {
       onDrop={(event) => {
         void handleDrop(event);
       }}
-      className={`relative flex flex-col gap-3 px-3 py-3 transition-colors ${
+      className={`relative flex flex-col gap-3 px-3 py-3 transition-colors outline-none ${
         isDropTarget ? "bg-accent/5" : ""
       }`}
     >
@@ -234,17 +280,6 @@ function GroupSubview({
     if (asset?.kind === "image") memberAssets.push(asset);
   }
 
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [draft, setDraft] = useState(group.name);
-
-  function commitRename() {
-    setIsRenaming(false);
-    const trimmed = draft.trim();
-    if (trimmed.length > 0 && trimmed !== group.name) {
-      renameGroup(group.id, trimmed);
-    }
-  }
-
   return (
     <div data-testid="library-group-subview" className="flex flex-col gap-2">
       <header className="flex items-center gap-1">
@@ -258,35 +293,28 @@ function GroupSubview({
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
-        {isRenaming ? (
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRename();
-              else if (e.key === "Escape") setIsRenaming(false);
-            }}
-            aria-label={`Rename group ${group.name}`}
-            className="min-w-0 flex-1 rounded-sm bg-background/70 px-1 py-px text-xs text-foreground outline-none ring-1 ring-accent/60"
+        <div className="min-w-0 flex-1">
+          <InlineRename
+            value={group.name}
+            onCommit={(next) => renameGroup(group.id, next)}
+            ariaLabel={`Rename group ${group.name}`}
+            inputClassName="w-full rounded-sm bg-background/70 px-1 py-px text-xs text-foreground outline-none ring-1 ring-accent/60"
+            renderLabel={({ startEditing }) => (
+              <h3
+                onDoubleClick={startEditing}
+                title="Double-click to rename"
+                className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90"
+              >
+                {group.name}
+                {group.isUntitled ? (
+                  <span className="ml-1 rounded bg-foreground/[0.05] px-1 py-px text-[9px] text-muted-foreground">
+                    Untitled
+                  </span>
+                ) : null}
+              </h3>
+            )}
           />
-        ) : (
-          <h3
-            onDoubleClick={() => {
-              setDraft(group.name);
-              setIsRenaming(true);
-            }}
-            title="Double-click to rename"
-            className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90"
-          >
-            {group.name}
-            {group.isUntitled ? (
-              <span className="ml-1 rounded bg-foreground/[0.05] px-1 py-px text-[9px] text-muted-foreground">
-                Untitled
-              </span>
-            ) : null}
-          </h3>
-        )}
+        </div>
         <span className="text-[10.5px] tabular-nums text-muted-foreground/70">
           {group.assetIds.length}
         </span>

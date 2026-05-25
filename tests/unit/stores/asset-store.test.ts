@@ -167,6 +167,63 @@ describe("asset-store", () => {
     });
   });
 
+  describe("removeAssets (batch — Slice 5.6f)", () => {
+    it("drops every id in the batch from the store", async () => {
+      const a = useAssetStore.getState().createImageAssetFromUrl({
+        url: "https://example.com/a.jpg",
+      });
+      const b = useAssetStore.getState().createImageAssetFromUrl({
+        url: "https://example.com/b.jpg",
+      });
+      const c = useAssetStore.getState().createImageAssetFromUrl({
+        url: "https://example.com/c.jpg",
+      });
+      await useAssetStore.getState().removeAssets([a, b]);
+      expect(useAssetStore.getState().getAsset(a)).toBeUndefined();
+      expect(useAssetStore.getState().getAsset(b)).toBeUndefined();
+      // c untouched.
+      expect(useAssetStore.getState().getAsset(c)).toBeTruthy();
+    });
+
+    it("routes group ids to removeGroup (members survive)", async () => {
+      const img = useAssetStore.getState().createImageAssetFromUrl({
+        url: "https://example.com/x.jpg",
+      });
+      const groupId = useAssetStore.getState().createGroup({
+        assetIds: [img],
+        name: "G",
+      });
+      await useAssetStore.getState().removeAssets([groupId]);
+      // Group gone, member alive.
+      expect(useAssetStore.getState().getAsset(groupId)).toBeUndefined();
+      expect(useAssetStore.getState().getAsset(img)).toBeTruthy();
+    });
+
+    it("survives individual remote-delete failures (allSettled)", async () => {
+      // First remove succeeds, second one's underlying Supabase delete
+      // throws — the rest of the batch must still complete locally.
+      const a = await useAssetStore
+        .getState()
+        .createImageAssetFromFile(makeFile("a.png"));
+      const b = await useAssetStore
+        .getState()
+        .createImageAssetFromFile(makeFile("b.png"));
+      // Simulate a transient Supabase blip on the second deletion.
+      deleteMock.mockResolvedValueOnce(undefined);
+      deleteMock.mockRejectedValueOnce(new Error("transient blip"));
+      await useAssetStore.getState().removeAssets([a, b]);
+      // Both records dropped despite the error.
+      expect(useAssetStore.getState().getAsset(a)).toBeUndefined();
+      expect(useAssetStore.getState().getAsset(b)).toBeUndefined();
+    });
+
+    it("ignores ids that don't exist (no throw)", async () => {
+      await expect(
+        useAssetStore.getState().removeAssets(["missing_1", "missing_2"]),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe("listByScope / listByKind / updateAsset", () => {
     it("listByScope filters by scope", () => {
       useAssetStore.getState().createImageAssetFromUrl({
