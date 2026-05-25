@@ -5,9 +5,19 @@ import {
   runWorkflow,
   type ExecutionCache,
 } from "@/lib/engine/run-workflow";
-import type { ExecutionRecord } from "@/types/node";
+import type {
+  ExecutionHistoryEntry,
+  ExecutionRecord,
+} from "@/types/node";
 
 import { useWorkflowStore } from "./workflow-store";
+
+/**
+ * Cap for per-node history (Slice 5.8). Tuned so "I want to revisit a
+ * good generation 5 runs ago" works without bloating memory. Tune up
+ * if user feedback says it's too low.
+ */
+export const HISTORY_CAP = 10;
 
 /**
  * Execution store — live status + outputs for the most recent run.
@@ -57,6 +67,15 @@ export interface ExecutionState {
    */
   startRun: () => Promise<void>;
 
+  /**
+   * "Run-here" partial run (Slice 5.8). Runs `endNodeId` plus all of
+   * its upstream ancestors. Records of nodes outside that subgraph are
+   * preserved (so the UI keeps showing the previous full-run's results
+   * for unrelated branches). Cancels any in-flight run first, same as
+   * `startRun`.
+   */
+  startRunFrom: (endNodeId: string) => Promise<void>;
+
   /** Abort the in-flight run. No-op if nothing is running. */
   cancelRun: () => void;
 
@@ -87,6 +106,88 @@ const sessionCache: ExecutionCache = new Map();
  */
 let currentController: AbortController | null = null;
 
+/**
+ * Shared run launcher (Slice 5.8 refactor) — used by both `startRun`
+ * and `startRunFrom`. Centralises the runId guard, abort wiring,
+ * onProgress + history append, and isRunning lifecycle so the two
+ * entry points stay byte-aligned.
+ */
+async function launchRun({
+  get,
+  set,
+  endAtNodeId,
+}: {
+  get: () => ExecutionState;
+  set: (
+    partial:
+      | Partial<ExecutionState>
+      | ((state: ExecutionState) => Partial<ExecutionState>),
+  ) => void;
+  endAtNodeId: string | undefined;
+}): Promise<void> {
+  if (currentController) {
+    currentController.abort();
+    currentController = null;
+  }
+
+  const runId = get().runId + 1;
+  const controller = new AbortController();
+  currentController = controller;
+
+  const { nodes, edges } = useWorkflowStore.getState();
+
+  // Full run wipes records (matches pre-Slice-5.8 behavior). Run-here
+  // PRESERVES records of unrelated nodes — the engine's
+  // `computeAncestorSubgraph` already keeps them out of the run, so we
+  // simply don't clear them here.
+  set({
+    runId,
+    isRunning: true,
+    records: endAtNodeId === undefined ? new Map() : get().records,
+  });
+
+  try {
+    await runWorkflow({
+      nodes,
+      edges,
+      registry: nodeRegistry,
+      cache: sessionCache,
+      signal: controller.signal,
+      ...(endAtNodeId !== undefined ? { endAtNodeId } : {}),
+      onProgress: (nodeId, record) => {
+        if (get().runId !== runId) return;
+        const prev = get().records.get(nodeId);
+        const prevHistory = prev?.history ?? [];
+        // History append (Slice 5.8): only on `done` records that
+        // carry actual output. Cached replays don't add entries.
+        // For non-`done` transitions (pending, running, cached, …) we
+        // PRESERVE the prior history so the cursor in the body keeps
+        // referring to past entries while the current run is in flight.
+        let nextRecord = record;
+        if (record.status === "done" && record.output !== undefined) {
+          const entry: ExecutionHistoryEntry = {
+            output: record.output,
+            usage: record.usage,
+            elapsedMs: record.elapsedMs,
+            runId,
+            timestamp: Date.now(),
+          };
+          const history = [...prevHistory, entry].slice(-HISTORY_CAP);
+          nextRecord = { ...record, history };
+        } else if (prevHistory.length > 0) {
+          nextRecord = { ...record, history: prevHistory };
+        }
+        const next = new Map(get().records);
+        next.set(nodeId, nextRecord);
+        set({ records: next });
+      },
+    });
+  } finally {
+    if (currentController === controller) currentController = null;
+    if (get().runId === runId) set({ isRunning: false });
+  }
+}
+
 export const useExecutionStore = create<ExecutionState>()((set, get) => ({
   runId: 0,
   isRunning: false,
@@ -95,44 +196,11 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
   getRecord: (nodeId) => get().records.get(nodeId),
 
   startRun: async () => {
-    // Preempt any in-flight run. The old run's onProgress callbacks check
-    // `runId` against the store and bail if they're stale.
-    if (currentController) {
-      currentController.abort();
-      currentController = null;
-    }
+    await launchRun({ get, set, endAtNodeId: undefined });
+  },
 
-    const runId = get().runId + 1;
-    const controller = new AbortController();
-    currentController = controller;
-
-    const { nodes, edges } = useWorkflowStore.getState();
-    set({ runId, isRunning: true, records: new Map() });
-
-    try {
-      await runWorkflow({
-        nodes,
-        edges,
-        registry: nodeRegistry,
-        cache: sessionCache,
-        signal: controller.signal,
-        onProgress: (nodeId, record) => {
-          // Drop progress from an old run — could only happen if startRun
-          // races with itself, but cheap insurance.
-          if (get().runId !== runId) return;
-          // Map mutation needs a new reference for Zustand to re-render
-          // any component subscribed to `records`. Cloning is O(n) in the
-          // graph size, which is fine — graphs are tiny.
-          const next = new Map(get().records);
-          next.set(nodeId, record);
-          set({ records: next });
-        },
-      });
-    } finally {
-      if (currentController === controller) currentController = null;
-      // Only flip `isRunning` off if we're still the active run.
-      if (get().runId === runId) set({ isRunning: false });
-    }
+  startRunFrom: async (endNodeId: string) => {
+    await launchRun({ get, set, endAtNodeId: endNodeId });
   },
 
   cancelRun: () => {

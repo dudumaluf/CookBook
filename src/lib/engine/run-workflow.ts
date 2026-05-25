@@ -54,6 +54,18 @@ export interface RunWorkflowOptions {
    * Bumped via tests / future configurability.
    */
   maxConcurrent?: number;
+  /**
+   * "Run-here" mode (Slice 5.8): when set, the engine restricts the run
+   * to `endAtNodeId` and **all of its upstream ancestors** (BFS reverse
+   * over edges). Nodes outside this subgraph are skipped entirely — no
+   * pending / cancelled records emitted for them, so the caller can
+   * preserve a previous full-run's UI state for those nodes.
+   *
+   * If `endAtNodeId` doesn't exist in `nodes`, the run resolves
+   * immediately with `ok: true` and an empty records map (defensive —
+   * matches how a no-op run would behave).
+   */
+  endAtNodeId?: string;
 }
 
 export interface RunWorkflowResult {
@@ -73,6 +85,43 @@ export interface TopoResult {
   order: NodeInstance[];
   /** True iff the graph has a cycle (in which case `order` is partial). */
   hasCycle: boolean;
+}
+
+/**
+ * Walk edges in reverse from `endNodeId`, collecting every ancestor.
+ * Returns the filtered nodes + edges (Slice 5.8 — Run-here).
+ *
+ * Used by `runWorkflow` when `endAtNodeId` is provided. Defensive
+ * against:
+ *   - missing endNodeId → returns empty subgraph
+ *   - cycles upstream (BFS uses a Set so we never loop)
+ *   - dangling edges referencing absent nodes (skipped on output)
+ */
+export function computeAncestorSubgraph(
+  endNodeId: string,
+  nodes: readonly NodeInstance[],
+  edges: readonly WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  if (!nodeIds.has(endNodeId)) return { nodes: [], edges: [] };
+  const reachable = new Set<string>([endNodeId]);
+  const queue: string[] = [endNodeId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const e of edges) {
+      if (e.target !== id) continue;
+      if (!reachable.has(e.source) && nodeIds.has(e.source)) {
+        reachable.add(e.source);
+        queue.push(e.source);
+      }
+    }
+  }
+  return {
+    nodes: nodes.filter((n) => reachable.has(n.id)),
+    edges: edges.filter(
+      (e) => reachable.has(e.source) && reachable.has(e.target),
+    ),
+  };
 }
 
 /**
@@ -198,15 +247,32 @@ export async function runWorkflow(
   opts: RunWorkflowOptions,
 ): Promise<RunWorkflowResult> {
   const {
-    nodes,
-    edges,
+    nodes: rawNodes,
+    edges: rawEdges,
     registry,
     cache,
     onProgress,
     signal,
     maxConcurrent = DEFAULT_MAX_CONCURRENT,
+    endAtNodeId,
   } = opts;
+
+  // Slice 5.8 — Run-here. If `endAtNodeId` is set, narrow the working
+  // set to it + every upstream ancestor. Everything else stays out of
+  // this run entirely (no pending emits, no cancellation noise) so
+  // existing UI state for unrelated nodes is preserved by the caller.
+  const { nodes, edges } =
+    endAtNodeId !== undefined
+      ? computeAncestorSubgraph(endAtNodeId, rawNodes, rawEdges)
+      : { nodes: rawNodes as NodeInstance[], edges: rawEdges as WorkflowEdge[] };
+
   const records = new Map<string, ExecutionRecord>();
+
+  // Empty subgraph — Run-here on a node that doesn't exist (or whose
+  // id was stale). Resolve a successful no-op rather than crashing.
+  if (nodes.length === 0) {
+    return { ok: true, records };
+  }
 
   function emit(id: string, record: ExecutionRecord) {
     records.set(id, record);

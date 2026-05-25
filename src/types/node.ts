@@ -387,4 +387,26 @@ export interface ExecutionRecord {
    * Absent when the node isn't a fan-out target.
    */
   fanOut?: { total: number; done: number };
+  /**
+   * Per-node ring buffer of past `done` outputs (Slice 5.8). Capped at
+   * `HISTORY_CAP` (10). View-only — UI navigates via the
+   * `<IteratorCursor>` cursor on supported nodes (Higgsfield + LLM
+   * Text). The current run's output is also the last entry, so the
+   * cursor at `history.length - 1` shows the live result.
+   *
+   * Cached records do NOT add an entry — replays aren't new outputs.
+   * Cleared by `clearRun()` along with `records`.
+   */
+  history?: ExecutionHistoryEntry[];
+}
+
+/** A single entry in `ExecutionRecord.history` (Slice 5.8). */
+export interface ExecutionHistoryEntry {
+  output: StandardizedOutput | StandardizedOutput[];
+  usage?: NodeUsage;
+  elapsedMs?: number;
+  /** Run id at the moment this entry was captured. */
+  runId: number;
+  /** Wall-clock ms at capture (Date.now()). */
+  timestamp: number;
 }

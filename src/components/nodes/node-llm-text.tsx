@@ -13,6 +13,8 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import { cn } from "@/lib/utils";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
+import { IteratorCursor } from "./iterator-cursor";
+
 /**
  * LLM Text — Slice 3.2 (real Fal OpenRouter wiring, ADR-0024).
  *
@@ -120,9 +122,28 @@ function LLMTextNodeBody({
 }: NodeBodyProps<LLMTextNodeConfig>) {
   // Subscribe to just this node's record so unrelated runs don't re-render.
   const record = useExecutionStore((s) => s.records.get(nodeId));
+  const history = record?.history ?? [];
+
+  // Slice 5.8 — history cursor (view-only). Defaults to the latest
+  // entry; user navigates with the cursor chip below the model chip.
+  // `null` means "follow the live record"; once the user navigates we
+  // pin to a specific index until they return to the latest.
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  const effectiveCursor =
+    history.length === 0
+      ? 0
+      : historyCursor === null || historyCursor >= history.length
+        ? history.length - 1
+        : Math.max(0, historyCursor);
+
+  const activeOutput =
+    history.length > 0
+      ? history[effectiveCursor]?.output
+      : record?.output;
+
   const output =
     record?.status === "done" || record?.status === "cached"
-      ? recordTextOutput(record.output)
+      ? recordTextOutput(activeOutput)
       : null;
   const errorMessage =
     record?.status === "error" && record.error ? record.error : null;
@@ -134,6 +155,23 @@ function LLMTextNodeBody({
     // wouldn't actually scroll; it would just push the card taller.
     <div className="flex w-full min-w-[260px] flex-1 flex-col gap-1.5 overflow-hidden px-3 py-1.5">
       <ModelChip config={config} updateConfig={updateConfig} />
+
+      {/* Slice 5.8 — history cursor (view-only). Hidden until there's
+          something to navigate (2+ past responses). */}
+      {history.length > 1 ? (
+        <div
+          data-testid="llm-text-history-cursor"
+          className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground"
+        >
+          <IteratorCursor
+            count={history.length}
+            cursor={effectiveCursor}
+            onCursorChange={(next) => setHistoryCursor(next)}
+            ariaLabelPrefix="Response"
+          />
+          <span className="text-muted-foreground/60">past responses</span>
+        </div>
+      ) : null}
 
       {output !== null ? (
         // Output rendered as the primary content. `flex-1 min-h-0

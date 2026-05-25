@@ -1,7 +1,7 @@
 "use client";
 
 import { NodeResizeControl, type ControlPosition } from "@xyflow/react";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Play } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -21,6 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import { cn } from "@/lib/utils";
 import type { NodeResizable, NodeSchema } from "@/types/node";
 
@@ -233,6 +234,7 @@ export function BaseNode({
             {displayTitle}
           </span>
         )}
+        {schema.execute ? <RunHereButton nodeId={nodeId} /> : null}
         <NodeStatusChip nodeId={nodeId} />
         {settings && <NodeSettingsTrigger settings={settings} />}
       </header>
@@ -485,6 +487,41 @@ function NodeSettingsTrigger({ settings }: { settings: BaseNodeSettings }) {
         {settings.content}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * Run-here button (Slice 5.8). Renders a small play icon next to the
+ * status chip in the BaseNode header for any node whose schema has an
+ * `execute()` function. Click triggers
+ * `useExecutionStore.startRunFrom(nodeId)` which runs the node and all
+ * its upstream ancestors, leaving unrelated graph branches untouched.
+ *
+ * Disabled while a run is in-flight so a click can't kick off a new
+ * subgraph mid-execution. `onPointerDown stopPropagation` keeps the
+ * click from initiating a node drag (header is the drag handle —
+ * ADR-0031).
+ */
+function RunHereButton({ nodeId }: { nodeId: string }) {
+  const isRunning = useExecutionStore((s) => s.isRunning);
+  const startRunFrom = useExecutionStore((s) => s.startRunFrom);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-testid="node-run-here"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => void startRunFrom(nodeId)}
+          disabled={isRunning}
+          aria-label="Run from here"
+          className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Play className="h-3 w-3 fill-current" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Run from here</TooltipContent>
+    </Tooltip>
   );
 }
 

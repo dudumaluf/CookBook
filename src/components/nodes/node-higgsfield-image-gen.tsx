@@ -36,6 +36,8 @@ import type {
   StandardizedOutput,
 } from "@/types/node";
 
+import { IteratorCursor } from "./iterator-cursor";
+
 /**
  * Higgsfield Image Gen — the executable image-generation node.
  *
@@ -99,19 +101,39 @@ function HiggsfieldImageGenNodeBody({
 }: NodeBodyProps<HiggsfieldImageGenNodeConfig>) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
+  const history = record?.history ?? [];
 
-  // Output is always an array (batch_size 1 → array of 1; batch_size 4 →
-  // array of 4). Normalise to a flat list of urls for rendering.
+  // Slice 5.8 — history cursor lets the user navigate past generations.
+  // Default to the latest entry. When history grows we keep the cursor
+  // pinned to the newest unless the user has navigated to a specific
+  // index (handled via local state).
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  const effectiveCursor =
+    history.length === 0
+      ? 0
+      : historyCursor === null || historyCursor >= history.length
+        ? history.length - 1
+        : Math.max(0, historyCursor);
+
+  // Active output: when navigating history we read from the entry,
+  // otherwise the live record output (which during a `running` paint
+  // is still empty — fine, history is empty too on first run).
+  const activeOutput =
+    history.length > 0
+      ? history[effectiveCursor]?.output
+      : record?.output;
+
   const imageUrls: string[] =
-    record?.output && Array.isArray(record.output)
-      ? record.output
+    activeOutput && Array.isArray(activeOutput)
+      ? activeOutput
           .filter((o): o is StandardizedOutput & { type: "image" } =>
             o.type === "image",
           )
           .map((o) => o.value.url)
-      : record?.output && !Array.isArray(record.output) &&
-          record.output.type === "image"
-        ? [record.output.value.url]
+      : activeOutput &&
+          !Array.isArray(activeOutput) &&
+          activeOutput.type === "image"
+        ? [activeOutput.value.url]
         : [];
 
   // Slice 5.6.2 — drive the placeholder + single-result preview off the
@@ -134,6 +156,25 @@ function HiggsfieldImageGenNodeBody({
         <span className="text-muted-foreground/60">·</span>
         <span>×{config.batchSize ?? DEFAULT_BATCH}</span>
       </div>
+
+      {/* Slice 5.8 — history cursor. Only renders when there's more
+          than one past generation; below that, there's nothing to
+          navigate. View-only: navigating just swaps which output
+          renders, downstream nodes still see the live `record.output`. */}
+      {history.length > 1 ? (
+        <div
+          data-testid="higgsfield-history-cursor"
+          className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground"
+        >
+          <IteratorCursor
+            count={history.length}
+            cursor={effectiveCursor}
+            onCursorChange={(next) => setHistoryCursor(next)}
+            ariaLabelPrefix="Generation"
+          />
+          <span className="text-muted-foreground/60">past runs</span>
+        </div>
+      ) : null}
 
       {/* Output / placeholder area. */}
       {status === "error" && record?.error ? (

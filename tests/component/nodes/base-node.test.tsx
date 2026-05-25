@@ -510,6 +510,25 @@ describe("<BaseNode />", () => {
       expect(handle!.getAttribute("data-direction")).toBe("vertical");
     });
 
+    it("renders the Run-here button only for schemas with execute() defined (Slice 5.8)", () => {
+      // No execute → no button.
+      const noExec = renderShell();
+      expect(
+        noExec.container.querySelector("[data-testid='node-run-here']"),
+      ).toBeNull();
+
+      // With execute → button present.
+      const withExec = renderShell({
+        schema: {
+          ...schema,
+          execute: async () => ({ type: "text", value: "x" }),
+        },
+      });
+      expect(
+        withExec.container.querySelector("[data-testid='node-run-here']"),
+      ).not.toBeNull();
+    });
+
     it("body wrapper becomes flex-fill (min-h-0) only when an explicit height is set", () => {
       // Without explicit height: wrapper is a plain block so a 0-height
       // content area doesn't collapse against `min-h-0`. With explicit

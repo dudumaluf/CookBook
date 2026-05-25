@@ -4,6 +4,7 @@ import { Type, Sparkles } from "lucide-react";
 import { defineNode } from "@/lib/engine/define-node";
 import { NodeRegistry } from "@/lib/engine/registry";
 import {
+  computeAncestorSubgraph,
   computeNodeHash,
   runWorkflow,
   topologicalSort,
@@ -936,5 +937,152 @@ describe("runWorkflow — fan-out", () => {
       { type: "text", value: "out:a" },
       { type: "text", value: "out:b" },
     ]);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────── */
+/* Slice 5.8 — Run-here / endAtNodeId                                     */
+/* ────────────────────────────────────────────────────────────────────── */
+
+describe("computeAncestorSubgraph (Slice 5.8)", () => {
+  function n(id: string): NodeInstance {
+    return { id, kind: "text", position: { x: 0, y: 0 }, config: { text: id } };
+  }
+  function e(source: string, target: string): WorkflowEdge {
+    return { id: `${source}-${target}`, source, target };
+  }
+
+  it("returns just the target when it has no upstream", () => {
+    const nodes = [n("a"), n("b"), n("c")];
+    const edges: WorkflowEdge[] = [];
+    const sub = computeAncestorSubgraph("b", nodes, edges);
+    expect(sub.nodes.map((x) => x.id)).toEqual(["b"]);
+    expect(sub.edges).toHaveLength(0);
+  });
+
+  it("collects every ancestor via BFS reverse", () => {
+    // a → b → d
+    //      ↘ c → d
+    // Run-here on d should pull a, b, c, d.
+    const nodes = [n("a"), n("b"), n("c"), n("d")];
+    const edges = [e("a", "b"), e("b", "d"), e("b", "c"), e("c", "d")];
+    const sub = computeAncestorSubgraph("d", nodes, edges);
+    expect(new Set(sub.nodes.map((x) => x.id))).toEqual(
+      new Set(["a", "b", "c", "d"]),
+    );
+    // All 4 edges land in the filtered set.
+    expect(sub.edges).toHaveLength(4);
+  });
+
+  it("excludes downstream + sibling branches", () => {
+    // a → b
+    // a → c → d (Run-here target = c)
+    const nodes = [n("a"), n("b"), n("c"), n("d")];
+    const edges = [e("a", "b"), e("a", "c"), e("c", "d")];
+    const sub = computeAncestorSubgraph("c", nodes, edges);
+    expect(new Set(sub.nodes.map((x) => x.id))).toEqual(new Set(["a", "c"]));
+    // b and d (downstream / sibling) excluded.
+    expect(sub.nodes.map((x) => x.id)).not.toContain("b");
+    expect(sub.nodes.map((x) => x.id)).not.toContain("d");
+  });
+
+  it("returns empty when endNodeId doesn't exist (defensive)", () => {
+    const nodes = [n("a")];
+    const sub = computeAncestorSubgraph("missing", nodes, []);
+    expect(sub.nodes).toHaveLength(0);
+    expect(sub.edges).toHaveLength(0);
+  });
+
+  it("survives upstream cycles via BFS visit-set", () => {
+    // a ↔ b → c
+    const nodes = [n("a"), n("b"), n("c")];
+    const edges = [e("a", "b"), e("b", "a"), e("b", "c")];
+    const sub = computeAncestorSubgraph("c", nodes, edges);
+    // Should reach a + b + c without infinite loop.
+    expect(new Set(sub.nodes.map((x) => x.id))).toEqual(
+      new Set(["a", "b", "c"]),
+    );
+  });
+});
+
+describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
+  it("runs the target + ancestors only; downstream sibling branches stay idle (no records emitted)", async () => {
+    const registry = new NodeRegistry();
+    registry.register(textSchema());
+    registry.register(passthroughSchema("downstream"));
+
+    // a (text) → b (text) → c (downstream)
+    // a       → d (downstream)  ← we'll Run-here on b; d should NOT run.
+    const a: NodeInstance = {
+      id: "a",
+      kind: "text",
+      position: { x: 0, y: 0 },
+      config: { text: "A" },
+    };
+    const b: NodeInstance = {
+      id: "b",
+      kind: "text",
+      position: { x: 0, y: 0 },
+      config: { text: "B" },
+    };
+    const c: NodeInstance = {
+      id: "c",
+      kind: "downstream",
+      position: { x: 0, y: 0 },
+      config: { tag: "C" },
+    };
+    const d: NodeInstance = {
+      id: "d",
+      kind: "downstream",
+      position: { x: 0, y: 0 },
+      config: { tag: "D" },
+    };
+    const nodes = [a, b, c, d];
+    const edges: WorkflowEdge[] = [
+      { id: "a-b", source: "a", target: "b" },
+      { id: "b-c", source: "b", target: "c" },
+      { id: "a-d", source: "a", target: "d" },
+    ];
+    const cache: ExecutionCache = new Map();
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      endAtNodeId: "b",
+    });
+
+    // a + b ran; c (downstream of b) and d (sibling) did NOT.
+    expect(records.get("a")?.status).toBe("done");
+    expect(records.get("b")?.status).toBe("done");
+    expect(records.has("c")).toBe(false);
+    expect(records.has("d")).toBe(false);
+  });
+
+  it("returns ok no-op when endAtNodeId doesn't exist", async () => {
+    const registry = new NodeRegistry();
+    registry.register(textSchema());
+    const a: NodeInstance = {
+      id: "a",
+      kind: "text",
+      position: { x: 0, y: 0 },
+      config: { text: "A" },
+    };
+    const cache: ExecutionCache = new Map();
+    const records = new Map<string, ExecutionRecord>();
+    const result = await runWorkflow({
+      nodes: [a],
+      edges: [],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      endAtNodeId: "missing",
+    });
+    expect(result.ok).toBe(true);
+    expect(records.size).toBe(0);
   });
 });
