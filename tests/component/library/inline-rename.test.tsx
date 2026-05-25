@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { InlineRename } from "@/components/library/inline-rename";
 
@@ -18,7 +18,11 @@ function Harness({
   exposeRef?: (ref: React.MutableRefObject<(() => void) | null>) => void;
 }) {
   const ref = useRef<(() => void) | null>(null);
-  if (exposeRef) exposeRef(ref);
+  // Expose the ref via effect rather than during render — avoids the
+  // react-hooks/refs lint rule about ref reads at render time.
+  useEffect(() => {
+    if (exposeRef) exposeRef(ref);
+  }, [exposeRef]);
   return (
     <InlineRename
       value={initial}
