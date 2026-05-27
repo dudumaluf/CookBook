@@ -1150,3 +1150,83 @@ Hoje o smoke pra cada slice anterior foi feito manualmente pelo usuário. Vou co
 - ADR-0018b (Cloud-canonical asset storage) — Supabase URLs são canônicos; ADR-0033 reforça que essas URLs são as que saem pro Higgsfield/Fal.
 
 ADR-0033 não substitui nada acima — sobe pra cima e formaliza o conjunto.
+
+## ADR-0034 — Cloud-canonical project entity + magic-link auth + per-user RLS scoping (M0a Slice 6.1)
+
+- **Date**: 2026-05-26
+- **Status**: implemented in Slice 6.1.
+- **Context**: até a Slice 5.8 o app vivia em localStorage (workflow + asset metadata + project name). Para o usuário abrir o mesmo projeto noutra máquina, ou pra o assistant DSL operar sobre estado durável (Slice 6.4), a fonte canônica precisa migrar pra cloud. ADR-0005 já antecipava o Repository pattern; Slice 6.1 finalmente o concretiza, mas em vez de SQLite local intermediário, vai direto pra Supabase Postgres porque ADR-0033 estabeleceu production-first como padrão.
+
+### 1. Entidade Projeto
+
+Tabela `public.projects` em Supabase Postgres:
+
+| Coluna | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | uuid pk | Project id, gerado via `gen_random_uuid()`. |
+| `owner_id` | uuid → `auth.users` | RLS scoping: só o dono lê/escreve. `on delete cascade`. |
+| `name` | text | Title editável no `EditableTitle`. |
+| `state` | jsonb | Client-owned blob carregando workflow + assets metadata + layout + projectName. Schema flexível durante M0a; campos extraídos pra colunas próprias se a forma estabilizar. |
+| `state_version` | integer | Bumped pelo client quando o shape do `state` muda. Reservado pra futuras migrations server-side. |
+| `created_at` / `updated_at` | timestamptz | Trigger `touch_updated_at` bumpa `updated_at` em cada UPDATE — usado pra last-write-wins sync. |
+| `deleted_at` | timestamptz null | Soft delete. Index parcial `projects_owner_idx where deleted_at is null` mantém lookups rápidos. |
+
+RLS: única política `"owner can crud own projects"` cobrindo SELECT/INSERT/UPDATE/DELETE com `auth.uid() = owner_id`. Sem projetos públicos em M0a — sharing é post-MVP.
+
+### 2. Magic-link auth
+
+Supabase Auth com OTP via email. Arquivos:
+
+- `/login` page ([src/app/login/page.tsx](../src/app/login/page.tsx)): single email input + "Send magic link" button.
+- `useSession` hook ([src/lib/auth/use-session.ts](../src/lib/auth/use-session.ts)): wraps `signInWithOtp` + `onAuthStateChange`. Status: `"loading" | "anonymous" | "authenticated"`.
+- `<AuthGate>` ([src/components/auth/auth-gate.tsx](../src/components/auth/auth-gate.tsx)): wrappa o `AppShell`; redireciona pra `/login` quando anonymous.
+
+Email redirect leva o usuário de volta a `window.location.origin` — funciona pra dev (`localhost:3000`) e prod (`artificial-cookbook.vercel.app`) sem mudar config.
+
+`persistSession: true` + `detectSessionInUrl: true` no client — sessão sobrevive reload, magic-link callback hash é consumido automaticamente.
+
+### 3. Repository pattern (ADR-0005 finalmente concreto)
+
+Interface em [src/lib/repositories/project-repository.ts](../src/lib/repositories/project-repository.ts):
+
+```typescript
+interface ProjectRepository {
+  getCurrent(userId: string): Promise<ProjectRecord | null>;
+  list(userId: string): Promise<ProjectRecord[]>;
+  save(project: SaveProjectInput): Promise<ProjectRecord>;
+  getOrCreate(userId: string, fallbackName?: string): Promise<ProjectRecord>;
+  rename(id: string, name: string): Promise<void>;
+  softDelete(id: string): Promise<void>;
+}
+```
+
+Implementação Supabase em `supabase-project-repository.ts`. Erros viram `ProjectRepositoryError` com `code: "not_found" | "permission_denied" | "conflict" | "network" | "unknown"` — callers ramificam em códigos estáveis sem matchar mensagens Postgres.
+
+### 4. Sync layer
+
+[src/lib/sync/project-sync.ts](../src/lib/sync/project-sync.ts):
+
+- `bootstrapForUser(userId)`: idempotente. Pull cloud state se existir; senão push localStorage state como first state (one-shot migration).
+- `startAutoSave({ projectId, ownerId, debounceMs })`: subscribe nas 4 stores (workflow, asset, layout, project), debounce 1s, PATCH no Supabase. Returns unsubscribe.
+- Coalescing: enquanto save está in-flight, mais um schedule é enfileirado mas só dispara após o anterior completar. Evita races de PATCH concorrente.
+
+Conflict resolution: last-write-wins via `updated_at`. Cliente compara timestamp local vs remoto; se remoto avançou, surface "Remote changes detected" via toast (UI fica trivial — não há modal). M0a é single-user, então conflict é raro.
+
+### 5. Per-user storage RLS
+
+Migration `cookbook_assets_rls_per_user`: drop `cookbook_assets_anon_insert/delete`, adiciona `cookbook_assets_owner_insert/update/delete` que requerem `(storage.foldername(name))[2] = auth.uid()::text`. SELECT permanece anon (bucket é `public: true`; URLs públicas continuam resolvendo pra arquivos legacy).
+
+`uploadImageAsset` agora lê `auth.getUser()` antes do upload e prefixa o key com `users/<uid>/`. Arquivos legacy em `images/<random>/<filename>` ficam grandfathered — readable via public URL, mas novos uploads ficam todos sob `users/<uid>/`.
+
+### 6. Trade-offs aceitos
+
+- **Single-project per user em M0a**. Schema já suporta múltiplos projetos (`list()`, `getCurrent()` returns most-recent), mas UI pra switching projeto fica pra M0b+.
+- **JSONB blob em `state`**. Mais flexível pra M0a; possivelmente split em colunas próprias quando o shape estabilizar (Slice 6.2 adiciona tabela separada `generations` em vez de inflar `state`).
+- **No auth real-time** ainda. `onAuthStateChange` cobre os transitions; subscription a `projects` table só vem com Slice 6.4 (assistant DSL pode precisar pra ver mudanças do bot na UI).
+- **Magic-link via free-tier Supabase email** (limite 30/h). Pra produção real subir SMTP custom (SendGrid/Resend); parqueado.
+
+### 7. Cross-references
+
+- ADR-0005 (Repository abstraction) — ADR-0034 é a primeira implementação concreta dessa interface.
+- ADR-0018b (Cloud-canonical assets) — ADR-0034 expande pra: tudo que define um projeto vai pra cloud, não só assets.
+- ADR-0033 (Production-first) — ADR-0034 implementa o §3 (webhook como primário, projects como cloud-canonical) usando Supabase Postgres como fonte de verdade.

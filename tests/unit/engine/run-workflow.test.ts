@@ -949,7 +949,13 @@ describe("computeAncestorSubgraph (Slice 5.8)", () => {
     return { id, kind: "text", position: { x: 0, y: 0 }, config: { text: id } };
   }
   function e(source: string, target: string): WorkflowEdge {
-    return { id: `${source}-${target}`, source, target };
+    return {
+      id: `${source}-${target}`,
+      source,
+      sourceHandle: "out",
+      target,
+      targetHandle: "in",
+    };
   }
 
   it("returns just the target when it has no upstream", () => {
@@ -1039,9 +1045,9 @@ describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
     };
     const nodes = [a, b, c, d];
     const edges: WorkflowEdge[] = [
-      { id: "a-b", source: "a", target: "b" },
-      { id: "b-c", source: "b", target: "c" },
-      { id: "a-d", source: "a", target: "d" },
+      { id: "a-b", source: "a", sourceHandle: "out", target: "b", targetHandle: "in" },
+      { id: "b-c", source: "b", sourceHandle: "out", target: "c", targetHandle: "in" },
+      { id: "a-d", source: "a", sourceHandle: "out", target: "d", targetHandle: "in" },
     ];
     const cache: ExecutionCache = new Map();
     const records = new Map<string, ExecutionRecord>();

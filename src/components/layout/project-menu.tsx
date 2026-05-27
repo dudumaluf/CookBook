@@ -11,6 +11,7 @@ import {
   Info,
   RotateCcw,
   ShieldCheck,
+  LogOut,
 } from "lucide-react";
 
 import {
@@ -24,6 +25,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useSession } from "@/lib/auth/use-session";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
@@ -49,6 +51,7 @@ export function ProjectMenu() {
     approvalGateOn,
     setApprovalGate,
   } = useLayoutStore();
+  const { user, signOut } = useSession();
 
   return (
     <DropdownMenu>
@@ -118,6 +121,23 @@ export function ProjectMenu() {
             Settings
           </DropdownMenuItem>
         </DropdownMenuGroup>
+
+        <DropdownMenuSeparator />
+
+        {user ? (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="truncate text-[10.5px] font-normal text-muted-foreground/80">
+              {user.email}
+            </DropdownMenuLabel>
+            <DropdownMenuItem
+              data-testid="project-menu-signout"
+              onClick={() => void signOut()}
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        ) : null}
 
         <DropdownMenuSeparator />
 

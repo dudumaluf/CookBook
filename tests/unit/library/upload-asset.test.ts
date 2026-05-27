@@ -9,12 +9,16 @@ vi.mock("@/lib/supabase/client", () => {
   const remove = vi.fn();
   const getPublicUrl = vi.fn();
   const from = vi.fn(() => ({ upload, remove, getPublicUrl }));
+  // Slice 6.1 — uploadImageAsset reads `auth.getUser()` to scope the key
+  // under `users/<uid>/...`. Default to "no user" so legacy tests keep
+  // matching `images/...` paths; tests that need a uid override the mock.
+  const getUser = vi.fn().mockResolvedValue({ data: { user: null }, error: null });
   return {
-    getSupabaseClient: () => ({ storage: { from } }),
+    getSupabaseClient: () => ({ storage: { from }, auth: { getUser } }),
     getAssetsBucket: () => "cookbook-assets",
     isSupabaseConfigured: () => true,
     _resetSupabaseClientForTests: () => {},
-    __mocks: { upload, remove, getPublicUrl, from },
+    __mocks: { upload, remove, getPublicUrl, from, getUser },
   };
 });
 
@@ -32,6 +36,7 @@ const supabaseClient = (await import("@/lib/supabase/client")) as unknown as {
     remove: ReturnType<typeof vi.fn>;
     getPublicUrl: ReturnType<typeof vi.fn>;
     from: ReturnType<typeof vi.fn>;
+    getUser: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -46,6 +51,10 @@ beforeEach(() => {
   supabaseClient.__mocks.remove.mockResolvedValue({ data: [], error: null });
   supabaseClient.__mocks.getPublicUrl.mockReturnValue({
     data: { publicUrl: "https://cdn.supabase.test/cookbook-assets/x" },
+  });
+  supabaseClient.__mocks.getUser.mockResolvedValue({
+    data: { user: null },
+    error: null,
   });
   supabaseClient.__mocks.from.mockReturnValue({
     upload: supabaseClient.__mocks.upload,
@@ -75,6 +84,14 @@ describe("buildObjectKey", () => {
     const a = buildObjectKey("a.png");
     const b = buildObjectKey("a.png");
     expect(a).not.toBe(b);
+  });
+
+  /* Slice 6.1 — per-user prefix when authenticated. */
+  it("scopes uploads under users/<uid>/images/... when a user id is provided", () => {
+    const k = buildObjectKey("Photo.png", "user-uuid-123");
+    expect(k).toMatch(
+      /^users\/user-uuid-123\/images\/[0-9a-f]{8}\/Photo\.png$/,
+    );
   });
 });
 
@@ -137,6 +154,21 @@ describe("uploadImageAsset", () => {
     const out = await uploadImageAsset(file);
     expect(out.width).toBeUndefined();
     expect(out.height).toBeUndefined();
+  });
+
+  /* Slice 6.1 — per-user prefix when an authenticated user is present. */
+  it("uploads under users/<uid>/images/... when authenticated", async () => {
+    supabaseClient.__mocks.getUser.mockResolvedValueOnce({
+      data: { user: { id: "user-uuid-456" } },
+      error: null,
+    });
+    const file = new File(["x"], "scoped.png", { type: "image/png" });
+    const out = await uploadImageAsset(file);
+    const [key] = supabaseClient.__mocks.upload.mock.calls[0]!;
+    expect(key).toMatch(
+      /^users\/user-uuid-456\/images\/[0-9a-f]{8}\/scoped\.png$/,
+    );
+    expect(out.key).toBe(key);
   });
 });
 

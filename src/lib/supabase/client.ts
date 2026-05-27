@@ -59,11 +59,14 @@ export function getSupabaseClient(): SupabaseClient {
   }
   cached = createClient(url, key, {
     auth: {
-      // No auth yet — keep sessions in-memory so we don't write tokens to
-      // localStorage that nothing reads. Flip when GitHub auth lands.
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
+      // Slice 6.1 — Supabase magic-link auth lands. Sessions persist in
+      // localStorage (default) so a refresh keeps the user signed in;
+      // detectSessionInUrl picks up the magic-link callback hash and
+      // hydrates the session automatically; autoRefreshToken renews the
+      // JWT in the background so long-lived sessions don't lapse mid-edit.
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
   });
   return cached;

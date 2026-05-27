@@ -66,8 +66,23 @@ function randomKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function buildObjectKey(filename: string): string {
-  return `images/${randomKey()}/${sanitizeFilename(filename)}`;
+/**
+ * Build the canonical object key for an image upload.
+ *
+ * Slice 6.1 (ADR-0034) prepends a per-user folder so RLS can scope writes
+ * to `users/<auth.uid()>/...`. Pass the authenticated user's id; the
+ * caller (`uploadImageAsset`) reads it from `getSupabaseClient().auth.getUser()`
+ * just before upload so the prefix is always current.
+ *
+ * Pre-Slice-6.1 keys look like `images/<random>/<filename>` — those are
+ * grandfathered (still readable via public URL because the bucket is
+ * `public: true`), but every NEW upload from now on lands under the user's
+ * folder.
+ */
+export function buildObjectKey(filename: string, userId?: string): string {
+  const base = `images/${randomKey()}/${sanitizeFilename(filename)}`;
+  if (!userId) return base;
+  return `users/${userId}/${base}`;
 }
 
 /**
@@ -80,7 +95,12 @@ export async function uploadImageAsset(
 ): Promise<UploadedImageDescriptor> {
   const supabase = getSupabaseClient();
   const bucket = getAssetsBucket();
-  const key = buildObjectKey(file.name);
+  // Slice 6.1 — user-scoped key. RLS rejects writes outside `users/<uid>/`.
+  // We tolerate `auth.getUser()` returning null (e.g. in tests / future
+  // anonymous mode) by falling back to the legacy unscoped key. Real
+  // production writes always have a user.
+  const { data: userData } = await supabase.auth.getUser();
+  const key = buildObjectKey(file.name, userData.user?.id);
 
   // Capture pixel dimensions BEFORE the network round-trip so the
   // resulting `ImageAsset` ships with `width / height` on day one
