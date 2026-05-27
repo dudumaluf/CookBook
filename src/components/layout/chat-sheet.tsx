@@ -5,7 +5,6 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { executePlan } from "@/lib/assistant/run";
 import type { AssistantMessage } from "@/lib/assistant/types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
@@ -23,13 +22,20 @@ export function ChatSheet() {
   const { chatSheetOpen, setChatSheetOpen } = useLayoutStore();
   const { messages, isThinking, clear } = useAssistantStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new message.
+  // Auto-scroll to bottom on new message / thinking flip. We seed
+  // `behavior: "smooth"` so the user *sees* new content sliding in
+  // (premium polish vs a hard jump). Native scrollIntoView on a
+  // sentinel at the end is more robust than setting scrollTop on a
+  // ref that might not be the actual scroll container.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages.length, isThinking]);
+    if (!chatSheetOpen) return;
+    bottomRef.current?.scrollIntoView({
+      block: "end",
+      behavior: "smooth",
+    });
+  }, [chatSheetOpen, messages.length, isThinking]);
 
   if (!chatSheetOpen) return null;
 
@@ -39,10 +45,10 @@ export function ChatSheet() {
       aria-modal="false"
       aria-label="Conversation history"
       data-testid="chat-sheet"
-      className="pointer-events-auto flex w-full max-w-[640px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      className="pointer-events-auto flex w-full max-w-[640px] flex-col overflow-hidden rounded-2xl border border-border/80 bg-popover/95 shadow-2xl shadow-black/40 backdrop-blur-xl"
       style={{ height: "min(60vh, 480px)" }}
     >
-      <header className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+      <header className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-2.5">
         <div className="flex items-center gap-2 text-sm text-foreground">
           <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="font-medium">Conversation</span>
@@ -68,32 +74,48 @@ export function ChatSheet() {
         </div>
       </header>
 
-      <ScrollArea className="flex-1">
-        <div ref={scrollRef} className="flex flex-col gap-3 px-4 py-4">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-start gap-2 px-1 py-2">
-              <p className="text-sm text-foreground/80">
-                Hi — what would you like to make?
-              </p>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Try: <span className="text-foreground/80">&quot;give me 4 photos of me as a 90s movie character&quot;</span>.
-                I&apos;ll pick the right recipe + Soul ID, show you a plan, and you confirm before I run.
-              </p>
-            </div>
-          ) : (
-            messages.map((m, i) => <Message key={i} message={m} />)
-          )}
-          {isThinking ? (
-            <div
-              data-testid="assistant-thinking"
-              className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground"
-            >
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Thinking…
-            </div>
-          ) : null}
-        </div>
-      </ScrollArea>
+      {/* Native scrollable body. `flex-1 min-h-0` is the canonical
+       *  "make me actually fill the bounded parent and scroll inside"
+       *  combo for a flex-col layout (same trick BaseNode uses for
+       *  long LLM outputs). `nowheel` keeps wheel events inside the
+       *  chat from leaking into React Flow's pan/zoom on the canvas
+       *  behind us. */}
+      <div
+        ref={scrollRef}
+        data-testid="chat-sheet-scroll"
+        className="nowheel flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4"
+        onWheelCapture={(e) => e.stopPropagation()}
+      >
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-start gap-2 px-1 py-2">
+            <p className="text-sm text-foreground/80">
+              Hi — what would you like to make?
+            </p>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Try:{" "}
+              <span className="text-foreground/80">
+                &quot;give me 4 photos of me as a 90s movie character&quot;
+              </span>
+              . I&apos;ll pick the right recipe + Soul ID, show you a plan,
+              and you confirm before I run.
+            </p>
+          </div>
+        ) : (
+          messages.map((m, i) => <Message key={i} message={m} />)
+        )}
+        {isThinking ? (
+          <div
+            data-testid="assistant-thinking"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Thinking…
+          </div>
+        ) : null}
+        {/* Sentinel — scrollIntoView target. Sits at the very bottom of
+         *  the flow, after the last message + the thinking row. */}
+        <div ref={bottomRef} aria-hidden />
+      </div>
     </div>
   );
 }
