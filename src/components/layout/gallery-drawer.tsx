@@ -96,6 +96,11 @@ export function GalleryDrawer() {
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [busyBulk, setBusyBulk] = useState(false);
+  // Track active drag-from-card so we can let pointer events pass through
+  // to the canvas underneath WITHOUT unmounting the drawer (which would
+  // abort the drag — browsers cancel a drag whose source element leaves
+  // the DOM mid-gesture, the bug behind "drawer closes on mousedown").
+  const [isDragging, setIsDragging] = useState(false);
 
   const filter = useMemo<GenerationFilter | null>(() => {
     if (!projectId) return null;
@@ -253,7 +258,17 @@ export function GalleryDrawer() {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex flex-col items-stretch">
+      <div
+        // While a card is being dragged we make the entire overlay
+        // transparent to mouse events (`pointer-events-none`). The DOM
+        // stays mounted (so the drag source survives) but every drop
+        // target underneath — i.e. the React Flow canvas — becomes
+        // reachable. Visual fade telegraphs to the user that the
+        // gallery has yielded the drop layer.
+        className={`fixed inset-0 z-50 flex flex-col items-stretch transition-opacity duration-150 ${
+          isDragging ? "pointer-events-none opacity-30" : ""
+        }`}
+      >
         <button
           type="button"
           aria-label="Close gallery"
@@ -453,12 +468,14 @@ export function GalleryDrawer() {
                   selectedRecords={selectedRecords}
                   onClick={(e) => handleCardClick(row.id, e)}
                   onChanged={() => void refresh()}
-                  onDragStartCommit={() => {
-                    // Auto-close the drawer the moment a drag begins so
-                    // the canvas underneath becomes the drop target. The
-                    // gesture stays continuous from the user's POV — no
-                    // need for them to close-then-drag.
-                    setGalleryOpen(false);
+                  onDragStartCommit={() => setIsDragging(true)}
+                  onDragEndCommit={(succeeded) => {
+                    setIsDragging(false);
+                    // Drop landed on a real target (e.g. canvas) —
+                    // close the drawer so the user sees their newly
+                    // spawned node. If they cancelled the drag (Esc /
+                    // dropped on backdrop), keep the drawer open.
+                    if (succeeded) setGalleryOpen(false);
                   }}
                 />
               ))}
@@ -528,6 +545,7 @@ function GenerationCard({
   onClick,
   onChanged,
   onDragStartCommit,
+  onDragEndCommit,
 }: {
   row: GenerationRecord;
   selected: boolean;
@@ -535,6 +553,7 @@ function GenerationCard({
   onClick: (e: React.MouseEvent) => void;
   onChanged: () => void;
   onDragStartCommit: () => void;
+  onDragEndCommit: (succeeded: boolean) => void;
 }) {
   const single = pickFirst(row.output);
   return (
@@ -569,10 +588,18 @@ function GenerationCard({
           serializeGenerationDrag({ items }),
         );
         e.dataTransfer.effectAllowed = "copy";
-        // Auto-close the drawer so the canvas underneath becomes the
-        // drop target. Without this, the drawer's full-viewport
-        // backdrop intercepts the drop and nothing lands on canvas.
+        // Tell the parent to fade the overlay so the canvas behind
+        // becomes a valid drop target. The drawer DOM stays mounted —
+        // unmounting the drag source mid-gesture aborts the drag.
         onDragStartCommit();
+      }}
+      onDragEnd={(e) => {
+        // dropEffect tells us whether a drop target accepted the drag.
+        // "copy"/"move"/"link" = accepted (canvas spawned a node).
+        // "none" = cancelled (Esc, dropped over a non-target). Some
+        // browsers always report "none" — that's fine; the drawer
+        // simply stays open and the user keeps going.
+        onDragEndCommit(e.dataTransfer.dropEffect !== "none");
       }}
       className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card/60 transition-all ${
         selected

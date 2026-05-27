@@ -117,6 +117,8 @@ export function GalleryLightbox({
   const renameRef = useRef<(() => void) | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [isDragging, setIsDragging] = useState(false);
+
   const goPrev = useCallback(() => {
     if (items.length === 0 || index <= 0) return;
     onActiveChange(items[index - 1]!.id);
@@ -197,7 +199,13 @@ export function GalleryLightbox({
       aria-modal="true"
       aria-label="Generation preview"
       data-testid="gallery-lightbox"
-      className="fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-md"
+      // While the user is dragging the preview onto canvas, fade the
+      // lightbox + disable pointer events so the canvas underneath
+      // becomes the drop target. Same trick the drawer uses; we keep
+      // the DOM mounted to keep the drag source alive.
+      className={`fixed inset-0 z-[60] flex flex-col bg-background/95 backdrop-blur-md transition-opacity duration-150 ${
+        isDragging ? "pointer-events-none opacity-20" : ""
+      }`}
     >
       {/* Header */}
       <header className="flex items-center justify-between gap-4 border-b border-border/40 px-5 py-3">
@@ -331,10 +339,9 @@ export function GalleryLightbox({
 
         <div
           // Drag the preview onto canvas — same MIME / payload as cards.
-          // We close BOTH the lightbox and the underlying gallery
-          // drawer so the canvas becomes the drop target. Without
-          // closing them, their full-viewport overlay backdrops
-          // intercept the drop and nothing lands on canvas.
+          // We DON'T unmount the lightbox / drawer here (would abort
+          // the drag); instead, `setIsDragging(true)` fades them and
+          // disables pointer events so canvas catches the drop.
           draggable
           onDragStart={(e) => {
             if (!out) return;
@@ -345,8 +352,16 @@ export function GalleryLightbox({
               }),
             );
             e.dataTransfer.effectAllowed = "copy";
-            useLayoutStore.getState().setGalleryOpen(false);
-            onClose();
+            setIsDragging(true);
+          }}
+          onDragEnd={(e) => {
+            setIsDragging(false);
+            // Drop landed on canvas → close lightbox + drawer so the
+            // user sees the spawned node.
+            if (e.dataTransfer.dropEffect !== "none") {
+              useLayoutStore.getState().setGalleryOpen(false);
+              onClose();
+            }
           }}
           className="flex max-h-full max-w-full cursor-grab items-center justify-center active:cursor-grabbing"
         >
