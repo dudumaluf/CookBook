@@ -47,6 +47,10 @@ export function useGenerations(
         p: filter.projectId,
         n: filter.nodeId,
         k: filter.nodeKind,
+        // Slice 6.5 — outputType is a real filter dimension; missing it
+        // here meant clicking the Image / Text / Pinned chips never
+        // invalidated the cache and the result list never updated.
+        ot: filter.outputType,
         pin: filter.pinnedOnly,
         s: filter.promptContains,
         l: filter.limit,

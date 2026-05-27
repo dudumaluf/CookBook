@@ -22,6 +22,11 @@ import {
 } from "@/components/ui/tooltip";
 import { GalleryLightbox } from "./gallery-lightbox";
 import {
+  downloadFromUrl,
+  downloadText,
+  safeFilename,
+} from "@/lib/library/download";
+import {
   GENERATION_DRAG_MIME,
   serializeGenerationDrag,
   type GenerationDragItem,
@@ -216,39 +221,25 @@ export function GalleryDrawer() {
   }
 
   async function bulkDownload() {
-    // Sequential anchor downloads — the browser queues them; gap of 80ms
-    // keeps Chrome / Safari from collapsing them into one. Text items
-    // are written via Blob URLs.
+    // Cross-origin URLs (Supabase Storage) ignore the anchor `download`
+    // attribute, so we fetch each one as a Blob and trigger the
+    // download against a same-origin blob URL. Sequential with a small
+    // gap so the browser doesn't collapse them.
     for (const row of selectedRecords) {
       const out = pickFirst(row.output);
       if (!out) continue;
       const filenameBase =
         row.title ?? row.promptText?.slice(0, 60) ?? row.nodeKind;
-      const safe = filenameBase
-        .replace(/[^a-zA-Z0-9._\- ]+/g, "-")
-        .replace(/\s+/g, "_")
-        .slice(0, 96);
-      if (out.type === "image" && out.value?.url) {
-        const a = document.createElement("a");
-        a.href = out.value.url;
-        a.download = `${safe}.png`;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      } else if (out.type === "text" && typeof out.value === "string") {
-        const blob = new Blob([out.value], {
-          type: "text/plain;charset=utf-8",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${safe}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+      const safe = safeFilename(filenameBase);
+      try {
+        if (out.type === "image" && out.value?.url) {
+          await downloadFromUrl(out.value.url, `${safe}.png`);
+        } else if (out.type === "text" && typeof out.value === "string") {
+          downloadText(out.value, `${safe}.txt`);
+        }
+      } catch (err) {
+        console.warn("[gallery] download failed:", err);
+        toast.error(`Could not download ${safe}`);
       }
       await new Promise((r) => setTimeout(r, 80));
     }
@@ -462,6 +453,13 @@ export function GalleryDrawer() {
                   selectedRecords={selectedRecords}
                   onClick={(e) => handleCardClick(row.id, e)}
                   onChanged={() => void refresh()}
+                  onDragStartCommit={() => {
+                    // Auto-close the drawer the moment a drag begins so
+                    // the canvas underneath becomes the drop target. The
+                    // gesture stays continuous from the user's POV — no
+                    // need for them to close-then-drag.
+                    setGalleryOpen(false);
+                  }}
                 />
               ))}
             </div>
@@ -529,12 +527,14 @@ function GenerationCard({
   selectedRecords,
   onClick,
   onChanged,
+  onDragStartCommit,
 }: {
   row: GenerationRecord;
   selected: boolean;
   selectedRecords: GenerationRecord[];
   onClick: (e: React.MouseEvent) => void;
   onChanged: () => void;
+  onDragStartCommit: () => void;
 }) {
   const single = pickFirst(row.output);
   return (
@@ -569,6 +569,10 @@ function GenerationCard({
           serializeGenerationDrag({ items }),
         );
         e.dataTransfer.effectAllowed = "copy";
+        // Auto-close the drawer so the canvas underneath becomes the
+        // drop target. Without this, the drawer's full-viewport
+        // backdrop intercepts the drop and nothing lands on canvas.
+        onDragStartCommit();
       }}
       className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card/60 transition-all ${
         selected

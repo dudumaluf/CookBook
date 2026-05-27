@@ -19,9 +19,15 @@ import {
 } from "@/components/ui/tooltip";
 import { InlineRename } from "@/components/library/inline-rename";
 import {
+  downloadFromUrl,
+  downloadText,
+  safeFilename,
+} from "@/lib/library/download";
+import {
   GENERATION_DRAG_MIME,
   serializeGenerationDrag,
 } from "@/lib/library/generation-drag";
+import { useLayoutStore } from "@/lib/stores/layout-store";
 import type { GenerationRecord } from "@/lib/repositories/generation-repository";
 import { getGenerationRepository } from "@/lib/repositories/supabase-generation-repository";
 import type { StandardizedOutput } from "@/types/node";
@@ -86,34 +92,16 @@ async function downloadOutput(
   if (!out) return;
   const filenameBase =
     row.title ?? row.promptText?.slice(0, 60) ?? row.nodeKind;
-  const safe = filenameBase
-    .replace(/[^a-zA-Z0-9._\- ]+/g, "-")
-    .replace(/\s+/g, "_")
-    .slice(0, 96);
+  const safe = safeFilename(filenameBase);
+  // Cross-origin URLs (Supabase Storage) ignore the anchor `download`
+  // attribute and just navigate. Fetch the bytes ourselves and trigger
+  // download from a same-origin blob URL.
   if (out.type === "image" && out.value?.url) {
-    // Browser-native: anchor with download attribute. Cross-origin URLs
-    // (Supabase Storage) honor `download` because we set the bucket as
-    // public; the file lands in Downloads.
-    const a = document.createElement("a");
-    a.href = out.value.url;
-    a.download = `${safe}.png`;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    await downloadFromUrl(out.value.url, `${safe}.png`);
     return;
   }
   if (out.type === "text" && typeof out.value === "string") {
-    const blob = new Blob([out.value], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${safe}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadText(out.value, `${safe}.txt`);
     return;
   }
 }
@@ -343,6 +331,10 @@ export function GalleryLightbox({
 
         <div
           // Drag the preview onto canvas — same MIME / payload as cards.
+          // We close BOTH the lightbox and the underlying gallery
+          // drawer so the canvas becomes the drop target. Without
+          // closing them, their full-viewport overlay backdrops
+          // intercept the drop and nothing lands on canvas.
           draggable
           onDragStart={(e) => {
             if (!out) return;
@@ -353,6 +345,8 @@ export function GalleryLightbox({
               }),
             );
             e.dataTransfer.effectAllowed = "copy";
+            useLayoutStore.getState().setGalleryOpen(false);
+            onClose();
           }}
           className="flex max-h-full max-w-full cursor-grab items-center justify-center active:cursor-grabbing"
         >
