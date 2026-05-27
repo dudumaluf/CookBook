@@ -1,5 +1,6 @@
 "use client";
 
+import { nodeRegistry } from "@/lib/engine/registry";
 import { getGenerationRepository } from "@/lib/repositories/supabase-generation-repository";
 import { uploadImageFromUrl } from "@/lib/library/upload-asset";
 import { useExecutionStore } from "@/lib/stores/execution-store";
@@ -7,9 +8,27 @@ import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type {
   ExecutionRecord,
+  NodeCategory,
   NodeUsage,
   StandardizedOutput,
 } from "@/types/node";
+
+/**
+ * Slice 6.5 — Gallery is a curated corpus, not a sink for every node's
+ * output. Only AI-generation categories make it into `cookbook_generations`
+ * (the user paid for these; they're worth durable storage + searching +
+ * pinning + showing in Gallery). Inputs (Text/Image/Number/Soul ID),
+ * iterators, transforms (Array/List), and outputs (Export) are skipped —
+ * their values flow through the engine but never persist.
+ *
+ * Add a category to this set when a new generation node lands (e.g. video
+ * gen via Higgsfield video). Categories live in `src/types/node.ts`.
+ */
+const GALLERY_CATEGORIES: ReadonlySet<NodeCategory> = new Set([
+  "ai-text",
+  "ai-image",
+  "ai-video",
+] as const);
 
 /**
  * generation-sync — Slice 6.2 (ADR-0035).
@@ -172,6 +191,12 @@ async function persistRecord(
     .getState()
     .nodes.find((n) => n.id === nodeId);
   if (!node) return; // Node was deleted mid-run — skip.
+
+  // Slice 6.5 — Gallery whitelist. Skip Text/Number/Soul ID/Array/List/
+  // Iterators/Export — their outputs flow through the engine but the
+  // Gallery is reserved for paid AI generations only.
+  const schema = nodeRegistry.get(node.kind);
+  if (!schema || !GALLERY_CATEGORIES.has(schema.category)) return;
 
   // Step 1: rehost external image URLs to our bucket (best-effort).
   const { output: rehostedOutput, rehosted } =

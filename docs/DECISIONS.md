@@ -1384,6 +1384,100 @@ Pure-function reactive nodes garantem que cada flush converge em uma rodada (mes
 - ADR-0028 (size schema) — body wrapper aplica `flex-1 min-h-0` quando há `maxHeight`, garantindo overflow funcionar.
 - Slice 5.8 (`record.history`) — reactive runs também adicionam history entries quando emit `done`. Cross-session history persiste via `cookbook_generations` (ADR-0035).
 
+## ADR-0038 — Gallery as curated generation corpus + content-management UX (M0a Slice 6.5)
+
+- **Date**: 2026-05-27
+- **Status**: implemented in Slice 6.5.
+- **Context**: depois do M0a close (ADR-0037) o usuário viu na prática que a Gallery estava enchendo de junk: outputs de Text, Number, Soul ID, Iterators, Array, List populavam `cookbook_generations` lado-a-lado com as gerações pagas (LLM, Higgsfield). Confunde a UX, polui a search por prompt, e quebra a percepção da Gallery como "minhas obras". Slice 6.5 cura o corpus, adiciona ferramentas de gestão de conteúdo (filter por tipo, multi-select, lightbox com keyboard nav, drag-to-canvas, rename inline, bulk download/delete) e formaliza a expectativa de que cards do Gallery são primeira-classe — manageable, addressable, draggable.
+
+### 1. Whitelist por categoria
+
+[`generation-sync.ts`](../src/lib/sync/generation-sync.ts) lookup do schema via `nodeRegistry.get(node.kind)` antes de inserir. Apenas categorias `ai-text`, `ai-image`, `ai-video` (set `GALLERY_CATEGORIES`) chegam ao DB. Concretamente: LLM Text + Higgsfield Image (e futuro Higgsfield Video). Text/Number/Soul ID/Array/List/Iterators/Export viram cliente-only — fluem na engine, never persist.
+
+Cleanup do junk acumulado no DB:
+```sql
+delete from public.cookbook_generations
+where node_kind not in ('llm-text', 'higgsfield-image-gen');
+```
+65 rows de Text + 37 de Soul ID + 1 de List removidas (Slice 6.5 commit). Resta o corpus real: 29 Higgsfield + 4 LLM.
+
+### 2. Tabela: `title` editável + `outputType` filter
+
+Migration [`20260527_generations_title.sql`](../supabase/migrations/20260527_generations_title.sql):
+
+```sql
+alter table public.cookbook_generations add column if not exists title text;
+create index if not exists cookbook_generations_title_idx
+  on public.cookbook_generations(project_id, title)
+  where title is not null;
+```
+
+`title` é nullable. Display: `title || prompt_text || node_kind` (cascade fallback). Inline rename grava via `setTitle(id, value)`. Whitespace/empty → null (clear).
+
+Filter API ganha `outputType?: "image" | "text" | "video"`. Repository traduz pra `node_kind IN (...)` via `OUTPUT_TYPE_NODE_KINDS`:
+```typescript
+{ image: ["higgsfield-image-gen"], text: ["llm-text"], video: [] }
+```
+Type `video` (empty list) curto-circuita pra `node_kind = "__none__"` retornando vazio (M0c). Cleaner do que LET o Postgres retornar tudo.
+
+### 3. UI: filter chips + multi-select + bulk actions
+
+[`gallery-drawer.tsx`](../src/components/layout/gallery-drawer.tsx) reescrito.
+
+- **5 chips**: All • Image (N) • Text (N) • Video (N) • Pinned (N). Counts derivadas localmente do `data` (sem N requests).
+- **Multi-select**:
+  - Plain click → abre lightbox.
+  - Cmd/Ctrl-click → toggle id no `Set<string>`.
+  - Shift-click → range entre `anchorId` e o id clicado (índice no array filtrado).
+- **Bulk action bar** aparece quando `selectedIds.size >= 1`. Botões: Pin / Unpin / Download / Delete / Clear.
+- **Card** é `draggable`. Single drag carrega só o id; multi-drag com a card selecionada → carrega TODA a seleção (ids + outputs serializados). Other cards fora da seleção dragable normalmente como solo.
+- **Bulk download** sequencial via `<a download>` com gap 80ms — Chrome/Safari não colapsam em uma só. Text items via Blob URL (.txt).
+
+### 4. Lightbox
+
+Novo [`gallery-lightbox.tsx`](../src/components/layout/gallery-lightbox.tsx). Modal full-screen quando user clica num card.
+
+- **Preview**: image `object-contain` 85vh / 90vw cap; text scrollable card; video TBD.
+- **Inline rename** via [`<InlineRename>`](../src/components/library/inline-rename.tsx) (mesmo componente da Library) — double-click no título.
+- **Footer actions**: Pin / Download / Delete + Close.
+- **Keyboard nav**: ArrowLeft / ArrowRight cycle pelos items do filtro atual (parent passa `items`); Esc fecha.
+- **Side-arrow buttons** pra mouse users.
+- **Drag** do preview pra canvas usa o mesmo MIME que os cards — single-image drag.
+- **Delete** dentro do lightbox auto-avança pro próximo item; se foi o último, fecha.
+
+### 5. Drag-to-canvas
+
+Novo MIME `application/x-cookbook-generation` em [`generation-drag.ts`](../src/lib/library/generation-drag.ts) (paralelo a `asset-drag.ts`). Payload:
+```typescript
+{ items: { generationId: string; output: StandardizedOutput }[] }
+```
+
+Carrega outputs já resolvidos pra evitar repository round-trip no drop. Multi-select drag = N items na payload.
+
+[`canvas-flow.tsx`](../src/components/canvas/canvas-flow.tsx) `onDrop` handler tem case adicional pro generation MIME:
+- `image` → `addNode("image", offset, { url, width?, height? })`.
+- `text` → `addNode("text", offset, { text })`.
+- `video` → ignorado (M0c).
+
+`onDragOver` aceita ambos os MIMEs (asset + generation).
+
+### 6. Trade-offs aceitos
+
+- **Sem Save-as-recipe na Gallery** ainda. Save-as-recipe vai operar sobre seleção de canvas, não sobre cards de Gallery. Gallery vira fonte de pinned content; recipes ficam separados (ADR-0037).
+- **Sem tag-based grouping na Gallery UI**. Coluna `tags text[]` existe e é writable via repository, mas UI fica pra slice futura. M0b ou M0c.
+- **Bulk download como N anchor downloads** (não single zip). Alguns browsers podem prompt o usuário "permita downloads múltiplos". Aceitável pra M0a; pode evoluir pra single zip via JSZip se chiar.
+- **Sem touch/swipe** no lightbox. Desktop-first.
+- **Sem inputs_snapshot completo** ainda → "Regenerate from this generation" fica pra slice futura quando o engine anotar inputs no record.
+- **M0a single-user** então não tem partilhamento entre usuários (RLS é owner-only).
+
+### 7. Cross-references
+
+- ADR-0035 — `cookbook_generations` table base. ADR-0038 não muda schema base, só extends com `title`.
+- ADR-0036 — reactive engine não interfere; reactive nodes nunca chegam ao Gallery (filtrados pelo whitelist).
+- ADR-0037 — recipes / assistant DSL ficam separadas. Eventually o assistant pode ler `listGenerations()` para ground na história do user, mas isso é tooling de Slice 6.4 (já existe via `useGenerations`).
+- ADR-0008 (output pinning) — `pinned` column manifestation continua.
+- ADR-0012 (Gallery design) — Day-1 stub agora ganha o segundo level (chips, multi-select, lightbox, drag-to-canvas) que o ADR previu.
+
 ## ADR-0037 — Recipes as data + LLM-driven assistant DSL (M0a Slice 6.4)
 
 - **Date**: 2026-05-26

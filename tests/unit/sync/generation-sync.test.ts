@@ -22,6 +22,24 @@ vi.mock("@/lib/library/upload-asset", () => ({
   deleteAssetObject: vi.fn(),
 }));
 
+// Slice 6.5 — generation-sync now consults nodeRegistry to filter by
+// category. The registry is empty unless `all-nodes.ts` is imported,
+// which we don't want to pull in here. Stub it with the kinds these
+// tests reference so the whitelist passes.
+vi.mock("@/lib/engine/registry", () => {
+  const SCHEMAS: Record<string, { category: string }> = {
+    "higgsfield-image-gen": { category: "ai-image" },
+    "llm-text": { category: "ai-text" },
+    "text": { category: "input" },
+    "soul-id": { category: "input" },
+  };
+  return {
+    nodeRegistry: {
+      get: (kind: string) => SCHEMAS[kind],
+    },
+  };
+});
+
 const { _internals, startAutoPersistGenerations } = await import(
   "@/lib/sync/generation-sync"
 );
@@ -210,6 +228,89 @@ describe("startAutoPersistGenerations", () => {
     });
     await vi.waitFor(() => expect(repoMocks.insert).toHaveBeenCalled());
     expect(repoMocks.insert).toHaveBeenCalledTimes(1);
+    unsub();
+  });
+
+  /* Slice 6.5 — Gallery whitelist by category. Only ai-* categories
+     persist; inputs / transforms / outputs are skipped. */
+  it("does NOT insert when the node's category is outside the gallery whitelist (Slice 6.5)", async () => {
+    repoMocks.insert.mockResolvedValue({ id: "gen-x" });
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "n1",
+          kind: "text", // category 'input' — must be skipped.
+          position: { x: 0, y: 0 },
+          config: { text: "ignored" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "n1",
+          {
+            status: "done",
+            output: { type: "text", value: "should not persist" },
+          } as never,
+        ],
+      ]),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(repoMocks.insert).not.toHaveBeenCalled();
+    unsub();
+  });
+
+  it("DOES insert for ai-image (higgsfield-image-gen) AND ai-text (llm-text) (Slice 6.5)", async () => {
+    repoMocks.insert.mockResolvedValue({ id: "gen-y" });
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "img",
+          kind: "higgsfield-image-gen",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+        {
+          id: "txt",
+          kind: "llm-text",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "img",
+          {
+            status: "done",
+            output: {
+              type: "image",
+              value: { url: "https://supabase.test/x.png" },
+            },
+          } as never,
+        ],
+        [
+          "txt",
+          {
+            status: "done",
+            output: { type: "text", value: "an LLM response" },
+          } as never,
+        ],
+      ]),
+    });
+    await vi.waitFor(() =>
+      expect(repoMocks.insert).toHaveBeenCalledTimes(2),
+    );
     unsub();
   });
 

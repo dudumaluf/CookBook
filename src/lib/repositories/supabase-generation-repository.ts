@@ -9,6 +9,7 @@ import {
   type GenerationRepository,
   GenerationRepositoryError,
   type InsertGenerationInput,
+  OUTPUT_TYPE_NODE_KINDS,
 } from "./generation-repository";
 
 interface RawGenerationRow {
@@ -22,6 +23,7 @@ interface RawGenerationRow {
   usage: NodeUsage | null;
   inputs_snapshot: unknown | null;
   prompt_text: string | null;
+  title: string | null;
   pinned: boolean;
   tags: string[];
   created_at: string;
@@ -39,6 +41,7 @@ function rowToRecord(row: RawGenerationRow): GenerationRecord {
     usage: row.usage,
     inputsSnapshot: row.inputs_snapshot,
     promptText: row.prompt_text,
+    title: row.title ?? null,
     pinned: row.pinned,
     tags: row.tags ?? [],
     createdAt: row.created_at,
@@ -102,6 +105,18 @@ export class SupabaseGenerationRepository implements GenerationRepository {
       .order("created_at", { ascending: false });
     if (filter.nodeId) query = query.eq("node_id", filter.nodeId);
     if (filter.nodeKind) query = query.eq("node_kind", filter.nodeKind);
+    if (filter.outputType) {
+      // Translate the Gallery's user-facing chip into the underlying node
+      // kinds we know produce that output type.
+      const kinds = OUTPUT_TYPE_NODE_KINDS[filter.outputType];
+      if (kinds.length > 0) {
+        query = query.in("node_kind", kinds);
+      } else {
+        // Unknown / unmapped (e.g. video before M0c) — short-circuit to
+        // an empty result rather than letting Postgres return everything.
+        query = query.eq("node_kind", "__none__");
+      }
+    }
     if (filter.pinnedOnly) query = query.eq("pinned", true);
     if (filter.promptContains) {
       // Case-insensitive substring search via Postgres `ilike`.
@@ -140,6 +155,18 @@ export class SupabaseGenerationRepository implements GenerationRepository {
       .update({ tags })
       .eq("id", id);
     if (error) throw mapError(error, "Failed to update tags");
+  }
+
+  async setTitle(id: string, title: string | null): Promise<void> {
+    // Trim user input; empty / whitespace-only resets to null so the UI
+    // falls back to prompt_text || node_kind.
+    const trimmed = title === null ? null : title.trim();
+    const next = trimmed && trimmed.length > 0 ? trimmed : null;
+    const { error } = await this.client
+      .from("cookbook_generations")
+      .update({ title: next })
+      .eq("id", id);
+    if (error) throw mapError(error, "Failed to update title");
   }
 
   async remove(id: string): Promise<void> {

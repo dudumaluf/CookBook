@@ -156,4 +156,85 @@ describe("SupabaseGenerationRepository", () => {
     await repo.setTags("g1", ["foo", "bar"]);
     expect(captured).toEqual({ tags: ["foo", "bar"] });
   });
+
+  /* Slice 6.5 — title rename. */
+  it("setTitle writes a trimmed title (Slice 6.5)", async () => {
+    let captured: unknown;
+    const client = makeMockClient((state) => {
+      if (state.updatePayload !== undefined) captured = state.updatePayload;
+      return { data: null, error: null };
+    });
+    const repo = new SupabaseGenerationRepository(client as never);
+    await repo.setTitle("g1", "  My Cool Generation  ");
+    expect(captured).toEqual({ title: "My Cool Generation" });
+  });
+
+  it("setTitle stores null when given empty / whitespace (Slice 6.5)", async () => {
+    let captured: unknown;
+    const client = makeMockClient((state) => {
+      if (state.updatePayload !== undefined) captured = state.updatePayload;
+      return { data: null, error: null };
+    });
+    const repo = new SupabaseGenerationRepository(client as never);
+    await repo.setTitle("g1", "   ");
+    expect(captured).toEqual({ title: null });
+  });
+
+  /* Slice 6.5 — outputType filter translates to node_kind IN (...). */
+  it("list filter outputType=image queries node_kind in (higgsfield-image-gen)", async () => {
+    let capturedIn: { col: string; vals: unknown[] } | null = null;
+    const client = {
+      from: () => {
+        const builder: Record<string, unknown> = {};
+        builder.select = () => builder;
+        builder.eq = () => builder;
+        builder.is = () => builder;
+        builder.ilike = () => builder;
+        builder.order = () => builder;
+        builder.limit = () => builder;
+        builder.range = () => builder;
+        builder.in = (col: string, vals: unknown[]) => {
+          capturedIn = { col, vals };
+          return builder;
+        };
+        builder.then = (resolve: (v: unknown) => unknown) =>
+          Promise.resolve([]).then(resolve);
+        return builder;
+      },
+    };
+    const repo = new SupabaseGenerationRepository(client as never);
+    await repo.list({ projectId: "p1", outputType: "image" });
+    expect(capturedIn).not.toBeNull();
+    expect(capturedIn!.col).toBe("node_kind");
+    expect(capturedIn!.vals).toEqual(["higgsfield-image-gen"]);
+  });
+
+  it("list filter outputType=video short-circuits to no rows (M0c reserved)", async () => {
+    let capturedEq: { col: string; val: unknown } | null = null;
+    const client = {
+      from: () => {
+        const builder: Record<string, unknown> = {};
+        builder.select = () => builder;
+        builder.eq = (col: string, val: unknown) => {
+          // Last eq() call wins — we expect the short-circuit one.
+          capturedEq = { col, val };
+          return builder;
+        };
+        builder.is = () => builder;
+        builder.ilike = () => builder;
+        builder.order = () => builder;
+        builder.limit = () => builder;
+        builder.range = () => builder;
+        builder.in = () => builder;
+        builder.then = (resolve: (v: unknown) => unknown) =>
+          Promise.resolve([]).then(resolve);
+        return builder;
+      },
+    };
+    const repo = new SupabaseGenerationRepository(client as never);
+    await repo.list({ projectId: "p1", outputType: "video" });
+    expect(capturedEq).not.toBeNull();
+    expect(capturedEq!.col).toBe("node_kind");
+    expect(capturedEq!.val).toBe("__none__");
+  });
 });

@@ -29,6 +29,10 @@ import {
   ASSET_DRAG_MIME,
   parseAssetDrag,
 } from "@/lib/library/asset-drag";
+import {
+  GENERATION_DRAG_MIME,
+  parseGenerationDrag,
+} from "@/lib/library/generation-drag";
 import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
 import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
@@ -552,11 +556,16 @@ function CanvasFlowInner() {
     };
   }, []);
 
-  // Library asset drag — accept iff our custom MIME is present; ignore
-  // foreign drags (OS files, other apps' URLs) so they fall through to the
-  // browser's default behaviour.
+  // Library asset drag OR Gallery generation drag (Slice 6.5) — accept
+  // iff one of our custom MIMEs is present; ignore foreign drags (OS
+  // files, other apps' URLs) so they fall through to the browser's
+  // default behaviour.
   const onDragOver = useCallback((event: React.DragEvent) => {
-    if (event.dataTransfer.types.includes(ASSET_DRAG_MIME)) {
+    const types = event.dataTransfer.types;
+    if (
+      types.includes(ASSET_DRAG_MIME) ||
+      types.includes(GENERATION_DRAG_MIME)
+    ) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
     }
@@ -564,6 +573,40 @@ function CanvasFlowInner() {
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      // Slice 6.5 — Gallery → canvas drag. Each generation item spawns
+      // a fresh node (image / text / video) at the drop point, offset
+      // by 24px per index so multi-select drags fan out cleanly.
+      const generationRaw = event.dataTransfer.getData(GENERATION_DRAG_MIME);
+      if (generationRaw) {
+        event.preventDefault();
+        const genPayload = parseGenerationDrag(generationRaw);
+        if (genPayload) {
+          const dropPos = screenToFlowPosition({
+            x: event.clientX,
+            y: event.clientY,
+          });
+          const ws = useWorkflowStore.getState();
+          genPayload.items.forEach((item, idx) => {
+            const offset = { x: dropPos.x + idx * 24, y: dropPos.y + idx * 24 };
+            const out = item.output;
+            if (out.type === "image" && out.value && out.value.url) {
+              ws.addNode("image", offset, {
+                url: out.value.url,
+                ...(out.value.width !== undefined &&
+                out.value.height !== undefined
+                  ? { width: out.value.width, height: out.value.height }
+                  : {}),
+              });
+            } else if (out.type === "text" && typeof out.value === "string") {
+              ws.addNode("text", offset, { text: out.value });
+            }
+            // video: M0c. Drop silently for now; the MIME guard already
+            // prevents non-supported types from arriving here in M0a.
+          });
+        }
+        return;
+      }
+
       const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
       if (!raw) return;
       event.preventDefault();
