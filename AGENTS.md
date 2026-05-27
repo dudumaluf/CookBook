@@ -14,10 +14,16 @@ This file is the **single starting point** for any new agent / chat session. If 
 
 ## Where we are right now
 
-- **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`).
-- **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Higgsfield Cloud + Fal OpenRouter. See **ADR-0033** (production-first development) for the deployment convention.
-- **Last shipped slice**: **package M0a Slices 5.6f + 5.7 + 5.8** (2026-05-25). Library polish (right-click context menu, shared `<InlineRename>`, Backspace multi-delete + `removeAssets` store action) + three utility nodes (Number, Array, List with optional `cursor: number` input) + Run-here button per executable node with per-node 10-entry history ring buffer (view-only — Higgsfield + LLM Text bodies get a cursor to navigate past generations). Engine grew `endAtNodeId` option + `computeAncestorSubgraph` helper. Execution-store grew `startRunFrom(nodeId)`. Tests 609 → 675 (+66). All four checks (npm test, tsc, lint, docs:check) green. Three separate commits on `main`, all deployed + smoke 200.
-- **Next up**: **Slice 5.6f — library polish** (right-click context menu on cards, multi-delete via Backspace, double-click rename on `image` and `soul-id` cards). Then **Slice 5.7 — `Array` / `List` / `Number` nodes** (was 5.6 in the previous roadmap; bumped). After 5.7: **Slice 5.8** (Run-here button + per-node history) and **Slice 5.9** (SQLite via Drizzle, finally cashing in the Repository abstraction from ADR-0005).
+- **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`). **CLOSED** with Slice 6 Foundations package.
+- **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Postgres + Higgsfield Cloud + Fal OpenRouter. See **ADR-0033** (production-first development) for the deployment convention.
+- **Last shipped slice**: **package M0a Slice 6 — Foundations + M0a close** (2026-05-26). Four sub-slices ship together as the M0a-closing package:
+  - **6.1** — Magic-link auth, `cookbook_projects` table, Repository pattern, sync layer (debounced auto-save 1s + bootstrap-on-login), per-user RLS scoping on the assets bucket. ADR-0034.
+  - **6.2** — `cookbook_generations` table, auto-rehost external CDN URLs to Supabase, generations sync subscription, useGenerations + useNodeHistory hooks, Gallery wired with real data + pin/search/refresh. ADR-0035.
+  - **6.3** — Engine `mode: "reactive-only"` + `reactive-runner` subscription, schema flag audit, live preview UX (Array items list, List dropdown picker), LLM Text overflow CSS fix on BaseNode. ADR-0036.
+  - **6.4** — `cookbook_recipes` table, RecipeRepository, instantiate-on-canvas helper, system "Soul Image Burst" recipe seeded, **assistant DSL** (Claude Sonnet 4.5 → JSON plan → executor), ChatSheet wired, PromptBar live. ADR-0037.
+
+  Tests **675 → 744** (+69). All four checks (npm test, tsc, lint, docs:check) green at every commit. Five separate commits on `main`, all deployed + smoke 200. M0a Acceptance criterion is now executable end-to-end: type a request, confirm the plan, watch images land in the Gallery.
+- **Next up**: **M0b** — production polish + multi-project + Soul ID training. Open questions: persistent chat (`cookbook_assistant_messages`), tool-loop / multi-turn agent, custom email provider, M2 sharing.
 
 ## Read these first (in order; ~10 min total)
 

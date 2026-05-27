@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowUp, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
+import { ArrowUp, Loader2, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +11,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChatSheet } from "./chat-sheet";
+import { useSession } from "@/lib/auth/use-session";
+import { planFromAssistant } from "@/lib/assistant/run";
+import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
@@ -24,8 +28,50 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
 export function PromptBar() {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const { chatSheetOpen, toggleChatSheet, libraryOpen, queueOpen } =
+  const { chatSheetOpen, toggleChatSheet, setChatSheetOpen, libraryOpen, queueOpen } =
     useLayoutStore();
+  const { user } = useSession();
+  const { isThinking, appendMessage, setThinking, setAbortController } =
+    useAssistantStore();
+
+  async function handleSubmit() {
+    const text = value.trim();
+    if (!text || isThinking || !user) return;
+    setValue("");
+    appendMessage({ role: "user", content: text, timestamp: Date.now() });
+    setChatSheetOpen(true);
+    setThinking(true);
+    const controller = new AbortController();
+    setAbortController(controller);
+    try {
+      const result = await planFromAssistant({
+        userMessage: text,
+        signal: controller.signal,
+        ownerId: user.id,
+      });
+      appendMessage({
+        role: "assistant",
+        content: result.rawText,
+        plan: result.plan,
+        error: result.error,
+        costUsd: result.costUsd,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      const msg = err instanceof Error ? err.message : String(err);
+      appendMessage({
+        role: "assistant",
+        content: "",
+        error: msg,
+        timestamp: Date.now(),
+      });
+      toast.error(`Assistant failed: ${msg}`);
+    } finally {
+      setThinking(false);
+      setAbortController(null);
+    }
+  }
 
   // Reserve breathing space for floating panels so the prompt bar centers
   // between them rather than under them.
@@ -60,7 +106,7 @@ export function PromptBar() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          // wired in M0a
+          void handleSubmit();
         }}
         className="pointer-events-auto mx-auto flex w-full max-w-[640px] flex-col rounded-2xl border border-border/80 bg-popover/95 shadow-lg shadow-black/30 backdrop-blur-xl"
       >
@@ -98,11 +144,12 @@ export function PromptBar() {
             rows={1}
             placeholder="Ask anything, or describe a recipe to build... (press / to focus)"
             aria-label="Prompt bar"
-            className="min-h-9 max-h-32 flex-1 resize-none bg-transparent px-1 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            disabled={isThinking}
+            className="min-h-9 max-h-32 flex-1 resize-none bg-transparent px-1 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                // wired in M0a
+                void handleSubmit();
               }
             }}
           />
@@ -110,11 +157,15 @@ export function PromptBar() {
           <Button
             type="submit"
             size="icon"
-            disabled={!value.trim()}
+            disabled={!value.trim() || isThinking}
             className="h-9 w-9 shrink-0 rounded-xl bg-accent text-accent-foreground hover:bg-accent/90 disabled:opacity-40"
-            aria-label="Send"
+            aria-label={isThinking ? "Thinking" : "Send"}
           >
-            <ArrowUp className="h-4 w-4" />
+            {isThinking ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </form>

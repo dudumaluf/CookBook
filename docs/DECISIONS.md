@@ -1384,3 +1384,110 @@ Pure-function reactive nodes garantem que cada flush converge em uma rodada (mes
 - ADR-0028 (size schema) — body wrapper aplica `flex-1 min-h-0` quando há `maxHeight`, garantindo overflow funcionar.
 - Slice 5.8 (`record.history`) — reactive runs também adicionam history entries quando emit `done`. Cross-session history persiste via `cookbook_generations` (ADR-0035).
 
+## ADR-0037 — Recipes as data + LLM-driven assistant DSL (M0a Slice 6.4)
+
+- **Date**: 2026-05-26
+- **Status**: implemented in Slice 6.4.
+- **Context**: M0a Acceptance demanda que o usuário digite "give me 8 variations of me as a 90s movie character", confirme custo e receba imagens. ADR-0034 (auth + projects), ADR-0035 (gallery durável) e ADR-0036 (reactive engine) foram pré-requisitos. ADR-0037 fecha M0a com a peça final: **um assistente que monta workflows automaticamente** a partir de recipes salvos.
+
+### 1. Recipes table (`cookbook_recipes`)
+
+| Coluna | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | uuid | Recipe id. |
+| `owner_id` | uuid null | `null` = system recipe (visível pra todos). User-criadas têm uid do dono. |
+| `name`, `description`, `category` | text | Metadados pra UI + LLM context. |
+| `subgraph` | jsonb | `{ version, nodes, edges, exposedInputs?, exposedOutputs? }`. |
+| `is_node` | boolean | Reserved pra futuro composite-runtime (M0d). False em M0a → instantiate expande no canvas. |
+| `parent_recipe_id` | uuid null | Lineage opcional. |
+| `created_at` | timestamptz | Index newest-first per-owner + parcial system. |
+
+RLS: anyone reads `owner_id IS NULL` (system recipes); owners CRUD próprias. Sharing entre usuários parqueado pra M2.
+
+**Soul Image Burst** seedado direto via SQL: Text("scene description") + SoulID + HiggsfieldImageGen (9:16, 1080p, batch=4).
+
+### 2. Repository + instantiate
+
+- `RecipeRepository` interface (list / get / save / remove). `SupabaseRecipeRepository` impl.
+- `instantiateRecipeOnCanvas({ subgraph, position })` gera ids frescos, remapeia edges, translada posições pra ancorar no `position`, append atomicamente em `useWorkflowStore`. Edges órfãs (referenciando nodes ausentes) são droppadas.
+
+### 3. Assistant DSL — JSON-in-text
+
+Tradeoff principal: **não usamos tool-calls nativos** do OpenRouter. Em vez disso, o LLM responde com um objeto JSON em texto, validado via Zod. Razões:
+
+1. Fal OpenRouter wrapper hoje não expõe `tools` no body — adicionar exigia mudar API route + types em mais lugares.
+2. M0a single-user single-shot — sem necessidade de multi-turn agentic loop.
+3. Pragmático: text-in-text JSON funciona bem pra plans simples e curtos.
+
+Schema do plan (Zod-validated, `assistantPlanSchema`):
+
+```typescript
+{
+  reasoning: string,                        // 1-2 frases explicando
+  steps: AssistantStep[],
+  estimatedCostUsd: number,
+  confirmation?: string
+}
+
+AssistantStep =
+  | { kind: "clear-canvas" }
+  | { kind: "instantiate-recipe", recipeId, position }
+  | { kind: "set-node-config", nodeId, config }
+  | { kind: "link-soul-id", nodeId, assetId }
+  | { kind: "run" }
+```
+
+System prompt monta contexto (`buildSystemPrompt(context)`) com: lista de recipes (own + system), Soul IDs do user, imagens, contagem do canvas. Instrui LLM a responder JSON-only (sem markdown fences).
+
+### 4. Pipeline (`planFromAssistant` → `executePlan`)
+
+- `planFromAssistant({ userMessage, ownerId, signal })`:
+  1. Monta context via stores + repository.
+  2. Chama `callOpenRouter` (Claude Sonnet 4.5 default) com system prompt + user message.
+  3. Strip code fences se vierem.
+  4. JSON.parse + Zod validate.
+  5. Returns `{ plan?, error?, costUsd?, rawText }`.
+- `executePlan(plan)`:
+  1. Itera steps em ordem.
+  2. `clear-canvas` → wipe stores.
+  3. `instantiate-recipe` → busca repo + spawna; mantém `recipeNodeIdMap` (saved id → fresh id).
+  4. `set-node-config` / `link-soul-id` → traduz nodeId via map antes de patchar config.
+  5. `run` → `useExecutionStore.startRun()` e returns runId.
+
+Resultado: usuário digita uma frase → LLM monta plan → UI mostra plan card com "Run plan" button + custo estimado → click → workflow é montado + roda.
+
+### 5. UI
+
+- `useAssistantStore` (zustand) — chat log in-memory + isThinking flag.
+- `<ChatSheet>` — renderiza messages + plan cards com botão "Run plan". Auto-scroll. Clear button.
+- `<PromptBar>` — submit chama `planFromAssistant` + appendMessage. Loader durante thinking. Disabled enquanto in-flight.
+
+### 6. Trade-offs aceitos
+
+- **Sem multi-turn agentic loop**. Plan é one-shot. Se o LLM precisa "perguntar de volta", retorna `steps: []` + reasoning "preciso de mais info...". User edita prompt e re-envia.
+- **Sem persistence de chat**. Mensagens vivem in-memory. Reload limpa o chat. Acceptable pra M0a; cloud table `cookbook_assistant_messages` em slice futura.
+- **batch_size travado em 4** (Higgsfield max). "8 variations" é interpretado pelo LLM como "rode 4, depois rode mais 4 se quiser". User intent vs literal — sem regret.
+- **Tool-loop não-existe**. Se o LLM precisa olhar `cookbook_generations` antes de decidir, ele não consegue. Workaround: contexto carrega counts + soul IDs + recipes; suficiente pra M0a.
+
+### 7. M0a Acceptance
+
+Critério oficial:
+> User drops a Soul ID + sends "give me 4 photos of me as a 90s movie character". Assistant replies with plan, user confirms, 4 images land in Gallery.
+
+Flow após Slice 6.4 shipped:
+1. User magic-link login.
+2. Sees their Soul ID in library (uploaded via Slice 4.x).
+3. Types prompt na PromptBar → submit.
+4. ChatSheet abre, mostra "Thinking…" → plan card com 5 steps.
+5. Click "Run plan" → engine roda → 4 imagens emergem.
+6. ⌘G abre Gallery → 4 imagens novas, com prompt em search.
+
+Slice 6.4 é o ponto de close de M0a.
+
+### 8. Cross-references
+
+- ADR-0005 (Repository pattern) — RecipeRepository é a terceira impl concreta.
+- ADR-0034 (auth + projects) — owner_id em `cookbook_recipes` referência `auth.users`; system recipes têm null aí.
+- ADR-0035 (durable generations) — Gallery (já wirada) recebe os outputs do plan automaticamente.
+- ADR-0036 (reactive engine) — quando o plan termina com `run`, full mode é usado; reactive não interfere.
+

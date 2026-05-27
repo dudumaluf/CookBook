@@ -2,6 +2,91 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-26 — M0a Slice 6 Foundations + M0a close (4 sub-slices)
+
+Closes M0a. Five commits on `main`, each independently deployed + smoke 200. **Tests 675 → 744 (+69)**. Four-pillar foundation lands:
+1. Cloud-canonical project state with magic-link auth
+2. Durable generation corpus + auto-rehost + Gallery
+3. Reactive engine + live preview UX
+4. Recipes + LLM-driven assistant DSL
+
+### Slice 6.1 — Auth + cloud projects + repository (ADR-0034)
+
+- **`cookbook_projects`** Postgres table (renamed from `projects` to namespace-prefix to avoid collision with sibling tenants on the shared Supabase project; old `projects` had 0 rows so no data lost). Columns: `id, owner_id, name, state JSONB, state_version, timestamps, deleted_at`. Single permissive RLS policy on `auth.uid() = owner_id`. `touch_updated_at` trigger bumps `updated_at` (`set search_path = ''` to satisfy advisor 0011).
+- **Magic-link auth via Supabase**. `useSession()` hook (`status: loading | anonymous | authenticated`), `<AuthGate>` redirects anonymous to `/login`, `/login` page with email + "Send magic link" + "Check your inbox" success state. `persistSession + autoRefreshToken + detectSessionInUrl` all true on the client.
+- **Repository pattern (ADR-0005 finally concrete)**. `ProjectRepository` interface, `SupabaseProjectRepository` impl. `getCurrent / list / save / getOrCreate / rename / softDelete`. Postgres errors translate to `ProjectRepositoryError` with stable codes (`not_found`, `permission_denied`, `network`, `unknown`).
+- **Sync layer**. `bootstrapForUser(userId)` is idempotent: pulls cloud state OR pushes localStorage as first state (one-shot migration). `startAutoSave({ projectId, ownerId, debounceMs: 1000 })` subscribes to all four stores (workflow, asset, layout, project), debounces, PATCHes the cloud row, coalesces concurrent saves.
+- **Per-user storage RLS**. Drop legacy anon INSERT/DELETE on `cookbook-assets`. Add owner-scoped INSERT/UPDATE/DELETE that require `(storage.foldername(name))[2] = auth.uid()::text`. `uploadImageAsset` reads `auth.getUser()` and prefixes object key with `users/<uid>/...`.
+- **Project store v1 → v2**: adds `id` field tracking the cloud project UUID; v1→v2 migration preserves any existing local name.
+- **ProjectMenu**: "Sign out" item beneath email when authenticated.
+
+Tests: **675 → 702 (+27)**. New: `tests/unit/auth/use-session.test.ts` (8), `tests/unit/repositories/supabase-project-repository.test.ts` (10), `tests/unit/sync/project-sync.test.ts` (7). Extended: `tests/unit/library/upload-asset.test.ts` (+2). Commit `3fe430a`. Deploy + smoke 200.
+
+### Slice 6.2 — Generations corpus + auto-rehost + Gallery wired (ADR-0035)
+
+- **`cookbook_generations`** Postgres table. Columns: `id, project_id (FK cookbook_projects), owner_id (FK auth.users), node_id, node_kind, run_id, output JSONB, usage JSONB, inputs_snapshot JSONB, prompt_text, pinned, tags text[], created_at`. Three indexes: per-project newest-first, per-node history, partial pinned-only. Owner-only RLS.
+- **Auto-rehost**. `generation-sync.startAutoPersistGenerations` subscribes to execution-store records. On each `done` transition: walk output, detect external image URLs (anything not on `supabase.` host), `uploadImageFromUrl` rehosts to `users/<uid>/images/<random>/...`, patches the live record so UI uses the canonical URL, then inserts the row. Falhas no rehost só logam — original CDN URL fica como fallback.
+- **Gallery wirado**. `<GalleryDrawer>` rewritten as a real client. Subscribe via `useGenerations({ projectId })`, search by `prompt_text` (ilike), pinned-only toggle, manual refresh button. Card pin button (yellow Star), kind chip, prompt snippet, image / text thumbnail.
+- **Hooks**. `useGenerations(filter)` returns `{ data, isLoading, error, refresh }`. `useNodeHistory(nodeId)` wraps it with per-node filter + cap=50 — Slice 6.4 / future bodies will consume this for cross-session cursor.
+- **Cached records skip insert**. `record.status === "cached"` is a replay, not a new generation.
+- Multi-output (Higgsfield batch=4) writes one row per output item — clean Gallery filter/query story.
+
+Tests: **702 → 717 (+15)**. New: `tests/unit/repositories/supabase-generation-repository.test.ts` (4), `tests/unit/sync/generation-sync.test.ts` (11). Commit `088f224`. Deploy + smoke 200.
+
+### Slice 6.3 — Reactive engine + live preview UX (ADR-0036)
+
+- **Engine `mode: "full" | "reactive-only"`**. New `RunWorkflowOptions.mode` (default `full`). In `reactive-only`:
+  - Skip the seed-pending sweep.
+  - Per node: if `schema.reactive !== true` (LLM, Higgsfield, Soul ID, Export): try cache (cache hit emits `cached`, output flows downstream); cache miss skips entirely (no emit).
+  - Reactive nodes (Text, Image, Number, Array, List, Iterators) execute as before.
+- **Reactive runner subscription**. `startReactiveRunner({ debounceMs: 150 })` subscribes to `useWorkflowStore` only (NOT execution-store — would create a feedback loop). Background runs use a fresh per-flush cache (doesn't contaminate `sessionCache`). Skips when `isRunning` is true (full-run takes precedence). Wired into shell auth-bound effect alongside auto-save + auto-persist.
+- **Schema flag audit confirmed** (no flips needed): Text, Image, Number, Array, List, Image Iterator, Text Iterator, Soul ID → `reactive: true`. LLM Text, Higgsfield Image Gen, Export → `reactive: false`.
+- **Array body live preview**. Subscribes to its own record. Renders "N items" badge + numbered list of items with `max-h + overflow-y-auto + nowheel`.
+- **List body dropdown picker**. Subscribes to upstream record (whichever node is connected to `items`). `<select>` of every available item (60-char truncation for text, "Image #N" / "Number N" / etc. for other kinds). Selecting writes `config.cursor`.
+- **LLM Text overflow CSS fix**. `BaseNode` body wrapper now applies `flex-1 min-h-0` when EITHER explicit `height` OR schema `maxHeight` is set (was just explicit height). Long LLM responses now scroll inside the card instead of piercing the bottom edge.
+
+Tests: **717 → 720 (+3)**. New `runWorkflow with mode='reactive-only'` describe in `tests/unit/engine/run-workflow.test.ts` (3). Commit `4466614`. Deploy + smoke 200.
+
+### Slice 6.4 — Recipes + assistant DSL (ADR-0037) — **M0a Acceptance**
+
+Two commits: 6.4a (recipes infrastructure) + 6.4b (assistant DSL).
+
+**6.4a — Recipes infrastructure**
+
+- **`cookbook_recipes`** table. `id, owner_id (nullable — null = system), name, description, category, subgraph JSONB, is_node, parent_recipe_id, created_at`. Two RLS policies: anyone reads `owner_id IS NULL` (system recipes), owners CRUD own.
+- **`RecipeRepository`** interface + `SupabaseRecipeRepository` impl. `list / get / save / remove`. List filter modes: own + system (or-clause), own only, system only.
+- **`instantiateRecipeOnCanvas({ subgraph, position })`** helper: fresh node ids, edge remap, position translation, atomic append to workflow-store. Defensive: drops dangling edges.
+- **Soul Image Burst seeded** as a system recipe (owner_id null). Subgraph: Text("scene description") → HiggsfieldImageGen.prompt + SoulID → HiggsfieldImageGen.soulId. Defaults: 9:16, 1080p, batch=4.
+- **`useRecipes()`** hook over the repository.
+
+Tests: **720 → 729 (+9)**. New: `tests/unit/repositories/supabase-recipe-repository.test.ts` (5), `tests/unit/recipes/instantiate.test.ts` (4). Commit `9447694`.
+
+**6.4b — Assistant DSL**
+
+- **JSON-in-text plan protocol** (no native tool-calls — pragmatic for M0a). LLM responds with object validated by `assistantPlanSchema` (Zod): `{ reasoning, steps: AssistantStep[], estimatedCostUsd, confirmation? }`.
+- **Five step kinds**: `clear-canvas`, `instantiate-recipe`, `set-node-config`, `link-soul-id`, `run`.
+- **System prompt** (`buildSystemPrompt(context)`) embeds: own + system recipes, Soul IDs in library, image assets, canvas counts. Instructs JSON-only response with rough cost card.
+- **Pipeline**: `planFromAssistant({ userMessage, ownerId, signal })` returns `{ plan?, error?, costUsd?, rawText }`. `executePlan(plan)` walks steps in order, maps recipe-saved node ids ("text-prompt", "soul-id", "higgsfield") to fresh canvas ids, kicks off engine on `run` step.
+- **Default model**: `anthropic/claude-sonnet-4.5`. Temperature 0.2 (low randomness, JSON-friendly).
+- **`useAssistantStore`** (in-memory chat log + isThinking flag). Reset on logout.
+- **`<ChatSheet>` rewritten** to render messages from store; assistant messages with valid plans show a card with "Run plan" button + cost preview.
+- **`<PromptBar>` wired**: submit calls `planFromAssistant`, opens chat sheet, appends user/assistant messages, loader during thinking.
+
+Tests: **729 → 744 (+15)**. New: `tests/unit/assistant/types.test.ts` (5), `tests/unit/assistant/run.test.ts` (10). Commit `<6.4b sha>`.
+
+### M0a Acceptance — executable
+
+Flow:
+1. User magic-link login at `https://artificial-cookbook.vercel.app/login`.
+2. Library shows their Soul ID (uploaded via Slice 4.x).
+3. Type prompt in PromptBar: e.g. "give me 4 photos of me as a 90s movie character".
+4. ChatSheet opens, "Thinking…" → plan card with 5 steps + estimated cost.
+5. Click "Run plan" → engine runs → 4 imagens emergem nos nodes spawned by the recipe.
+6. ⌘G abre Gallery → 4 imagens novas, com prompt text searchable.
+7. Reload em outra máquina, mesmo email → mesmo projeto, mesmas generations.
+
+M0a closes here.
+
 ## 2026-05-25 — M0a Slices 5.6f + 5.7 + 5.8: library polish, Number/Array/List nodes, Run-here + history
 
 Three sequential slices shipped as a single coherent package, fechando o cluster ADR-0031 (iterators + library afordances) e abrindo caminho pra Run-here com history. 609 → 675 testes (+66 net), 3 commits separados, todos os 4 checks (`npm test`, `tsc`, `lint`, `docs:check`) verde, smoke 200 em produção depois de cada deploy.
