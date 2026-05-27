@@ -70,7 +70,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 ## ADR-0009 — Approval gate toggle per session
 
 - **Date**: 2026-05-12
-- **Context**: User wants the assistant to ask before running expensive ops, _sometimes_. Other times they want flow.
+- **Context**: User wants the assistant to ask before running expensive ops, *sometimes*. Other times they want flow.
 - **Decision**: A top-bar toggle (Approval ON / OFF) controls whether the assistant pauses for confirmation before runs. When ON (default), every run that exceeds a threshold ($0.10) or has ambiguous intent triggers a cost preview + confirm modal. When OFF, the assistant runs freely (still showing cost in the queue).
 - **Consequences**: User controls the friction level. Default is safe.
 
@@ -109,8 +109,8 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Date**: 2026-05-19
 - **Context**: Walking through ADR-0011 with the user, three problems surfaced:
   - The Properties panel is empty 99% of the time (nothing selected) and a permanently empty panel feels like wasted real estate.
-  - Edge-to-edge panels feel like banner chrome wrapping the canvas; the user wants the canvas to feel like the hero of the workspace, with surfaces floating _on top of it_ instead of carving it up.
-  - The top-bar Queue pill + Queue sheet split forced the user to click to see what's running; the user wants the queue persistently visible (it's where the work _is_).
+  - Edge-to-edge panels feel like banner chrome wrapping the canvas; the user wants the canvas to feel like the hero of the workspace, with surfaces floating *on top of it* instead of carving it up.
+  - The top-bar Queue pill + Queue sheet split forced the user to click to see what's running; the user wants the queue persistently visible (it's where the work *is*).
 - **Options**: (a) fix tabs/empty states inside the same 2-panel layout, (b) collapse Properties into a node-anchored popover and convert remaining panels to floating cards with breathing room, (c) move everything into a single right rail with stacked sections.
 - **Decision**: (b). New chrome rules:
   - **Properties → gone as a panel**. In M0a it returns as a small floating popover anchored to the selected node (or its handle) — only shown when something is selected, never empty.
@@ -135,12 +135,12 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Date**: 2026-05-19 (M0a Slice 2.2; supersedes 0018a's storage choice)
 - **Context**: 0018a put uploaded bytes in IndexedDB and minted session-local `blob:` URLs for previews. That works for the UI but breaks the *actual goal* — Fal/Higgsfield/etc. can't fetch a `blob:` from your browser session. User flagged it immediately ("how we did in prism? to be able to generate some images where I added something from the computer as input reference") and we agreed to swap before the dust settled.
 - **Decision**:
-  1. **`ImageAssetSource` becomes `remote | url`**, no `blob`. `remote` carries `{ bucket, key, url, mime, sizeBytes }`. The `url` is a Supabase Storage public URL — fetchable from anywhere on the public internet, ready for any inference API to pull.
+  1. `**ImageAssetSource` becomes `remote | url`**, no `blob`. `remote` carries `{ bucket, key, url, mime, sizeBytes }`. The `url` is a Supabase Storage public URL — fetchable from anywhere on the public internet, ready for any inference API to pull.
   2. **Bytes live in Supabase Storage**, bucket `cookbook-assets`, public, MIME-allowlisted to `image/*`, 30 MB server-side cap (client checks 25 MB for headroom). Provisioned via the `cookbook_assets_bucket` migration; permissive RLS policies (`anon` can SELECT/INSERT/DELETE inside this bucket) are the explicit MVP shortcut and will be tightened once GitHub auth lands.
-  3. **`asset.id` is no longer the storage key.** Keys are `images/<8-hex>/<safe-filename>` — random prefix gives collision resistance with zero coordination, filename tail keeps the dashboard browseable. `asset.source.key` carries the storage key so `removeAsset` can delete it.
+  3. `**asset.id` is no longer the storage key.** Keys are `images/<8-hex>/<safe-filename>` — random prefix gives collision resistance with zero coordination, filename tail keeps the dashboard browseable. `asset.source.key` carries the storage key so `removeAsset` can delete it.
   4. **Upload is atomic**: `createImageAssetFromFile` calls `uploadImageAsset` first; only commits a metadata record if Supabase returns a URL. A failed network mid-batch leaves the store unchanged for that file (the import pipeline surfaces a toast and keeps going for the rest).
   5. **No client-side cache**. The Supabase CDN + the browser's HTTP cache do the heavy lifting. After the first paint a URL is effectively instant. Saves us from a write-through cache that would just complicate cleanup.
-  6. **`useImageAssetUrl` is gone** and `AssetCard` / Image node body read `source.url` directly. Async hook only made sense for the IDB indirection; with cloud URLs everything is sync.
+  6. `**useImageAssetUrl` is gone** and `AssetCard` / Image node body read `source.url` directly. Async hook only made sense for the IDB indirection; with cloud URLs everything is sync.
   7. **Migration v2 → v3 drops `blob`-source rows** since their bytes were never anywhere but local IDB (which we no longer write). Re-uploading is the only honest recovery; warning the user is the responsibility of whatever consumer reads the asset list (today: nothing — the list just stops including those rows).
 - **Why supersede instead of layer**: The IDB-then-upload-on-execute design (write-through cache, lazy lift) would have given us a brief offline window for previews — at the cost of two storage backends, dual cleanup, and a "the URL the API sees is different from what the preview saw" footgun. Cloud-canonical from the start eliminates the entire class of bugs and matches what we'd want for cloud sync anyway.
 - **Why not Fal's own `fal.storage.upload`**: zero infra but Fal-only — Higgsfield (and any future API) would need a parallel pipeline. Supabase gives us one URL that works everywhere.
@@ -151,9 +151,9 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Date**: 2026-05-19 (M0a Slice 2.1; supersedes the storage half of 0018)
 - **Context**: Slice 2 shipped with URL paste as the only image-import path. User correction: "the way to add images wouldn't be to paste a URL, it would be uploading from the computer." 99% of real flows are local files (own photoshoot, references, products). URL paste survives as an escape hatch for the rare known-public-URL case.
 - **Decision**:
-  1. **`ImageAssetSource` discriminator** lives on the asset:
-     - `{ type: "blob"; mime: string; sizeBytes: number }` — bytes in IndexedDB.
-     - `{ type: "url"; url: string }` — bytes behind a remote URL, no local storage.
+  1. `**ImageAssetSource` discriminator** lives on the asset:
+    - `{ type: "blob"; mime: string; sizeBytes: number }` — bytes in IndexedDB.
+    - `{ type: "url"; url: string }` — bytes behind a remote URL, no local storage.
      A future `{ type: "remote"; key }` (Supabase Storage signed URL) slots in alongside without touching the rest of the system.
   2. **Bytes live in IndexedDB**, not localStorage. The 5–10 MB localStorage cap a single phone photo blows trivially. `src/lib/library/asset-blobs.ts` is the wrapper (`putBlob` / `getBlob` / `removeBlob` / `getBlobUrl` / `revokeBlobUrl`). Metadata still goes through `localStorage` via Zustand `persist`.
   3. **On-disk shape is `{ type, bytes: Uint8Array }`**, not a raw `Blob`. Blob serialization across structured-clone boundaries is environment-dependent (notably: happy-dom + fake-indexeddb drops the bytes leaving `{ type }` only, and some older Firefox versions had quirks). Storing a `Uint8Array` round-trips cleanly everywhere. Cost: one extra `arrayBuffer()` copy per write/read — acceptable for the volumes we deal with.
@@ -161,9 +161,9 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   5. **URLs are session-local**: `getBlobUrl(assetId)` mints + caches a `blob:` URL per asset. They're not persisted anywhere because they're invalidated on reload. Consumers go through `useImageAssetUrl(assetId)` which renders sync for `url`-source and async for `blob`-source.
   6. **Atomic asset creation**: `createImageAssetFromFile` writes the blob to IDB *before* committing the metadata. If IDB throws, the asset record is never created → no dangling references.
   7. **Image node semantics for the new world**:
-     - Linked + url-source: `config.url` is denormalized at drag time and kept as a standalone fallback. Unlinking keeps it.
-     - Linked + blob-source: `config.url = ""` at drag time (no stable URL exists outside the session). Unlinking blanks it too — keeping a dead `blob:…` would mislead.
-     - `execute()` always re-resolves via the asset store when linked, regardless of source.
+    - Linked + url-source: `config.url` is denormalized at drag time and kept as a standalone fallback. Unlinking keeps it.
+    - Linked + blob-source: `config.url = ""` at drag time (no stable URL exists outside the session). Unlinking blanks it too — keeping a dead `blob:…` would mislead.
+    - `execute()` always re-resolves via the asset store when linked, regardless of source.
 - **Why not `OPFS` / `Filesystem Access API`**: OPFS is fine but adds a second persistence model (in addition to IDB metadata pattern); Filesystem Access requires explicit user grant and breaks the "local-first MVP, frictionless" feel. IDB is the path of least resistance and the same API surface we'd need anyway for a future offline cache.
 - **Why not `idb` wrapper**: 5 KB but adds a dependency for ~50 lines of trivial wrapping. Native IDB is fine here.
 - **Why the 25 MB per-file cap**: arbitrary but defensible — keeps writes fast, prevents a runaway photo from blowing the per-origin quota, easy to relax once we add image-resize on import (later slice).
@@ -209,7 +209,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **bottom-left**: React Flow Controls — zoom in / out / fit + theme toggle as a 4th `<ControlButton>` child. Same dark pill styling for all four.
   - **bottom-right**: React Flow MiniMap (`lg:` and up, 180×120, compact).
   - PromptBar stays bottom-center.
-- **`CanvasControls.tsx` + `ThemeToggle.tsx` deleted**. Gallery is extracted into `gallery-button.tsx`. Theme lives in `canvas-flow.tsx` as `ThemeControlButton` (an inline `<ControlButton>` reading `useTheme()`).
+- `**CanvasControls.tsx` + `ThemeToggle.tsx` deleted**. Gallery is extracted into `gallery-button.tsx`. Theme lives in `canvas-flow.tsx` as `ThemeControlButton` (an inline `<ControlButton>` reading `useTheme()`).
 - **Responsive controls position**: at lg+ the Controls sit at `bottom: 0.75rem` (no gap); at `<lg` a media query in `globals.css` lifts them to `bottom: 5.25rem` so the wide prompt bar form doesn't visually cover the lower buttons via its backdrop-blur. The user's primary viewport (≥lg) gets the corner placement they asked for; the small-viewport bump up only kicks in where it's actually necessary.
 - **Trade-offs**:
   - Two stacked pills at top-right (Gallery + AddNode) take a bit more horizontal space than a single one. Acceptable — the corner has the room and it reads as a "tools" cluster.
@@ -241,7 +241,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   }
   ```
   Our `BaseNode` card chrome (hover/select transitions) is a child of `.react-flow__node`, not the node wrapper itself, so it keeps the global hover transitions.
-- **Controls theming**: instead of overriding every descendant rule, scope React Flow's own `--xy-controls-button-*` CSS vars on `.react-flow`. RF's stylesheet already reads these for backgrounds, hovers, borders, shadows — repainting via the var hook is much less brittle than overriding `.react-flow__controls-button` selectors (which is what an earlier attempt did and, due to specificity + `overflow: hidden`, accidentally collapsed the three buttons into one visible row).
+- **Controls theming**: instead of overriding every descendant rule, scope React Flow's own `--xy-controls-button-`* CSS vars on `.react-flow`. RF's stylesheet already reads these for backgrounds, hovers, borders, shadows — repainting via the var hook is much less brittle than overriding `.react-flow__controls-button` selectors (which is what an earlier attempt did and, due to specificity + `overflow: hidden`, accidentally collapsed the three buttons into one visible row).
 - **Positioning**: Controls move to `bottom: 5rem` (above the prompt bar) and AddNode moves to top-right (`right-3 top-3`) per user direction. Top-left has the ProjectMenu logo, top-right now has AddNode — symmetric. Queue panel below it is vertically centered so they don't collide; the popover (z-50) renders over the queue when both are open.
 - **Consequences**:
   - Touches only `globals.css`, `canvas-flow.tsx`, `shell.tsx`, `canvas-area.tsx` (welcome hint arrow direction).
@@ -307,7 +307,6 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Serial keeps progress callbacks linear and the UI mental model trivial: one chip moves through `pending → running → done` at a time. Slice 3.x can re-introduce parallel execution surgically if (when) it becomes a bottleneck.
   - Cancellation via a single `AbortController` per run lets the same plumbing serve both the user's Cancel click and Slice 3.2's network aborts.
 - **Hash recipe** (kept literal here because changing it silently busts every cached output):
-
   ```
   nodeHash = fnv1a_64(stableStringify({
     kind:   node.kind,
@@ -315,7 +314,6 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
     deps:   [ { handle, sourceHash } sorted by (handle, sourceHash) ]
   }))
   ```
-
   `stableStringify` sorts object keys recursively. Array order is preserved (semantically significant). Within a single handle, upstream hashes are sorted so multi-input handles (iterators, future fan-ins) hash deterministically regardless of edge-draw order. *Across* handles, deps are sorted by `(handle, sourceHash)` so swapping which input a value feeds (e.g. moving an edge from `system` to `user`) busts the cache.
 - **Status model**: `idle | pending | running | done | cached | error | cancelled`. `cached` is distinct from `done` so the UI can communicate "this was free" (relevant once 3.3 ships the cost preview) and so the cost calculator can exclude it from totals.
 - **Failure model**: a single thrown `execute()` stops the run; everything still `pending` flips to `cancelled` (not `error`) so the user can tell what failed vs what simply didn't run. The store also exposes `failedNodeId` so the chrome can scroll the failing node into view in a later slice.
@@ -395,7 +393,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Decision**: (c) + properties panel.
   - **LLM Text body** is output-only. When the node has a `done` or `cached` record it renders the executed text; otherwise a one-line placeholder hinting the wire-then-Run flow + the configured model. No inline editors of any kind.
   - **LLM Text inputs**: `user` (text, `multiple:true`), `system` (text, single), `image` (image, `multiple:true`). The runner concatenates multi-user chunks with blank lines so a prompt can be assembled from many sources (instructions + context snippets). System stays single — only one system prompt makes sense per call.
-  - **LLM Text config collapses to `{ model }`**. Future settings (temperature, top-p, stop, max tokens) land here as the Fal-OpenRouter route comes online in Slice 3.2.
+  - **LLM Text config collapses to `{ model }*`*. Future settings (temperature, top-p, stop, max tokens) land here as the Fal-OpenRouter route comes online in Slice 3.2.
   - **NodeSchema gains `Properties?: ComponentType<NodeBodyProps>`**. Same props shape as `Body` so nodes can share rendering helpers between the two surfaces with no plumbing. Optional — Text / Image still have no properties panel because they have nothing to expose off-node.
   - **NodePropertiesPanel** is a new right-edge floating panel (geometry mirrors Library/Queue): vertically centered, 320 px wide, max 70 vh. Auto-shows iff exactly one node is selected AND its schema declares a `Properties` component. Auto-hides otherwise. Empty selection / multi-select / nodes without properties = panel never appears (the user's "no empty properties panel" rule from ADR-0012).
   - **QueuePanel auto-steps-aside** when the properties panel takes over. Both live at the right edge and would otherwise collide; selection becomes the single source of truth for which surface is showing.
@@ -423,8 +421,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Date**: 2026-05-20
 - **Context**: The ADR-0022 design (output-only body + floating Properties panel + outer-ring multi dots) shipped and the user tested it the same evening. Three pieces of feedback came back at once:
   > "i see you decided to create a properties panel, not sure we needed it … we decided before in the beginning not to have unless is needed which I think we could avoid and find a solution that involves finding a place on the node for the user to choose the llm to be used. maybe can be next to the title, or on the bottom of the node maybe. … also why the llm text node is not outputing the output … and why the inputs sockets look diferent then the output or other ports … these should all look similar, besides the colors that inform already what kinda of input is expected"
-
-  In other words: the panel was a violation of the ADR-0012 "no panel unless it earns its keep" rule (one control = one chip, not a whole floating surface); the panel *was visually covering the body* on selection so the output looked invisible; and the multi outer-ring broke port uniformity.
+  > In other words: the panel was a violation of the ADR-0012 "no panel unless it earns its keep" rule (one control = one chip, not a whole floating surface); the panel *was visually covering the body* on selection so the output looked invisible; and the multi outer-ring broke port uniformity.
 - **Decision**: undo the three ADR-0022 affordances and replace each with a smaller, in-node solution.
   - **Properties panel is removed entirely** (`NodePropertiesPanel`, the `useSelectedNodeWithProperties` hook, and the `Properties?` slot on `NodeSchema` all go). The QueuePanel stops checking selection and renders at the right edge unconditionally. Shell.tsx returns to its ADR-0013 / ADR-0015 layout.
   - **Model picker moves into the LLM Text body** as a small inline chip pinned to the top of the body (above the output area). Always visible — both pre- and post-run — so changing the model and re-running is one click no matter the node state. The chip displays the curated label ("Claude Sonnet 4.5") with a `▾` chevron; click anywhere on the chip opens the native `<select>` (same MODEL_OPTIONS catalog). Not next-to-title (the title row already carries icon + editable label + status chip, and adding a control there fights the rename-on-double-click affordance) and not a footer (ADR-0021 already deleted footers). The body is now `[chip] [output-or-placeholder]` — two rows, both informative, neither speculative chrome.
@@ -467,11 +464,11 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(b) Pass `signal` to `fetch()` on the client and propagate through `request.signal` on the server.** Picked. `fetch` honors `AbortSignal` natively; Next 16 forwards client disconnect to `request.signal`; we race the `fal.subscribe` call against the signal so the server-side handler rejects with `AbortError` even though the Fal SDK v1.10 has no native abort surface.
   - **(c) Polling-based cancellation (engine writes a "cancelled" sentinel into a queue).** Over-engineered for the v1 problem; revisit when concurrent runs land (Slice 3.3+).
 - **Decision** (the four-file shape that landed):
-  - **`src/lib/llm/types.ts`** — shared Zod schema (`llmRequestSchema`) + the `LlmSuccessResponse` / `LlmErrorResponse` types. Single source of truth so server validation and client typing can't drift.
-  - **`src/lib/llm/fal-openrouter.ts`** — server-only (guarded by `import "server-only"`) wrapper around `@fal-ai/client`. Owns endpoint dispatch, FAL_KEY config caching, error-code annotation, and the abort race.
-  - **`src/app/api/fal/openrouter/route.ts`** — POST handler. Body parse + Zod validate + call the wrapper + map errors to HTTP. Returns `{ text, model, costUsd?, inputTokens?, outputTokens? }` on 200, `{ error, code }` on 400/499/500/502.
-  - **`src/lib/llm/call-openrouter.ts`** — browser-side `fetch` wrapper. Posts the body, returns the parsed success, normalises errors into `LlmCallError` (with a discriminating `code`), and re-throws `AbortError` unchanged so the engine routes cancelled runs into the `cancelled` status (not `error`).
-  - **`node-llm-text.tsx::execute()`** — collects `user` (joined multi), `system`, `images` from inputs and calls `callOpenRouter`. Stub deleted.
+  - `**src/lib/llm/types.ts`** — shared Zod schema (`llmRequestSchema`) + the `LlmSuccessResponse` / `LlmErrorResponse` types. Single source of truth so server validation and client typing can't drift.
+  - `**src/lib/llm/fal-openrouter.ts`** — server-only (guarded by `import "server-only"`) wrapper around `@fal-ai/client`. Owns endpoint dispatch, FAL_KEY config caching, error-code annotation, and the abort race.
+  - `**src/app/api/fal/openrouter/route.ts`** — POST handler. Body parse + Zod validate + call the wrapper + map errors to HTTP. Returns `{ text, model, costUsd?, inputTokens?, outputTokens? }` on 200, `{ error, code }` on 400/499/500/502.
+  - `**src/lib/llm/call-openrouter.ts**` — browser-side `fetch` wrapper. Posts the body, returns the parsed success, normalises errors into `LlmCallError` (with a discriminating `code`), and re-throws `AbortError` unchanged so the engine routes cancelled runs into the `cancelled` status (not `error`).
+  - `**node-llm-text.tsx::execute()**` — collects `user` (joined multi), `system`, `images` from inputs and calls `callOpenRouter`. Stub deleted.
 - **Why a thin client wrapper (vs `fetch` directly in the node `execute`)**:
   - Future LLM-capable nodes (`LLMVision`, `LLMAssistant`, `PromptRewriter`, etc.) all need the same fetch + normalise + abort dance. One shared wrapper keeps that dance in one place; nodes only know about `{ text, costUsd? }`.
   - The wrapper is the one place where `499 → AbortError` and `5xx → LlmCallError(code)` translation happens. Pushing that into every node duplicates the most error-prone code in the path.
@@ -490,7 +487,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **Cost/token data is collected server-side but not surfaced in the UI yet**. The route returns `{ costUsd, inputTokens, outputTokens }`, but the LLM Text node only renders the text. Adding a per-run cost badge / queue panel cost rollup is its own slice (3.3) — keeping 3.2 to "real call, no extra UI" makes each change reviewable in isolation.
   - **AbortSignal race "leaks" the in-flight `subscribe`**. When the client cancels, the wrapper rejects immediately, but the underlying `fal.subscribe` may still resolve in the background server-side (wasted spend). Acceptable for v1: cancellation rate is low, and a cleaner fix needs SDK-level abort support (or the OpenAI-compat endpoint with native fetch abort).
   - **Test-time `server-only` shim**. The `import "server-only"` guard breaks Vitest because the package only exports useful symbols inside a Next.js build. We alias `server-only` to an empty module in `vitest.config.ts` so server modules can be imported in unit tests. Future server-only modules get the alias for free.
-  - **`google/gemini-2.5-pro` is dropped from the curated MODEL_OPTIONS list** until reasoning is exposed. Fal's `openrouter/router` rejects Pro with "Reasoning is mandatory for this endpoint and cannot be disabled" — Pro is a reasoning-by-default model and we don't pass `reasoning: true` (and have no UI yet to let the user opt in). Substituted with `gemini-2.5-flash` which matches Fal's own docs example, costs an order of magnitude less, and works without the flag. Persisted configs that already had Pro fall back to the "(custom)" dropdown row so the value round-trips harmlessly until the settings popover lands. Caught during the slice's own smoke test — exactly the kind of paper-cut a stub would hide.
+  - `**google/gemini-2.5-pro` is dropped from the curated MODEL_OPTIONS list** until reasoning is exposed. Fal's `openrouter/router` rejects Pro with "Reasoning is mandatory for this endpoint and cannot be disabled" — Pro is a reasoning-by-default model and we don't pass `reasoning: true` (and have no UI yet to let the user opt in). Substituted with `gemini-2.5-flash` which matches Fal's own docs example, costs an order of magnitude less, and works without the flag. Persisted configs that already had Pro fall back to the "(custom)" dropdown row so the value round-trips harmlessly until the settings popover lands. Caught during the slice's own smoke test — exactly the kind of paper-cut a stub would hide.
   - **Error text now renders inline in the LLM Text body** (added during smoke test as well) instead of being available only via the status chip's hover tooltip. Same destructive-tinted alert pill grammar, `role="alert"` for AT, selectable so users can copy-paste. Trade-off: the LLM Text node loses one row of vertical breathing room when in error state. Worth it — discovering "what went wrong" should not require hovering a 12 px chip.
 
 ## ADR-0025 — Usage on the ExecutionRecord; per-run rows in the Queue panel (M0a Slice 3.3)
@@ -510,11 +507,11 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(b) Tooltip-only via the existing status chip.** Already where we put "Done in 124 ms" — easy to add cost too, but invisible until hover. Doesn't address "what's this run costing me right now".
   - **(c) Queue panel: one row per executed node + footer rollup.** Centralised, glanceable, doesn't fight node chrome, scales to many nodes naturally. Picked. The Queue panel was already a planned right-edge surface (ADR-0011 / 0013); this is the M0a-realisation of it.
 - **Decision** (the shape that landed):
-  - **`NodeUsage`** + **`NodeOutputWithUsage`** types in `src/types/node.ts`. `NodeUsage = { costUsd?; inputTokens?; outputTokens?; model? }` — every field optional so a future audio node that only knows duration can still partially report. `NodeOutputWithUsage = { output, usage? }` — the rich shape.
-  - **`NodeExecuteResult = StandardizedOutput | StandardizedOutput[] | NodeOutputWithUsage`**. The schema's `execute` field types as this; the runner accepts either.
-  - **`ExecutionRecord.usage?`** carries the optional block. Persists across cache hits (see below).
+  - `**NodeUsage`** + `**NodeOutputWithUsage`** types in `src/types/node.ts`. `NodeUsage = { costUsd?; inputTokens?; outputTokens?; model? }` — every field optional so a future audio node that only knows duration can still partially report. `NodeOutputWithUsage = { output, usage? }` — the rich shape.
+  - `**NodeExecuteResult = StandardizedOutput | StandardizedOutput[] | NodeOutputWithUsage`**. The schema's `execute` field types as this; the runner accepts either.
+  - `**ExecutionRecord.usage?**` carries the optional block. Persists across cache hits (see below).
   - **Runner normalisation** (`normalizeExecuteResult`): array → simple multi-output; object with a `type` string field → single StandardizedOutput (the existing discriminator); object with an `output` field → rich form; anything else → throw with a clear "unrecognised result shape" error so a node author's bug surfaces immediately instead of silently storing nothing.
-  - **`ExecutionCache` shape change**: `Map<hash, StandardizedOutput | StandardizedOutput[]>` → `Map<hash, { output, usage? }>`. Cache hits replay the original `usage` into the new record so the queue's per-run cost total credits the cached saving exactly as the original run would have spent it.
+  - `**ExecutionCache` shape change**: `Map<hash, StandardizedOutput | StandardizedOutput[]>` → `Map<hash, { output, usage? }>`. Cache hits replay the original `usage` into the new record so the queue's per-run cost total credits the cached saving exactly as the original run would have spent it.
   - **LLM Text execute** returns `{ output, usage }` where `usage` carries the Fal-reported `costUsd`, `inputTokens`, `outputTokens`, and `model` (which may differ from `config.model` if Fal re-routed — surfacing that keeps the billing surface honest).
   - **QueuePanel** subscribes to the entire records map + workflow nodes. Renders one row per record in insertion order (≈ topo order, which matches the run order the user just kicked off). Each row: `[icon · label · status chip]` + meta line `provider-stripped-model · elapsed · cost` (only fields that exist) + a 2-line text preview (or error message for errored nodes). Footer rollups total cost when > 0, plus a "still running" hint while the run is in flight. Empty state copy guides toward the Run button.
 - **Why "cache replays usage" (vs treating cached runs as free)**:
@@ -563,12 +560,12 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(b) Validate on Run; block the run with a toast if reasoning is missing.** Better than failing mid-call but the friction lands in the wrong place. The user already pressed Run.
   - **(c) Inline hint inside the popover when the selected model is reasoning-required and the box is unchecked.** Picked. The hint reads "This model requires reasoning to be on. Tick the box or the run will fail." in accent (the same colour as the Run button — visually links the cause and the consequence). Disappears when reasoning is ticked.
 - **Decision** (the shape that landed):
-  - **`LLMTextNodeConfig` gains three optional fields**: `temperature?: number` (range 0–2, server-validated), `maxTokens?: number` (positive integer, server-validated), `reasoning?: boolean`. All optional — `undefined` defers to the provider default. No defaults seeded on node creation; the chip / popover render "default" labels until the user opts in.
-  - **`llmRequestSchema` (Zod) gains the same three fields** in `src/lib/llm/types.ts`. Single source of truth between client typing + server validation.
+  - `**LLMTextNodeConfig` gains three optional fields**: `temperature?: number` (range 0–2, server-validated), `maxTokens?: number` (positive integer, server-validated), `reasoning?: boolean`. All optional — `undefined` defers to the provider default. No defaults seeded on node creation; the chip / popover render "default" labels until the user opts in.
+  - `**llmRequestSchema` (Zod) gains the same three fields** in `src/lib/llm/types.ts`. Single source of truth between client typing + server validation.
   - **Server wrapper `callFalOpenRouter`** spreads each setting into the Fal `subscribe` input only when defined, on both `openrouter/router` and `openrouter/router/vision`. Fal is strict about null fields on some models — `...(args.temperature !== undefined ? { temperature: args.temperature } : {})` is the pattern.
   - **Client wrapper `callOpenRouter`** forwards them transparently — already passes `...args` to fetch, so adding fields to the schema is enough.
-  - **`MODEL_OPTIONS` gets `google/gemini-2.5-pro` back** with `reasoningRequired: true` (a new optional flag on the entry). `modelRequiresReasoning(modelId)` reads the flag; the popover's hint uses it.
-  - **`SettingsButton` (ghost cog button, accent dot when any field set)** + `Popover` (`@base-ui/react`, 280 px wide, anchored under the cog). Wraps:
+  - `**MODEL_OPTIONS` gets `google/gemini-2.5-pro` back** with `reasoningRequired: true` (a new optional flag on the entry). `modelRequiresReasoning(modelId)` reads the flag; the popover's hint uses it.
+  - `**SettingsButton` (ghost cog button, accent dot when any field set)** + `Popover` (`@base-ui/react`, 280 px wide, anchored under the cog). Wraps:
     - **Temperature** — `<input type="range" min=0 max=2 step=0.1>` + numeric label that reads "default" until the slider is touched, then the value. Reset button reverts to `undefined`. Slider is rendered at 50% opacity while at default so the "not-set" state is visually distinct from "set to 0.7".
     - **Max output tokens** — local-draft `<input type="number">` (`MaxTokensInput`) that commits to the parent only on valid positive integers (or empty → undefined). Keystroke drafts (e.g. typing "1500" char by char) don't bounce through 1, 15, 150. External resets are handled via a `key` prop on the input forcing a remount — avoids the strict-mode-forbidden "setState in useEffect" sync pattern.
     - **Reasoning** — plain `<input type="checkbox">` wrapped in a label. Hint text below either reads the helpful generic copy ("Enable for models that need explicit reasoning…") or, when `modelRequiresReasoning(config.model) && !config.reasoning`, the accent-coloured warning.
@@ -595,7 +592,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Trade-offs accepted**:
   - **Two horizontal slots in the body header row** (chip + cog). On narrow viewports the cog still has space because the chip is small. We accept slight visual asymmetry on very-long custom model ids (the chip wraps before pushing the cog around). Worth it for the "one click → all settings" UX.
   - **The accent dot can drift out of sync after a migration that strips invalid values** for a single frame on first load (config has the field, store rehydrates, dot disappears). In practice unobservable — rehydration runs once before paint.
-  - **`MaxTokensInput` is not fully controlled by the parent**. It owns a local draft string so intermediate typing isn't snapped (typing "1500" through 1 → 15 → 150 would be jarring otherwise). External resets work via the `key` prop forcing a remount instead of an effect-based sync (which React 19 strict mode forbids). Documented inline; not portable to a generic `<NumberInput>` until we abstract it.
+  - `**MaxTokensInput` is not fully controlled by the parent**. It owns a local draft string so intermediate typing isn't snapped (typing "1500" through 1 → 15 → 150 would be jarring otherwise). External resets work via the `key` prop forcing a remount instead of an effect-based sync (which React 19 strict mode forbids). Documented inline; not portable to a generic `<NumberInput>` until we abstract it.
   - **No streaming token-by-token output yet** — `fal.subscribe` is single-response. Still parked for a future slice (would land alongside SSE on the route + an incrementally-rendered output area on the node body).
   - **No per-model defaults UI** (e.g. "Reset to Gemini Pro's recommended settings"). Adds a maintenance burden (the defaults drift over time) and isn't asked for. Reset goes to "provider default" instead, which is always honest.
   - **No popover on the model chip itself** — only on the cog. Considered combining them (popover replaces the native `<select>` so model + settings live in one menu). Rejected for now because the native picker is the fastest way to scan a long list and we don't want to give that up to host settings. Revisit when MODEL_OPTIONS grows past 12 entries or the live-fetched list lands.
@@ -624,9 +621,9 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(a) Drop the accent dot entirely.** Simpler chrome but loses the "you have non-default settings here" cue that helps explain why two same-named nodes behave differently.
   - **(b) Keep the dot, drive it from `schema.settings.hasOverrides(config)`.** Picked. The dot is the only at-a-glance signal that this node has been tuned; useful enough to keep. Predicate on the schema lets each node decide what counts as "non-default" (LLM Text checks the three optional fields; a future Sampler node might check just `seed`). Pure function over config = trivially testable, no React state required.
 - **Decision** (the chrome that landed):
-  - **`NodeSchema` gains an optional `settings: { Content; hasOverrides? }` field** in `src/types/node.ts`. `Content` receives the same `NodeBodyProps` as `Body` so settings UIs share helpers freely; `hasOverrides` is a pure predicate over `config`. Both optional at the slot level — `hasOverrides` omitted means the dot never lights.
-  - **`BaseNode` accepts a `settings?: { content; hasOverrides?; ariaLabel? }` prop** and, when present, renders `NodeSettingsTrigger` in the rightmost header slot. Trigger is a `Button` (`variant="ghost"`, `size="icon"`) with a `lucide-react` `MoreHorizontal` icon, wrapped in a `Tooltip` (hover-discoverable) and a `Popover` (`@base-ui/react`, 280 px wide, `align="end"`). Accent dot renders in the top-right corner of the trigger when `hasOverrides === true`. `data-testid="node-settings-trigger"` + `data-testid="node-settings-dot"` for unambiguous test selectors.
-  - **`GenericNode` (canvas-flow.tsx)** reads `schema.settings`, instantiates the `Content` component with the live nodeId + config + updateConfig + selected, and forwards everything to BaseNode under the `settings` prop. The `ariaLabel` defaults to `"${schema.title} settings"` (e.g. "LLM Text settings", "Sampler settings") so screen readers get a meaningful name without each node having to spell it out.
+  - `**NodeSchema` gains an optional `settings: { Content; hasOverrides? }` field** in `src/types/node.ts`. `Content` receives the same `NodeBodyProps` as `Body` so settings UIs share helpers freely; `hasOverrides` is a pure predicate over `config`. Both optional at the slot level — `hasOverrides` omitted means the dot never lights.
+  - `**BaseNode` accepts a `settings?: { content; hasOverrides?; ariaLabel? }` prop** and, when present, renders `NodeSettingsTrigger` in the rightmost header slot. Trigger is a `Button` (`variant="ghost"`, `size="icon"`) with a `lucide-react` `MoreHorizontal` icon, wrapped in a `Tooltip` (hover-discoverable) and a `Popover` (`@base-ui/react`, 280 px wide, `align="end"`). Accent dot renders in the top-right corner of the trigger when `hasOverrides === true`. `data-testid="node-settings-trigger"` + `data-testid="node-settings-dot"` for unambiguous test selectors.
+  - `**GenericNode` (canvas-flow.tsx)** reads `schema.settings`, instantiates the `Content` component with the live nodeId + config + updateConfig + selected, and forwards everything to BaseNode under the `settings` prop. The `ariaLabel` defaults to `"${schema.title} settings"` (e.g. "LLM Text settings", "Sampler settings") so screen readers get a meaningful name without each node having to spell it out.
   - **LLM Text refactor**: `SettingsButton` deleted (BaseNode owns the trigger now). `SettingsContent` renamed to `LLMTextSettingsContent` and exported. `hasSettingsOverrides(config)` extracted as a tiny pure helper. Schema wires `settings: { Content: LLMTextSettingsContent, hasOverrides: hasSettingsOverrides }`. The body row loses its inner `flex` wrapper (only the model chip remains) — the body reads even calmer than in Slice 3.4.
 - **Why a schema-level slot (vs a render-prop hook on Body)**:
   - Symmetry with `Body`: both are "what does this node show" data. Putting settings beside Body in the schema means a node author reads the schema and sees the whole UI surface at once.
@@ -645,7 +642,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - Any other node's schema — Text, Image, Number declare no `settings`, so they render exactly as before (no trigger, no chrome difference).
 - **Trade-offs accepted**:
   - **The accent dot indicator now lives at the chrome level, so its data-testid changed** (`llm-settings-dot` → `node-settings-dot`). Acceptable — only test code references it, and the rename happened in the same commit that moved the chrome. Locked in by the new BaseNode test that asserts the testid is `node-settings-dot`.
-  - **`NodeSchema` grows a new optional field** — a real API surface change. Mitigated by: (a) the field is optional, so existing schemas don't break; (b) the field is declarative (no methods to implement); (c) the change is documented as a glossary entry and tested by the new `schema.settings` block in the LLM Text test.
+  - `**NodeSchema` grows a new optional field** — a real API surface change. Mitigated by: (a) the field is optional, so existing schemas don't break; (b) the field is declarative (no methods to implement); (c) the change is documented as a glossary entry and tested by the new `schema.settings` block in the LLM Text test.
   - **The popover wrapper is now owned by BaseNode**, so individual nodes lose the ability to customise popover side / align / width. We accept this cost in exchange for visual consistency — every node's settings popover should look identical for the same reason every node's status chip does. Per-node overrides (if ever needed) can land as additional `settings` fields without breaking the slot.
   - **One more component re-render per node per workflow-store update** — GenericNode now computes `hasOverrides` on every render. The function is a couple of equality checks; the cost is rounding error compared to the React Flow render cost for the same node.
   - **Tooltip + Popover both wrap the trigger** (`<Tooltip><Popover><Button /></Popover></Tooltip>`) — three layers of `asChild` indirection through `@base-ui/react`. Works correctly (covered by new BaseNode test for click → popover open), but stacking three primitives means the inner `Button` receives merged props from all three — a quirk to remember when debugging keyboard / hover behaviour on the trigger.
@@ -674,12 +671,12 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(a) Persist `width` and `height` always (as zero / null when unset).** Rejected — zero is a legal CSS dimension that React Flow would honor and crash the layout; null adds branch noise. The optional pattern reads cleaner everywhere.
   - **(b) `NodeInstance.size?: { width?, height?, }` — entire field optional, each axis optional.** Picked. Matches the resize semantics (you can resize only width on a horizontal-only node and the height stays content-driven), serializes cleanly, and `resizeNode(id, undefined)` strips the field entirely so it never accumulates noise in localStorage.
 - **Decision** (the contract that landed):
-  - **`NodeSchema.size?: NodeSizeSchema`** in `src/types/node.ts` with optional `defaultWidth`, `defaultHeight`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `resizable: "none" | "horizontal" | "vertical" | "both"` (default `"none"`).
-  - **`NodeInstance.size?: { width?: number; height?: number }`** for user-resized dimensions, per axis. Default-undefined → no override → schema's `default*` applies.
-  - **`useWorkflowStore.resizeNode(id, size)`** action — accepts a partial size (one or both axes), rounds to integer px (NodeResizeControl emits floats during a drag), de-dupes when the new value matches the existing one (avoids render churn on every `onNodesChange` tick), and strips the field entirely when both axes are undefined.
-  - **`canvas-flow.tsx onNodesChange`** handles `c.type === "dimensions" && c.setAttributes && c.dimensions` — only persists user-initiated resizes (React Flow's `setAttributes` signal), not passive content-measurement events. `setAttributes === "width"` / `"height"` axis-locks the persisted update so a horizontal-resize doesn't accidentally also persist height.
-  - **`BaseNode` accepts a `size?: BaseNodeSize` prop**, applies all CSS dim constraints as inline `style`, makes the body wrapper `flex-1 min-h-0` *only* when an explicit height is set (so content-driven cards don't collapse against `min-h-0`), and renders `NodeBodyResizeHandle` (custom-styled `NodeResizeControl`) in the matching position when `resizable !== "none"`.
-  - **`NodeBodyResizeHandle`** ships a 10×10 SVG "two diagonal lines" mark for `both` (the canonical macOS / GTK / browser-textarea corner-resize affordance), a short vertical line for `horizontal` (right edge), and a short horizontal line for `vertical` (bottom edge). `aria-hidden` (mouse-only affordance; keyboard users get sensible defaults), `pointer-events-none` on the inner div so React Flow's resize wrapper owns the drag, `data-testid="node-resize-handle"` + `data-direction` for test selectors.
+  - `**NodeSchema.size?: NodeSizeSchema`** in `src/types/node.ts` with optional `defaultWidth`, `defaultHeight`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, and `resizable: "none" | "horizontal" | "vertical" | "both"` (default `"none"`).
+  - `**NodeInstance.size?: { width?: number; height?: number }`** for user-resized dimensions, per axis. Default-undefined → no override → schema's `default*` applies.
+  - `**useWorkflowStore.resizeNode(id, size)`** action — accepts a partial size (one or both axes), rounds to integer px (NodeResizeControl emits floats during a drag), de-dupes when the new value matches the existing one (avoids render churn on every `onNodesChange` tick), and strips the field entirely when both axes are undefined.
+  - `**canvas-flow.tsx onNodesChange**` handles `c.type === "dimensions" && c.setAttributes && c.dimensions` — only persists user-initiated resizes (React Flow's `setAttributes` signal), not passive content-measurement events. `setAttributes === "width"` / `"height"` axis-locks the persisted update so a horizontal-resize doesn't accidentally also persist height.
+  - `**BaseNode` accepts a `size?: BaseNodeSize` prop**, applies all CSS dim constraints as inline `style`, makes the body wrapper `flex-1 min-h-0` *only* when an explicit height is set (so content-driven cards don't collapse against `min-h-0`), and renders `NodeBodyResizeHandle` (custom-styled `NodeResizeControl`) in the matching position when `resizable !== "none"`.
+  - `**NodeBodyResizeHandle`** ships a 10×10 SVG "two diagonal lines" mark for `both` (the canonical macOS / GTK / browser-textarea corner-resize affordance), a short vertical line for `horizontal` (right edge), and a short horizontal line for `vertical` (bottom edge). `aria-hidden` (mouse-only affordance; keyboard users get sensible defaults), `pointer-events-none` on the inner div so React Flow's resize wrapper owns the drag, `data-testid="node-resize-handle"` + `data-direction` for test selectors.
   - **LLM Text body refactor**: wrapper becomes `flex-1 overflow-hidden`; output `<p>` lives inside a `flex-1 overflow-y-auto` scroll container with the `nowheel` class + `onWheelCapture stop`, so a long response scrolls *inside* the card without zooming the canvas. Schema: `{ defaultWidth: 380, minWidth: 280, maxWidth: 720, minHeight: 100, maxHeight: 520, resizable: "both" }`.
   - **Text body refactor**: textarea becomes `flex-1 min-h-0` + `nowheel` so it fills any user-resized height. Schema: `{ defaultWidth: 240, minWidth: 200, maxWidth: 520, minHeight: 100, maxHeight: 420, resizable: "both" }`.
   - **Image schema** declares `{ defaultWidth: 240, minWidth: 200, maxWidth: 480, resizable: "horizontal" }` — body unchanged because the `aspect-square` preview already does the right thing under a width change.
@@ -699,7 +696,7 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Trade-offs accepted**:
   - **Workflow-store version bump (v5 → v6)** even though the field is purely additive. We bump anyway so any future field-additions follow the same pattern (and dev environments are forced to re-run the migrate at least once, which catches `size` field-bugs early). Migration is idempotent so a re-run on a v6 payload is a no-op.
   - **The user's resize handle visual is `aria-hidden`** — keyboard users can't drag-resize. Mitigated by: (a) schema defaults are tuned so the content-driven silhouette is already usable; (b) max-height + body-scroll means long content is always reachable via keyboard scroll inside the body region. Adding a keyboard-accessible resize affordance is non-trivial (would need a "Resize mode" toggle on focus) and not asked for; revisit if/when accessibility audit flags it.
-  - **`NodeResizeControl` renders a 16 × 16 hit area in the corner** even though the visual mark is 10 × 10. We accept the slightly oversized invisible hit zone in exchange for forgiving drag-acquisition — making it smaller meant users with imprecise pointers (laptop trackpads, drawing tablets) had to bullseye a 10 px target.
+  - `**NodeResizeControl` renders a 16 × 16 hit area in the corner** even though the visual mark is 10 × 10. We accept the slightly oversized invisible hit zone in exchange for forgiving drag-acquisition — making it smaller meant users with imprecise pointers (laptop trackpads, drawing tablets) had to bullseye a 10 px target.
   - **Per-instance size is per-canvas-card, not per-recipe-template** — duplicating a node loses the resize. Acceptable for M0a (no "duplicate node" command yet); when duplication lands (M0a Slice 5 or later), the duplicator can choose whether to carry the size or reset.
   - **Resizable nodes interact with React Flow's `nodesDraggable: true`** — the resize handle has to be `pointer-events-auto` to receive the drag; the inner visual is `pointer-events-none` so it doesn't intercept clicks meant for the card. Verified working in the browser smoke test; locked in by the new BaseNode test for the data-testid.
 
@@ -736,21 +733,21 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
     - `timeout` (502) — poll loop exceeded the budget (default 6 min).
     - `aborted` (499) — caller cancelled.
 - **Decision** (the four-file shape that landed, mirroring ADR-0024):
-  - **`src/lib/higgsfield/types.ts`** — Zod `higgsfieldImageRequestSchema` + `HiggsfieldSoulIdSummary` + `HiggsfieldImageSuccessResponse` + `HiggsfieldErrorResponse`. The schema's `superRefine` enforces cross-field rules (`mode === "reference"` requires `referenceUrl`; `mode === "style"` requires `styleId`; mode and field must agree).
-  - **`src/lib/higgsfield/higgsfield-api.ts`** — server-only (`import "server-only"`), lazy-config, async submit + 3-s poll loop until terminal status, cancellation via signal-aware `setTimeout` (so abort-during-wait rejects ASAP). `SOUL_ENDPOINT_BY_VARIANT` is the dispatch table; cinema endpoint drops `style_id` belt-and-suspenders. List-Soul-IDs walks pages and per-character backfills `thumbnail_url` from `reference_media[0].media_url` because the list endpoint never populates it (verified May 2026).
-  - **`src/app/api/higgsfield/image/route.ts`** + **`src/app/api/higgsfield/soul-ids/route.ts`** — POST and GET handlers respectively. `nodejs` runtime, `force-dynamic`. Map errors to HTTP using the `code` discriminator.
-  - **`src/lib/higgsfield/call-higgsfield-image.ts`** — browser fetch wrappers (`callHiggsfieldImage` + `fetchSoulIds`). `HiggsfieldCallError` with the same `code` discriminator + a `"network"` value for fetch-level failures. `499 → AbortError` translation so the engine routes cancelled runs into `cancelled` status.
+  - `**src/lib/higgsfield/types.ts`** — Zod `higgsfieldImageRequestSchema` + `HiggsfieldSoulIdSummary` + `HiggsfieldImageSuccessResponse` + `HiggsfieldErrorResponse`. The schema's `superRefine` enforces cross-field rules (`mode === "reference"` requires `referenceUrl`; `mode === "style"` requires `styleId`; mode and field must agree).
+  - `**src/lib/higgsfield/higgsfield-api.ts`** — server-only (`import "server-only"`), lazy-config, async submit + 3-s poll loop until terminal status, cancellation via signal-aware `setTimeout` (so abort-during-wait rejects ASAP). `SOUL_ENDPOINT_BY_VARIANT` is the dispatch table; cinema endpoint drops `style_id` belt-and-suspenders. List-Soul-IDs walks pages and per-character backfills `thumbnail_url` from `reference_media[0].media_url` because the list endpoint never populates it (verified May 2026).
+  - `**src/app/api/higgsfield/image/route.ts`** + `**src/app/api/higgsfield/soul-ids/route.ts**` — POST and GET handlers respectively. `nodejs` runtime, `force-dynamic`. Map errors to HTTP using the `code` discriminator.
+  - `**src/lib/higgsfield/call-higgsfield-image.ts**` — browser fetch wrappers (`callHiggsfieldImage` + `fetchSoulIds`). `HiggsfieldCallError` with the same `code` discriminator + a `"network"` value for fetch-level failures. `499 → AbortError` translation so the engine routes cancelled runs into `cancelled` status.
 - **Auth header — TWO schemes coexist**: Higgsfield is mid-migration. Two auth shapes are accepted by their gateway:
-  1. **Generation endpoints** (`/higgsfield-ai/soul/*`, `/requests/{id}/status`, `/requests/{id}/cancel`, `/v1/custom-references/list`) — `Authorization: Key KEY:SECRET` (the form their `cloud.higgsfield.ai/models` reference shows for these).
-  2. **`/v1/text2image/*` endpoints** (notably `/v1/text2image/soul-styles/v2` for the Soul Style preset catalogue) — separate `hf-api-key` + `hf-secret` headers (visible in `cloud.higgsfield.ai/models` for those endpoints specifically).
+  1. **Generation endpoints** (`/higgsfield-ai/soul/`*, `/requests/{id}/status`, `/requests/{id}/cancel`, `/v1/custom-references/list`) — `Authorization: Key KEY:SECRET` (the form their `cloud.higgsfield.ai/models` reference shows for these).
+  2. `**/v1/text2image/*` endpoints** (notably `/v1/text2image/soul-styles/v2` for the Soul Style preset catalogue) — separate `hf-api-key` + `hf-secret` headers (visible in `cloud.higgsfield.ai/models` for those endpoints specifically).
   Submitting v2/standard with the legacy header pair still passes auth at the gateway but empirically routes the request into a queue path that never advances past `queued`. So our wrapper exposes two helpers: `authHeaders()` (canonical, used everywhere generation-related) and `authHeadersV1()` (legacy, parked for when the style picker UI lands and we need to call `/v1/text2image/soul-styles/v2`). Don't mix them per endpoint.
 - **Reference image — caveat**: `/soul/v2/standard` accepts `image_url` in the body but the visible influence on the output is subtle (the model leans on the prompt much more than the ref). For stronger ref-driven style transfer the recipe-level pattern (parked for M0d when "save recipe as reusable node" lands) is to feed the ref through an LLM Vision node first (`Image → LLMText (vision system prompt) → text → HiggsfieldImageGen.prompt`); that subgraph becomes a single "Image Describer" node once recipe-as-node ships. We deliberately do **not** auto-route reference traffic to a v1 endpoint (`/soul/reference`) because it loses Soul 2 fidelity for marginal ref-transfer gain.
 - **Investigation tooling preserved**: `scripts/probe-*.ts` lives alongside `scripts/smoke-*.ts`. The probes reverse-engineered the dispatch table via submit-then-cancel (cancellation refunds credits), and are kept versioned so the next time the API drifts the same tools work. `scripts/smoke-recipe.ts` proves the end-to-end LLM-callable recipe path lands a real image from a fresh Soul ID (~43 s for one 720p render against the real account).
 - **Trade-offs accepted**:
   - **Endpoint table is empirical, not documented**. Higgsfield's public docs only mention `/soul/v2/standard`; the variant-specific endpoints we mapped via probes. Risk: Higgsfield could silently break our dispatch by removing endpoints. Mitigation: probes are version-controlled, error codes are structured, and the upstream-error message bubbles up to the user via the inline alert pill if anything regresses.
-  - **`thumbnail_url` always-null** means we issue N+1 GETs per `listSoulIds` call to backfill from `reference_media`. Acceptable until users have ≥10 trained Soul IDs; trivial to convert to bounded-concurrent later.
+  - `**thumbnail_url` always-null** means we issue N+1 GETs per `listSoulIds` call to backfill from `reference_media`. Acceptable until users have ≥10 trained Soul IDs; trivial to convert to bounded-concurrent later.
   - **Per-character GET to backfill thumbnails happens on every popover open**, not cached. Acceptable: a Soul ID list is small, the per-character payload is small, and a cache adds invalidation complexity for a milliseconds-of-savings win. Revisit if the popover ever feels slow.
-  - **`StandardizedOutput` grew a new variant**, which is technically a breaking change to anyone pattern-matching exhaustively. Mitigated by: (a) every existing node ignores types it doesn't accept (no exhaustive matches); (b) the union extension is additive, so legacy callers that just check `value.type === "image"` still work.
+  - `**StandardizedOutput` grew a new variant**, which is technically a breaking change to anyone pattern-matching exhaustively. Mitigated by: (a) every existing node ignores types it doesn't accept (no exhaustive matches); (b) the union extension is additive, so legacy callers that just check `value.type === "image"` still work.
   - **Workflow-store + asset-store both bumped versions** to sanitise persisted payloads (`asset-store v3 → v4`, `workflow-store v6 → v7`). Forward-portable: same migrate funnel, both idempotent.
 
 ## ADR-0030 — Engine fan-out: iterator nodes drive bounded-parallel execution (supersedes the strict-serial portion of ADR-0019)
@@ -774,16 +771,16 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
   - **(a) Best-effort: continue on per-item failure, return partial outputs.** Tempting for "8 variations and one NSFW'd, save the other 7" but breaks the cache contract — what hash do we cache for the partial output? Rejected; can revisit as a per-recipe flag.
   - **(b) First failure wins: other workers bail, downstream cancelled.** Picked. Mirrors ADR-0019's serial-error semantics one level deeper. The error message names the failed item's index so the user can spot which one tripped.
 - **Decision** (the engine + types changes):
-  - **`NodeSchema.iterator?: boolean`** in `src/types/node.ts`. Marks a node whose `StandardizedOutput[]` return is meant to fan out to single-input downstream nodes. Default `false`; only ImageIterator declares `true` in Slice 4.
-  - **`ExecutionRecord.fanOut?: { total, done }`** in `src/types/node.ts`. Surfaces the fan-out progress on the running record so the StatusChip / Queue panel can show "3/8 done" without extra subscribe plumbing. Absent when the node isn't a fan-out target.
-  - **`runWorkflow` engine refactor** in `src/lib/engine/run-workflow.ts`:
+  - `**NodeSchema.iterator?: boolean`** in `src/types/node.ts`. Marks a node whose `StandardizedOutput[]` return is meant to fan out to single-input downstream nodes. Default `false`; only ImageIterator declares `true` in Slice 4.
+  - `**ExecutionRecord.fanOut?: { total, done }`** in `src/types/node.ts`. Surfaces the fan-out progress on the running record so the StatusChip / Queue panel can show "3/8 done" without extra subscribe plumbing. Absent when the node isn't a fan-out target.
+  - `**runWorkflow` engine refactor** in `src/lib/engine/run-workflow.ts`:
     - Per-node input collection now ALSO detects fan-out: when the only upstream feeding a single-input handle is an iterator-flagged node whose output is an array, the runner branches into a parallel-bounded worker pool.
     - Worker pool uses a simple `nextIndex++` claim loop with N workers (`maxConcurrent`). Each worker runs `execute()` with the per-item input substituted on the fan-out handle.
     - First failure wins (other workers bail); abort cancels everyone via the shared signal. Items already in-flight get the abort via the per-`execute()` `signal`.
     - Outputs from per-item executions concatenate into a single flat array (each per-item result may itself be a single output or an array — both shapes flatten).
     - **Cache key unchanged** (same `computeNodeHash` recipe). Fan-out caches the aggregated output by the same content hash, so a re-run of an unchanged graph hits the cache in one go. No per-item cache fragmentation.
     - The serial path stays untouched for non-iterator upstreams; existing graphs / tests are unaffected.
-  - **`DEFAULT_MAX_CONCURRENT = 4`** constant matching Higgsfield's per-keypair cap. `RunWorkflowOptions.maxConcurrent` is the override (used by tests + future per-recipe configurability).
+  - `**DEFAULT_MAX_CONCURRENT = 4`** constant matching Higgsfield's per-keypair cap. `RunWorkflowOptions.maxConcurrent` is the override (used by tests + future per-recipe configurability).
 - **Why "iterator" rather than "fanout" or "splat" or "broadcast"**:
   - The user-facing mental model is *"this node iterates over its items"* — not "fans out", which is engine jargon. The schema flag matches the user's name.
   - In M0a the only iterator is ImageIterator; future iterators (PromptIterator that iterates over LLM-generated prompts, ArraySplit that takes an explicit n in config, etc.) all fit under the same flag.
@@ -798,9 +795,9 @@ Append-only. Don't edit past entries — supersede with a new entry if needed.
 - **Trade-offs accepted**:
   - **No per-item cache** — a fan-out re-run with one item changed re-executes the *whole* fan-out. Mitigated by the fact that fan-out items today come from upstream Image nodes (whose hashes are stable), so in practice the whole-fan-out hash only changes when the iterator's input set changes. Per-item caching is a Slice 5+ concern when persistence lands.
   - **Progress emit can be chatty** — 8-item fan-out emits 8+ `running` records per node. Engine keeps `runId` guards and the Queue panel re-renders are cheap (single-digit nodes); revisit if profiling flags it.
-  - **`fanOut.done` counts both successes and failures** so a cascaded-cancel mid-flight may report a non-final number. The terminal record (`done` or `error`) carries the canonical state; `fanOut` is informational.
+  - `**fanOut.done` counts both successes and failures** so a cascaded-cancel mid-flight may report a non-final number. The terminal record (`done` or `error`) carries the canonical state; `fanOut` is informational.
   - **Cinema and v1 endpoints have different latency profiles than v2/standard**, so a fan-out spanning multiple variants would have unbalanced workers. Acceptable: today no recipe mixes variants, and `maxConcurrent: 4` keeps the slowest-first pattern bounded.
-  - **`maxConcurrent: 4` is hardcoded as the default.** Higgsfield's cap is 4; Fal can absorb more. We default conservatively because the iterator-fan-out path is image-gen-shaped today; once Slice 5 ships a per-recipe runtime config, this becomes user-tunable.
+  - `**maxConcurrent: 4` is hardcoded as the default.** Higgsfield's cap is 4; Fal can absorb more. We default conservatively because the iterator-fan-out path is image-gen-shaped today; once Slice 5 ships a per-recipe runtime config, this becomes user-tunable.
 
 ## ADR-0031 — Explicit iteration nodes, two-axis (selection × execution) model, Run-here, and per-node history (M0a Slice 5.4 design lock-in; implementation lands in Slice 5.5+)
 
@@ -846,37 +843,41 @@ The combination matrix of "how many items × how the consumer handles them" stay
 
 Six nodes carry the model. Each has a single, explicit purpose. None is a hidden-mode hybrid.
 
-| Node                | Storage                              | Selection? | `iterator`? | Reactive? |
-| ------------------- | ------------------------------------ | ---------- | ----------- | --------- |
-| **`File`** (Image)  | exactly 1 image (assetId or url)     | n/a        | no          | yes       |
-| **`Image Iterator`**| N images (asset ids array + cursor)  | yes        | yes         | yes       |
-| **`Text Iterator`** | N strings (array + cursor)           | yes        | yes         | yes       |
-| **`Array`**         | none — pure transform               | n/a        | no          | yes       |
-| **`List`**          | none — pure selector                | n/a        | no          | yes       |
-| **`Number`**        | a single number, with mode           | partial*   | no          | yes       |
 
-\* `Number` re-uses the same selection-mode vocabulary as iterators (`fixed | increment | decrement | random | range`) but emits a single `number` value, not an array. It exists primarily to drive remote cursors (the "comfyui seed slot" pattern).
+| Node                 | Storage                             | Selection? | `iterator`? | Reactive? |
+| -------------------- | ----------------------------------- | ---------- | ----------- | --------- |
+| `**File`** (Image)   | exactly 1 image (assetId or url)    | n/a        | no          | yes       |
+| `**Image Iterator`** | N images (asset ids array + cursor) | yes        | yes         | yes       |
+| `**Text Iterator`**  | N strings (array + cursor)          | yes        | yes         | yes       |
+| `**Array**`          | none — pure transform               | n/a        | no          | yes       |
+| `**List**`           | none — pure selector                | n/a        | no          | yes       |
+| `**Number**`         | a single number, with mode          | partial*   | no          | yes       |
+
+
+ `Number` re-uses the same selection-mode vocabulary as iterators (`fixed | increment | decrement | random | range`) but emits a single `number` value, not an array. It exists primarily to drive remote cursors (the "comfyui seed slot" pattern).
 
 Node-by-node:
 
-- **`File`**: 1 image. Unchanged from today. Drag drops still spawn it; multi-import drops onto a different surface (see `Image Iterator`).
-- **`Image Iterator`**: stores `assetIds: string[]` + `cursor: number` + `selection: "fixed" | "increment" | "decrement" | "random" | "range" | "all"`. Schema declares `iterator: true`. Body shows `<x/N>` counter + arrows + the current cursor's preview thumbnail (history-style). Library multi-image drag dumps assets into the iterator instead of spawning N separate `Image` nodes. Today's multi-edge `images` input handle is **removed** because the storage is internal.
-- **`Text Iterator`**: same shape but for strings. Stores `strings: string[]` + cursor + selection mode. Same UI affordance.
-- **`Array`**: pure transform. Input: `text` (single). Config: `splitOn: string` (default empty = passthrough as `[input]`). Output: `text` array. Reactive. Useful for "LLM gave me '`a---b---c`' and I want a list".
-- **`List`**: pure selector. Input: `in` (any, single). Optional input: `cursor` (number, single — wires to a Number node). Config: `cursor: number` (used when `cursor` input not connected). Output: same dataType as input, single. *Not* iterator-flagged — emits one item.
-- **`Number`**: 1 number. Config: `value: number` + `mode: "fixed" | "increment" | "decrement" | "random" | "range"` + (when `range`) `start, end, step`. Reactive. Output: `number`. Auto-advances each run when `mode !== "fixed"` (the engine bumps the persisted `value` after a successful run).
+- `**File`**: 1 image. Unchanged from today. Drag drops still spawn it; multi-import drops onto a different surface (see `Image Iterator`).
+- `**Image Iterator`**: stores `assetIds: string[]` + `cursor: number` + `selection: "fixed" | "increment" | "decrement" | "random" | "range" | "all"`. Schema declares `iterator: true`. Body shows `<x/N>` counter + arrows + the current cursor's preview thumbnail (history-style). Library multi-image drag dumps assets into the iterator instead of spawning N separate `Image` nodes. Today's multi-edge `images` input handle is **removed** because the storage is internal.
+- `**Text Iterator`**: same shape but for strings. Stores `strings: string[]` + cursor + selection mode. Same UI affordance.
+- `**Array`**: pure transform. Input: `text` (single). Config: `splitOn: string` (default empty = passthrough as `[input]`). Output: `text` array. Reactive. Useful for "LLM gave me '`a---b---c`' and I want a list".
+- `**List*`*: pure selector. Input: `in` (any, single). Optional input: `cursor` (number, single — wires to a Number node). Config: `cursor: number` (used when `cursor` input not connected). Output: same dataType as input, single. *Not* iterator-flagged — emits one item.
+- `**Number`**: 1 number. Config: `value: number` + `mode: "fixed" | "increment" | "decrement" | "random" | "range"` + (when `range`) `start, end, step`. Reactive. Output: `number`. Auto-advances each run when `mode !== "fixed"` (the engine bumps the persisted `value` after a successful run).
 
 The catalog covers every iteration scenario we've discussed, including the ones that motivated the redesign:
 
-| Scenario the user described                                    | Node graph                                                                                  |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 1 reference, 1 generation                                      | `File → HiggsfieldImageGen`                                                                 |
-| 5 references, increment one per Run                            | `Image Iterator(selection=increment) → HiggsfieldImageGen`                                  |
-| 5 references, all in parallel in one Run                       | `Image Iterator(selection=all) → HiggsfieldImageGen`  (the gen is iterator-flagged)         |
-| 5 references, all sequential in one Run                        | `Image Iterator(selection=all) → HiggsfieldImageGen` with iterator's `executionMode=sequential` |
-| LLM produces "`a---b---c`" → 3 prompts in parallel             | `LLM Text → Array(splitOn="---") → HiggsfieldImageGen`                                      |
-| LLM produces 8 prompts → user clicks through them one-by-one    | `LLM Text → Array → List(cursor=N) → HiggsfieldImageGen`                                    |
-| Two parallel iterators with synchronised cursors               | `Number → List × 2` — both Lists read the same cursor input                                 |
+
+| Scenario the user described                                  | Node graph                                                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| 1 reference, 1 generation                                    | `File → HiggsfieldImageGen`                                                                     |
+| 5 references, increment one per Run                          | `Image Iterator(selection=increment) → HiggsfieldImageGen`                                      |
+| 5 references, all in parallel in one Run                     | `Image Iterator(selection=all) → HiggsfieldImageGen` (the gen is iterator-flagged)              |
+| 5 references, all sequential in one Run                      | `Image Iterator(selection=all) → HiggsfieldImageGen` with iterator's `executionMode=sequential` |
+| LLM produces "`a---b---c`" → 3 prompts in parallel           | `LLM Text → Array(splitOn="---") → HiggsfieldImageGen`                                          |
+| LLM produces 8 prompts → user clicks through them one-by-one | `LLM Text → Array → List(cursor=N) → HiggsfieldImageGen`                                        |
+| Two parallel iterators with synchronised cursors             | `Number → List × 2` — both Lists read the same cursor input                                     |
+
 
 ### 3. Run-here
 
@@ -947,7 +948,7 @@ History is **per-node**, not per-recipe — duplicating a node loses its history
 - **Selection cursor is per-instance config** so duplicating a node doesn't share progress. Acceptable; matches the per-instance label / size pattern (ADR-0028).
 - **History cap defaults to 20 per node** — long enough to scrub recent runs, short enough to not bloat the in-memory store. Per-kind override is one schema field away if image gens want shorter (memory) or LLMs want longer (cheap).
 - **Run-here doesn't re-trigger on upstream cache invalidation** — i.e. if you Run-here on a downstream node with a cached upstream, the upstream stays `cached` even if its inputs would change in a global run. We document this in the JSDoc but accept it; the fix is a tooltip-level disclosure, not an engine-level equality check.
-- **`Number` node's auto-advance happens on `done`, not on submit** — so a failed run doesn't leak into the cursor. Same logic as the iterator's selection-mode advance.
+- `**Number` node's auto-advance happens on `done`, not on submit** — so a failed run doesn't leak into the cursor. Same logic as the iterator's selection-mode advance.
 - **No edge-level fan-out marker** was an explicit choice (we considered it, see [conversation-summary in CHANGELOG]). The user wanted nodes to be the substantives and edges to be the verbs-as-passages; configurable edges break that mental model. Iterator-as-node carries the meaning explicitly.
 
 ## ADR-0032 — AssetGroup as the substantive for image batches; Iterator is the canvas view (M0a Slice 5.6)
@@ -956,10 +957,8 @@ History is **per-node**, not per-recipe — duplicating a node loses its history
 - **Status**: implemented in Slice 5.6 (sub-slices 5.6a → 5.6e). Lives alongside ADR-0031 (which defines the iterator's selection × execution model); ADR-0032 narrows ADR-0031 §2 by asserting *every Image Iterator on the canvas is always linked to an AssetGroup in the library*. The Slice 5.5 design where the iterator carried `assetIds[]` directly in its config is **superseded**; `groupId` replaces it.
 - **Context**: After Slice 5.5 shipped (Image Iterator with internal `assetIds[]` + Finder-style multi-select on the library), the user came back with a higher-order observation: "in WeavyAI, dropping multiple images into the canvas works, but **organisationally** you want them as a group on the side too — like a folder you can revisit, train a Soul ID from, drag into another recipe later." The Slice 5.5 design satisfied the canvas-side fan-out need but left the library cluttered with N standalone images for every batch the user assembled, and there was no way to *reuse* a curated set across recipes without re-multi-selecting it every time. Treating the batch as a first-class library entity (an AssetGroup with a name) solves both problems and unblocks future actions ("Train Soul ID from this group", "Use this group as a moodboard reference").
 - **The mental model (the one rule)**:
-
   > Every Image Iterator on the canvas is always linked to an AssetGroup in the library. The library is the single source of truth for "which images are in this set"; the canvas is a *view* over that set.
-
-  Concretely, `ImageIteratorNodeConfig.groupId: string` is always set (empty string is a transient placeholder for the moment between `addNode()` and the dispatcher's groupId write). `config.assetIds[]` from Slice 5.5 is **removed**. Iterator items are derived at execute-time from `useAssetStore.getState().getAsset(groupId).assetIds`.
+  > Concretely, `ImageIteratorNodeConfig.groupId: string` is always set (empty string is a transient placeholder for the moment between `addNode()` and the dispatcher's groupId write). `config.assetIds[]` from Slice 5.5 is **removed**. Iterator items are derived at execute-time from `useAssetStore.getState().getAsset(groupId).assetIds`.
 
 ### 1. The data model
 
@@ -1002,6 +1001,7 @@ The action is conservative: it always creates a new group rather than converting
 The risk of (2) above is library pollution: every multi-drag creates an `Untitled` group, and the user accumulates "Untitled 1", "Untitled 2", … even after deleting the iterators that owned them. The cleanup rule (Slice 5.6e):
 
 > When an iterator is deleted, drop the linked group iff
+>
 > - `group.isUntitled === true` (auto-created, never renamed), AND
 > - no other iterator on the canvas links to it.
 
@@ -1031,9 +1031,9 @@ The fan-out branch in `runWorkflow.ts` (ADR-0030) is bit-identical to Slice 4 / 
 
 - **Untitled groups feel like cruft until you understand the cleanup rule.** A user who uses the iterator pattern heavily without ever renaming groups will see "Untitled 1 / Untitled 2 / …" in the library. The cleanup rule prevents *orphan* accumulation, but a multi-iterator-shared Untitled is intentionally preserved (because it has linked owners). The visual badge ("Untitled" pill on the group card) is a constant reminder that the user can rename to promote.
 - **Renaming is a one-way operation.** Once the user renames a group, `isUntitled` flips to `false` permanently — even if they rename it back to "Untitled 5". This is intentional: rename = "I'm keeping this", and we don't want to silently re-arm cleanup.
-- **The "@group:<id>" sentinel in the dispatcher** is a small protocol smell — the dispatcher is supposed to be store-agnostic, but it needs to communicate "expand this id through the asset store before calling addToGroup" to the caller. We chose the sentinel over leaking the asset store into the dispatcher (which would couple two layers). The sentinel is local to one emitter / one consumer; if it spreads, it becomes a real protocol with a Zod schema.
+- **The "@group:****" sentinel in the dispatcher** is a small protocol smell — the dispatcher is supposed to be store-agnostic, but it needs to communicate "expand this id through the asset store before calling addToGroup" to the caller. We chose the sentinel over leaking the asset store into the dispatcher (which would couple two layers). The sentinel is local to one emitter / one consumer; if it spreads, it becomes a real protocol with a Zod schema.
 - **Groups are flat lists of `image` ids only.** No nesting, no soul-id-in-group. M0a doesn't need either, and the data model stays read-cheap. Future cross-kind groups (a "moodboard" with images + soul IDs + text prompts) get a different `kind` rather than retro-fitting `assetIds: AnyAssetId[]` here.
-- **The migration doesn't preserve the original folder context** (when the user dragged from `~/Pictures/photoshoot-paris`, we don't read that path through `webkitGetAsEntry()`). Auto-named "Untitled <N>" instead. Folder-aware naming is a polish item if requests come.
+- **The migration doesn't preserve the original folder context** (when the user dragged from `~/Pictures/photoshoot-paris`, we don't read that path through `webkitGetAsEntry()`). Auto-named "Untitled " instead. Folder-aware naming is a polish item if requests come.
 
 ### 8. Slice 5.6.1 amendment — feedback fixes from live testing
 
@@ -1063,6 +1063,8 @@ flowchart LR
   higgsfield -->|"future webhooks"| vercel
   fal -.->|"polling on subscribe"| vercel
 ```
+
+
 
 - **Vercel** — host + serverless runtime + auto-deploy on push to `main`. URL pública canônica: `https://artificial-cookbook.vercel.app`.
 - **Supabase** — bucket `cookbook-assets` pra image bytes (uploaded direto do browser via publishable key). Bucket public: true. Único storage de imagens do app.
@@ -1108,16 +1110,18 @@ Implicação prática:
 
 8 keys em production no Vercel:
 
-| Key | Scope | Source |
-| --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase project |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public (anon-only INSERT policy) | Supabase project |
-| `NEXT_PUBLIC_SUPABASE_ASSETS_BUCKET` | Public | Constant: `cookbook-assets` |
-| `FAL_KEY` | Server-only | fal.ai dashboard |
-| `LLM_PROVIDER` | Server-only | Constant: `fal` |
-| `LLM_MODEL` | Server-only | Constant: `anthropic/claude-sonnet-4.5` |
-| `HIGGSFIELD_API_KEY` | Server-only | cloud.higgsfield.ai dashboard |
-| `HIGGSFIELD_API_SECRET` | Server-only | cloud.higgsfield.ai dashboard |
+
+| Key                                    | Scope                            | Source                                  |
+| -------------------------------------- | -------------------------------- | --------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Public                           | Supabase project                        |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public (anon-only INSERT policy) | Supabase project                        |
+| `NEXT_PUBLIC_SUPABASE_ASSETS_BUCKET`   | Public                           | Constant: `cookbook-assets`             |
+| `FAL_KEY`                              | Server-only                      | fal.ai dashboard                        |
+| `LLM_PROVIDER`                         | Server-only                      | Constant: `fal`                         |
+| `LLM_MODEL`                            | Server-only                      | Constant: `anthropic/claude-sonnet-4.5` |
+| `HIGGSFIELD_API_KEY`                   | Server-only                      | cloud.higgsfield.ai dashboard           |
+| `HIGGSFIELD_API_SECRET`                | Server-only                      | cloud.higgsfield.ai dashboard           |
+
 
 Setadas via `vercel env add <KEY> production` (ou via dashboard). Ler do `.env.local` em dev. CI / Vercel build pega automaticamente.
 
@@ -1161,15 +1165,17 @@ ADR-0033 não substitui nada acima — sobe pra cima e formaliza o conjunto.
 
 Tabela `public.projects` em Supabase Postgres:
 
-| Coluna | Tipo | Descrição |
-| --- | --- | --- |
-| `id` | uuid pk | Project id, gerado via `gen_random_uuid()`. |
-| `owner_id` | uuid → `auth.users` | RLS scoping: só o dono lê/escreve. `on delete cascade`. |
-| `name` | text | Title editável no `EditableTitle`. |
-| `state` | jsonb | Client-owned blob carregando workflow + assets metadata + layout + projectName. Schema flexível durante M0a; campos extraídos pra colunas próprias se a forma estabilizar. |
-| `state_version` | integer | Bumped pelo client quando o shape do `state` muda. Reservado pra futuras migrations server-side. |
-| `created_at` / `updated_at` | timestamptz | Trigger `touch_updated_at` bumpa `updated_at` em cada UPDATE — usado pra last-write-wins sync. |
-| `deleted_at` | timestamptz null | Soft delete. Index parcial `projects_owner_idx where deleted_at is null` mantém lookups rápidos. |
+
+| Coluna                      | Tipo                | Descrição                                                                                                                                                                  |
+| --------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                        | uuid pk             | Project id, gerado via `gen_random_uuid()`.                                                                                                                                |
+| `owner_id`                  | uuid → `auth.users` | RLS scoping: só o dono lê/escreve. `on delete cascade`.                                                                                                                    |
+| `name`                      | text                | Title editável no `EditableTitle`.                                                                                                                                         |
+| `state`                     | jsonb               | Client-owned blob carregando workflow + assets metadata + layout + projectName. Schema flexível durante M0a; campos extraídos pra colunas próprias se a forma estabilizar. |
+| `state_version`             | integer             | Bumped pelo client quando o shape do `state` muda. Reservado pra futuras migrations server-side.                                                                           |
+| `created_at` / `updated_at` | timestamptz         | Trigger `touch_updated_at` bumpa `updated_at` em cada UPDATE — usado pra last-write-wins sync.                                                                             |
+| `deleted_at`                | timestamptz null    | Soft delete. Index parcial `projects_owner_idx where deleted_at is null` mantém lookups rápidos.                                                                           |
+
 
 RLS: única política `"owner can crud own projects"` cobrindo SELECT/INSERT/UPDATE/DELETE com `auth.uid() = owner_id`. Sem projetos públicos em M0a — sharing é post-MVP.
 
@@ -1230,3 +1236,77 @@ Migration `cookbook_assets_rls_per_user`: drop `cookbook_assets_anon_insert/dele
 - ADR-0005 (Repository abstraction) — ADR-0034 é a primeira implementação concreta dessa interface.
 - ADR-0018b (Cloud-canonical assets) — ADR-0034 expande pra: tudo que define um projeto vai pra cloud, não só assets.
 - ADR-0033 (Production-first) — ADR-0034 implementa o §3 (webhook como primário, projects como cloud-canonical) usando Supabase Postgres como fonte de verdade.
+
+## ADR-0035 — Auto-persisted generation corpus + URL rehost (M0a Slice 6.2)
+
+- **Date**: 2026-05-26
+- **Status**: implemented in Slice 6.2.
+- **Context**: até a Slice 6.1, o output de cada execução vivia em `ExecutionRecord` na execution-store, que é in-memory. Imagens geradas pelo Higgsfield apontavam pra URLs CloudFront (não-nossas). Two pegas óbvios: (1) reload do navegador apaga tudo o que foi gerado; (2) URLs CloudFront expiram, deixando broken images mesmo dentro da sessão. Slice 6.2 cria um **corpus durável de generations** com URL re-hospedada na nossa Supabase bucket, e wira a Gallery sobre ele.
+
+### 1. Tabela `cookbook_generations`
+
+| Coluna | Tipo | Descrição |
+| --- | --- | --- |
+| `id` | uuid pk | Generation id. |
+| `project_id` | uuid → `cookbook_projects` | Cascade delete: dropar projeto descarta suas generations. |
+| `owner_id` | uuid → `auth.users` | RLS scoping. |
+| `node_id` | text | Origin node id na workflow graph. Sobrevive deleção do node. |
+| `node_kind` | text | Schema kind (Higgsfield, LLM Text, etc.). Permite filtro fácil em Gallery. |
+| `run_id` | integer | Run id do execution-store no momento da captura. Útil pra agrupar siblings. |
+| `output` | jsonb | `StandardizedOutput`-shaped: `{ type, value }`. Multi-output (Higgsfield batch=4) gera 4 rows separadas. |
+| `usage` | jsonb null | `NodeUsage` (custo, tokens, model). |
+| `inputs_snapshot` | jsonb null | Reservado pra futuro (engine ainda não anota inputs no record). |
+| `prompt_text` | text null | Prompt extraído do upstream do handle `prompt`. Indexável via `ilike`. |
+| `pinned` | boolean | User curation. Linha pinada não é alvo de cleanup futuro. |
+| `tags` | text[] | Free-form labels. |
+| `created_at` | timestamptz | Index pra newest-first. |
+
+Índices: `(project_id, created_at desc)`, `(project_id, node_id, created_at desc)`, parcial `(owner_id, pinned) where pinned = true`.
+
+RLS: única política `"owner can crud own cookbook_generations"`.
+
+### 2. Auto-rehost de URLs externas
+
+`generation-sync.ts` subscribes ao execution-store. Quando record transita pra `done`:
+
+1. Walk cada output. Se for `{ type: "image" }` E URL não contém `supabase.`, dispara `uploadImageFromUrl` que baixa bytes da CDN externa e re-uploada pra `users/<uid>/images/<random>/<filename>` no nosso bucket.
+2. Patch o record vivo em execution-store com a nova URL — UI passa a ler da nossa CDN.
+3. Insert row em `cookbook_generations` com a URL rehospedada.
+
+Falhas no rehost são logadas mas não bloqueiam — gera-se com URL externa original, e a generation row guarda essa URL. Se expirar, broken image, mas dataset não fica vazio.
+
+**Cache invariant**: ExecutionCache (in-memory) ainda guarda URL CDN externa porque `done` é emitido antes do rehost. Re-runs com mesmo hash batem cache → emitem com URL CDN → generation-sync rehospeda novamente. Trade-off aceito (ligeiro overhead em re-runs cacheadas; trivial fix em Slice futura).
+
+### 3. Cached vs done
+
+`record.status === "cached"` **não** dispara insert. Replay não é nova generation — ela já foi persistida na primeira run. Idempotência: dedup-set `(runId, nodeId)` no subscriber garante uma row por par mesmo se record for re-emitido.
+
+### 4. Hooks
+
+- `useGenerations(filter)`: query genérica com filtros (`projectId`, `nodeId`, `nodeKind`, `pinnedOnly`, `promptContains`, `limit`, `offset`). Powered by `getGenerationRepository().list()`. Re-fetch on filter change ou via `refresh()`.
+- `useNodeHistory(nodeId)`: wrap pra "últimas N generations daquele node", usado pelos cursors de Higgsfield + LLM Text bodies (Slice 6.3 vai migrar de `record.history` pra esse hook).
+
+### 5. Gallery wirado
+
+`gallery-drawer.tsx` rewritten:
+
+- Subscribe via `useGenerations({ projectId })` com filtros locais (search, pinned-only).
+- Grid auto-rows 180px com cards: thumbnail (image preview, text snippet, kind chip).
+- Per-card: botão pin (toggle Star) + future "regenerate / details / use in workflow".
+- Empty state distingue "no generations yet", "no pinned matches", "no search matches".
+- Refresh button manual (pre-realtime).
+
+### 6. Trade-offs aceitos
+
+- **Single insert per output item**. Higgsfield batch=4 → 4 rows. Mais rows, mas Gallery query/filter fica clean (uma row por imagem).
+- **Pre-realtime**. Sem subscription a `cookbook_generations`. Refresh manual ou re-open Gallery. Slice 6.4 ou M0c migra pra realtime se necessário.
+- **Sem inputs_snapshot completo**. Engine não anota inputs no record. `prompt_text` é extraído via lookup no upstream. Bons-suficientes pra Gallery search; "exact regenerate" precisa do snapshot real (Slice futura).
+- **Rehost block-on-emit não-acontece**. Engine emite `done` com URL CDN, sync rehospeda assíncrono. Trade-off explicado em §2.
+
+### 7. Cross-references
+
+- ADR-0034 — base de auth + projects table que ADR-0035 referencia via FK.
+- ADR-0008 (output pinning) — `pinned` column é a manifestação concreta dessa proposta.
+- ADR-0012 (Gallery) — Day-1 stub agora ganha dados reais.
+- ADR-0018b (cloud-canonical assets) — auto-rehost garante que toda image gerada vira cloud-canonical, não só uploads.
+

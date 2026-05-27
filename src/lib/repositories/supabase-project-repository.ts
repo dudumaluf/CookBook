@@ -74,7 +74,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
 
   async getCurrent(userId: string): Promise<ProjectRecord | null> {
     const { data, error } = await this.client
-      .from("projects")
+      .from("cookbook_projects")
       .select("*")
       .eq("owner_id", userId)
       .is("deleted_at", null)
@@ -88,7 +88,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
 
   async list(userId: string): Promise<ProjectRecord[]> {
     const { data, error } = await this.client
-      .from("projects")
+      .from("cookbook_projects")
       .select("*")
       .eq("owner_id", userId)
       .is("deleted_at", null)
@@ -108,7 +108,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
     if (input.id) {
       // Update — server trigger bumps updated_at automatically.
       const { data, error } = await this.client
-        .from("projects")
+        .from("cookbook_projects")
         .update(payload)
         .eq("id", input.id)
         .select("*")
@@ -117,7 +117,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
       return rowToRecord(data as RawProjectRow);
     }
     const { data, error } = await this.client
-      .from("projects")
+      .from("cookbook_projects")
       .insert(payload)
       .select("*")
       .single();
@@ -144,7 +144,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
       throw new ProjectRepositoryError("Name cannot be empty", "unknown");
     }
     const { error } = await this.client
-      .from("projects")
+      .from("cookbook_projects")
       .update({ name: trimmed })
       .eq("id", id);
     if (error) throw mapError(error, "Failed to rename project");
@@ -152,7 +152,7 @@ export class SupabaseProjectRepository implements ProjectRepository {
 
   async softDelete(id: string): Promise<void> {
     const { error } = await this.client
-      .from("projects")
+      .from("cookbook_projects")
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", id);
     if (error) throw mapError(error, "Failed to delete project");

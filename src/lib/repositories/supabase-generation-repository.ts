@@ -1,0 +1,156 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { getSupabaseClient } from "@/lib/supabase/client";
+import type { NodeUsage, StandardizedOutput } from "@/types/node";
+
+import {
+  type GenerationFilter,
+  type GenerationRecord,
+  type GenerationRepository,
+  GenerationRepositoryError,
+  type InsertGenerationInput,
+} from "./generation-repository";
+
+interface RawGenerationRow {
+  id: string;
+  project_id: string;
+  owner_id: string;
+  node_id: string;
+  node_kind: string;
+  run_id: number;
+  output: StandardizedOutput | StandardizedOutput[];
+  usage: NodeUsage | null;
+  inputs_snapshot: unknown | null;
+  prompt_text: string | null;
+  pinned: boolean;
+  tags: string[];
+  created_at: string;
+}
+
+function rowToRecord(row: RawGenerationRow): GenerationRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    ownerId: row.owner_id,
+    nodeId: row.node_id,
+    nodeKind: row.node_kind,
+    runId: row.run_id,
+    output: row.output,
+    usage: row.usage,
+    inputsSnapshot: row.inputs_snapshot,
+    promptText: row.prompt_text,
+    pinned: row.pinned,
+    tags: row.tags ?? [],
+    createdAt: row.created_at,
+  };
+}
+
+function mapError(
+  err: unknown,
+  fallback: string,
+): GenerationRepositoryError {
+  const e = err as { code?: string; message?: string } | null;
+  if (e?.code === "PGRST116") {
+    return new GenerationRepositoryError(
+      e.message ?? fallback,
+      "not_found",
+    );
+  }
+  if (e?.code === "42501") {
+    return new GenerationRepositoryError(
+      e.message ?? "Access denied by RLS policy",
+      "permission_denied",
+    );
+  }
+  return new GenerationRepositoryError(e?.message ?? fallback, "unknown");
+}
+
+export class SupabaseGenerationRepository implements GenerationRepository {
+  private client: SupabaseClient;
+
+  constructor(client?: SupabaseClient) {
+    this.client = client ?? getSupabaseClient();
+  }
+
+  async insert(input: InsertGenerationInput): Promise<GenerationRecord> {
+    const payload = {
+      project_id: input.projectId,
+      owner_id: input.ownerId,
+      node_id: input.nodeId,
+      node_kind: input.nodeKind,
+      run_id: input.runId,
+      output: input.output,
+      usage: input.usage ?? null,
+      inputs_snapshot: input.inputsSnapshot ?? null,
+      prompt_text: input.promptText ?? null,
+      tags: input.tags ?? [],
+    };
+    const { data, error } = await this.client
+      .from("cookbook_generations")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) throw mapError(error, "Failed to insert generation");
+    return rowToRecord(data as RawGenerationRow);
+  }
+
+  async list(filter: GenerationFilter): Promise<GenerationRecord[]> {
+    let query = this.client
+      .from("cookbook_generations")
+      .select("*")
+      .eq("project_id", filter.projectId)
+      .order("created_at", { ascending: false });
+    if (filter.nodeId) query = query.eq("node_id", filter.nodeId);
+    if (filter.nodeKind) query = query.eq("node_kind", filter.nodeKind);
+    if (filter.pinnedOnly) query = query.eq("pinned", true);
+    if (filter.promptContains) {
+      // Case-insensitive substring search via Postgres `ilike`.
+      query = query.ilike("prompt_text", `%${filter.promptContains}%`);
+    }
+    const limit = filter.limit ?? 100;
+    if (filter.offset) {
+      query = query.range(filter.offset, filter.offset + limit - 1);
+    } else {
+      query = query.limit(limit);
+    }
+    const { data, error } = await query;
+    if (error) throw mapError(error, "Failed to list generations");
+    return ((data ?? []) as RawGenerationRow[]).map(rowToRecord);
+  }
+
+  async listForNode(
+    projectId: string,
+    nodeId: string,
+    limit: number = 50,
+  ): Promise<GenerationRecord[]> {
+    return this.list({ projectId, nodeId, limit });
+  }
+
+  async setPinned(id: string, pinned: boolean): Promise<void> {
+    const { error } = await this.client
+      .from("cookbook_generations")
+      .update({ pinned })
+      .eq("id", id);
+    if (error) throw mapError(error, "Failed to update pin");
+  }
+
+  async setTags(id: string, tags: string[]): Promise<void> {
+    const { error } = await this.client
+      .from("cookbook_generations")
+      .update({ tags })
+      .eq("id", id);
+    if (error) throw mapError(error, "Failed to update tags");
+  }
+
+  async remove(id: string): Promise<void> {
+    const { error } = await this.client
+      .from("cookbook_generations")
+      .delete()
+      .eq("id", id);
+    if (error) throw mapError(error, "Failed to delete generation");
+  }
+}
+
+export function getGenerationRepository(): GenerationRepository {
+  return new SupabaseGenerationRepository();
+}

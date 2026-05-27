@@ -1,19 +1,23 @@
 -- Slice 6.1 — Cloud-canonical project entity (ADR-0034).
 --
 -- Until now Cookbook held workflow + asset metadata in localStorage on a single
--- browser. This migration introduces a `projects` table that owns the canonical
--- project state: workflow graph, layout overlay prefs, project name. Each row
--- belongs to one Supabase Auth user (owner_id). Sync layer client-side hydrates
--- on login and writes back debounced. Same project on multiple machines stays
--- coherent via last-write-wins on `updated_at`.
+-- browser. This migration introduces a `cookbook_projects` table that owns the
+-- canonical project state: workflow graph, layout overlay prefs, project name.
+-- Each row belongs to one Supabase Auth user (owner_id). Sync layer client-side
+-- hydrates on login and writes back debounced. Same project on multiple
+-- machines stays coherent via last-write-wins on `updated_at`.
 --
 -- The `state` column is JSONB to keep schema flexible during M0a; once schema
 -- stabilises we may extract specific fields to columns / split tables. For now
 -- it carries: { workflow: { nodes, edges }, layout: { ... }, ... }.
 --
+-- The `cookbook_` prefix namespaces our tables so they don't collide with other
+-- tenants sharing this Supabase project (Slice 6.1 discovered a pre-existing
+-- `public.generations` from a different app).
+--
 -- RLS: only owner reads/writes. No public projects in M0a — sharing is post-MVP.
 
-create table if not exists public.projects (
+create table if not exists public.cookbook_projects (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users on delete cascade,
   name text not null default 'Untitled Project',
@@ -30,18 +34,18 @@ create table if not exists public.projects (
 );
 
 -- Active projects index — partial so soft-deleted rows don't bloat lookups.
-create index if not exists projects_owner_idx
-  on public.projects(owner_id)
+create index if not exists cookbook_projects_owner_idx
+  on public.cookbook_projects(owner_id)
   where deleted_at is null;
 
-alter table public.projects enable row level security;
+alter table public.cookbook_projects enable row level security;
 
 -- Single permissive policy covers SELECT/INSERT/UPDATE/DELETE for the owner.
 -- Both `using` (for read/update/delete predicates) and `with check` (for
 -- insert/update writes) so a user can never assign rows to another user.
-drop policy if exists "owner can crud own projects" on public.projects;
-create policy "owner can crud own projects"
-  on public.projects
+drop policy if exists "owner can crud own cookbook_projects" on public.cookbook_projects;
+create policy "owner can crud own cookbook_projects"
+  on public.cookbook_projects
   for all
   using (auth.uid() = owner_id)
   with check (auth.uid() = owner_id);
@@ -62,7 +66,7 @@ begin
 end;
 $$;
 
-drop trigger if exists projects_touch on public.projects;
-create trigger projects_touch
-  before update on public.projects
+drop trigger if exists cookbook_projects_touch on public.cookbook_projects;
+create trigger cookbook_projects_touch
+  before update on public.cookbook_projects
   for each row execute function public.touch_updated_at();

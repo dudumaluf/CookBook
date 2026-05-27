@@ -26,6 +26,7 @@ import {
   bootstrapForUser,
   startAutoSave,
 } from "@/lib/sync/project-sync";
+import { startAutoPersistGenerations } from "@/lib/sync/generation-sync";
 
 /**
  * AppShell — refactor v3 (ADR-0013) + v4 (ADR-0015 polish)
@@ -76,6 +77,7 @@ export function AppShell() {
   useEffect(() => {
     if (!user) return;
     let unsubscribeAutoSave: (() => void) | null = null;
+    let unsubscribeGenerations: (() => void) | null = null;
     let cancelled = false;
     void (async () => {
       setSyncStatus("loading");
@@ -95,6 +97,11 @@ export function AppShell() {
             toast.error("Failed to save project changes — will retry");
           },
         });
+        // Slice 6.2 — auto-persist generations to cloud + rehost external
+        // image URLs into our Supabase bucket. Returns unsubscribe.
+        unsubscribeGenerations = startAutoPersistGenerations({
+          ownerId: user.id,
+        });
         setSyncStatus("ready");
       } catch (err) {
         if (cancelled) return;
@@ -106,6 +113,7 @@ export function AppShell() {
     return () => {
       cancelled = true;
       unsubscribeAutoSave?.();
+      unsubscribeGenerations?.();
     };
   }, [user]);
 
