@@ -1192,6 +1192,90 @@ describe("runWorkflow with mode='reactive-only' (Slice 6.3)", () => {
     // No pending emit, no done emit (skipped) — just nothing.
     expect(seenStatuses).not.toContain("pending");
   });
+
+  it("non-reactive node without cache flows from prevOutputs to reactive consumers (Slice 6.4 hotfix)", async () => {
+    const registry = new NodeRegistry();
+    let nonReactiveCalls = 0;
+    let reactiveCalls = 0;
+    let consumedUpstream: string | undefined;
+    registry.register({
+      kind: "expensive",
+      category: "ai-text",
+      title: "expensive",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: false,
+      execute: async () => {
+        nonReactiveCalls++;
+        return { type: "text", value: "should-not-run" };
+      },
+      Body: EmptyBody as never,
+    });
+    registry.register({
+      kind: "downstream",
+      category: "input",
+      title: "downstream",
+      description: "",
+      icon: Type,
+      inputs: [{ id: "in", label: "in", dataType: "text" }],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: true,
+      execute: async ({ inputs }) => {
+        reactiveCalls++;
+        consumedUpstream = (inputs.in as { value: string } | undefined)?.value;
+        return { type: "text", value: `wrap(${consumedUpstream ?? "?"})` };
+      },
+      Body: EmptyBody as never,
+    });
+
+    // Simulate "the user already ran a full Run earlier; that produced
+    // an output of 'fresh-llm-result' on node a. Then they edited
+    // something on node b — reactive runner kicks in with empty cache."
+    const prevOutputs = new Map<
+      string,
+      { type: "text"; value: string }
+    >();
+    prevOutputs.set("a", { type: "text", value: "fresh-llm-result" });
+
+    const cache: ExecutionCache = new Map();
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        { id: "a", kind: "expensive", position: { x: 0, y: 0 }, config: {} },
+        { id: "b", kind: "downstream", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "ab",
+          source: "a",
+          sourceHandle: "out",
+          target: "b",
+          targetHandle: "in",
+        },
+      ],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      mode: "reactive-only",
+      prevOutputs: prevOutputs as never,
+    });
+
+    // The non-reactive node never ran (would have cost money).
+    expect(nonReactiveCalls).toBe(0);
+    // The reactive node ran ONCE — and saw the prev output as its input.
+    expect(reactiveCalls).toBe(1);
+    expect(consumedUpstream).toBe("fresh-llm-result");
+    // The non-reactive node still doesn't get a fresh record emitted —
+    // we don't want to pollute the user-facing UI with synthetic events.
+    expect(records.has("a")).toBe(false);
+    // Downstream is `done` with the wrapped output.
+    expect(records.get("b")?.status).toBe("done");
+  });
 });
 
 describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {

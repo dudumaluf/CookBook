@@ -240,7 +240,14 @@ export function BaseNode({
             {displayTitle}
           </span>
         )}
-        {schema.execute ? <RunHereButton nodeId={nodeId} /> : null}
+        {/* Run-here button (Slice 5.8) only makes sense on EXPENSIVE nodes —
+         *  the ones whose execution costs money or time and which the user
+         *  wants to fire deliberately. Reactive nodes (Text, Array, List,
+         *  Number, Iterators, Soul ID) update live via the reactive runner
+         *  and don't need an explicit trigger. Slice 6.4 hotfix. */}
+        {schema.execute && schema.reactive !== true ? (
+          <RunHereButton nodeId={nodeId} />
+        ) : null}
         <NodeStatusChip nodeId={nodeId} />
         {settings && <NodeSettingsTrigger settings={settings} />}
       </header>

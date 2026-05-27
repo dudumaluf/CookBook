@@ -510,23 +510,40 @@ describe("<BaseNode />", () => {
       expect(handle!.getAttribute("data-direction")).toBe("vertical");
     });
 
-    it("renders the Run-here button only for schemas with execute() defined (Slice 5.8)", () => {
+    it("renders the Run-here button only for non-reactive schemas with execute() defined (Slice 5.8 + 6.4 hotfix)", () => {
       // No execute → no button.
       const noExec = renderShell();
       expect(
         noExec.container.querySelector("[data-testid='node-run-here']"),
       ).toBeNull();
 
-      // With execute → button present.
-      const withExec = renderShell({
+      // execute + reactive: false (or undefined) → button present.
+      // These are the "expensive" nodes (LLM, Higgsfield, Export) — the
+      // user wants to fire them deliberately, never auto-run.
+      const expensive = renderShell({
         schema: {
           ...schema,
           execute: async () => ({ type: "text", value: "x" }),
+          reactive: false,
         },
       });
       expect(
-        withExec.container.querySelector("[data-testid='node-run-here']"),
+        expensive.container.querySelector("[data-testid='node-run-here']"),
       ).not.toBeNull();
+
+      // execute + reactive: true → NO button. Reactive nodes (Text, Array,
+      // List, Number, Iterators, Soul ID) update live via the reactive
+      // runner; an explicit Run-here would be redundant + clutter.
+      const reactive = renderShell({
+        schema: {
+          ...schema,
+          execute: async () => ({ type: "text", value: "x" }),
+          reactive: true,
+        },
+      });
+      expect(
+        reactive.container.querySelector("[data-testid='node-run-here']"),
+      ).toBeNull();
     });
 
     it("body wrapper becomes flex-fill (min-h-0) only when an explicit height is set", () => {

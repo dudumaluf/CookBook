@@ -86,6 +86,23 @@ export interface RunWorkflowOptions {
    * background runs shouldn't sweep the UI's status chips.
    */
   mode?: "full" | "reactive-only";
+
+  /**
+   * Slice 6.4 hotfix — when running in reactive-only mode, this map carries
+   * the last-known outputs of non-reactive nodes (LLM, Higgsfield, etc.)
+   * so their results flow to reactive consumers downstream even when the
+   * per-flush cache is empty.
+   *
+   * Sourced from execution-store records by `reactive-runner` before each
+   * flush. Without this, a reactive run that touches anything resets every
+   * downstream reactive node's output to "no input → empty" because the
+   * non-reactive upstream has no fresh cache to hit (each reactive flush
+   * uses its own cache to avoid contaminating the user's session cache).
+   *
+   * Ignored in `mode: "full"` — full runs always execute every node from
+   * scratch and don't need the bridge.
+   */
+  prevOutputs?: ReadonlyMap<string, StandardizedOutput | StandardizedOutput[]>;
 }
 
 export interface RunWorkflowResult {
@@ -276,6 +293,7 @@ export async function runWorkflow(
     maxConcurrent = DEFAULT_MAX_CONCURRENT,
     endAtNodeId,
     mode = "full",
+    prevOutputs,
   } = opts;
   const isReactiveOnly = mode === "reactive-only";
 
@@ -446,9 +464,23 @@ export async function runWorkflow(
     // Soul ID, Export) NEVER auto-execute in reactive runs; they require
     // an explicit Run / Run-here. We've already let cached output flow
     // above, so reactive consumers downstream still see fresh inputs when
-    // the cache is warm. With no cache, just skip — the node stays in
-    // whatever state it was in before this background run.
+    // the cache is warm.
+    //
+    // Slice 6.4 hotfix: when no fresh cache hit, fall back to `prevOutputs`
+    // (sourced from execution-store records by reactive-runner). That keeps
+    // a previously-completed LLM result flowing into Array → List → ...
+    // downstream so a reactive flush triggered by editing Array.delimiter
+    // doesn't blow away every consumer's content.
+    //
+    // Important: do NOT emit a record here. The UI already shows the
+    // user-facing record from the original full run; overwriting it with a
+    // synthetic "cached" emit would re-fire generation-sync's auto-persist.
     if (isReactiveOnly && schema.reactive !== true) {
+      const prev = prevOutputs?.get(node.id);
+      if (prev !== undefined) {
+        outputs.set(node.id, prev);
+        hashes.set(node.id, nodeHash);
+      }
       continue;
     }
 

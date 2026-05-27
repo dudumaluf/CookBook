@@ -22,7 +22,10 @@ describe("listNodeSchema", () => {
     expect(listNodeSchema.inputs[0]?.dataType).toBe("any");
     expect(listNodeSchema.inputs[1]?.id).toBe("cursor");
     expect(listNodeSchema.inputs[1]?.dataType).toBe("number");
-    expect(listNodeSchema.outputs[0]?.dataType).toBe("any");
+    // Slice 6.4 hotfix — text-typed output (text-blue handle) since the
+    // dominant flow is `text-array → list → llm-text.user`. See header
+    // comment in node-list.tsx for the trade-off vs. "any".
+    expect(listNodeSchema.outputs[0]?.dataType).toBe("text");
   });
 
   it("fixed mode emits items[cursor] and does not mutate cursor", async () => {

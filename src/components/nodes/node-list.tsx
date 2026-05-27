@@ -34,10 +34,13 @@ import { IteratorCursor } from "./iterator-cursor";
  * 2. **Internal `cursor` config**, optionally mutated each run per
  *    `mode` (mirroring the iterator family).
  *
- * Output `dataType: "any"` because the list is type-opaque — whatever
- * the upstream produced is what we re-emit. The cache key still
- * works because `StandardizedOutput`'s `type` field round-trips
- * through `extractInputByType`'s expected check downstream.
+ * Output `dataType: "text"` because in M0a the dominant flow is
+ * `text-array → list → llm-text.user`, so the handle reads as text-blue
+ * and visually pairs with the LLM's text input. The engine has no
+ * edge-time type check (only runtime `extractInputByType`), so an
+ * upstream image array still flows through if connected — degrades
+ * gracefully. Switch to `dataType: "any"` if/when image-array → list
+ * becomes a primary use case.
  */
 
 export type ListNodeMode =
@@ -213,7 +216,7 @@ export const listNodeSchema = defineNode<ListNodeConfig>({
     { id: "items", label: "items", dataType: "any", multiple: true },
     { id: "cursor", label: "cursor", dataType: "number" },
   ],
-  outputs: [{ id: "out", label: "out", dataType: "any" }],
+  outputs: [{ id: "out", label: "out", dataType: "text" }],
   defaultConfig: {
     cursor: 0,
     mode: "fixed",
