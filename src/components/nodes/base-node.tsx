@@ -189,7 +189,13 @@ export function BaseNode({
 
   const resizable = size?.resizable ?? "none";
   const hasResize = resizable !== "none";
-  const hasExplicitHeight = size?.height !== undefined;
+  // The body wrapper needs `flex-1 min-h-0` whenever the card has an
+  // upper bound on height — either an explicit `height` (user-resized) or
+  // a schema `maxHeight` (ADR-0028). Without it, a body that wants to
+  // scroll internally (`overflow-y-auto`) can't shrink to fit the card,
+  // so its contents punch through the card boundary visually.
+  const hasBoundedHeight =
+    size?.height !== undefined || size?.maxHeight !== undefined;
 
   return (
     <div
@@ -259,7 +265,7 @@ export function BaseNode({
         data-testid="node-body"
         className={cn(
           "nodrag flex w-full flex-col",
-          hasExplicitHeight && "min-h-0 flex-1",
+          hasBoundedHeight && "min-h-0 flex-1",
         )}
       >
         {children}

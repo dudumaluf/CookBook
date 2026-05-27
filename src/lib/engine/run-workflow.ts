@@ -66,6 +66,26 @@ export interface RunWorkflowOptions {
    * matches how a no-op run would behave).
    */
   endAtNodeId?: string;
+
+  /**
+   * Run mode (Slice 6.3 / ADR-0036).
+   *
+   * `"full"` (default) — runs every node end-to-end, the historical
+   * behaviour. Used by the explicit Run button + Run-here.
+   *
+   * `"reactive-only"` — only executes nodes flagged `schema.reactive ===
+   * true` (cheap pure-function utilities: Text, Image, Number, Array,
+   * List, Iterators). Nodes flagged `reactive: false` (LLM Text,
+   * Higgsfield, Soul ID, Export) are SKIPPED — their cached output (if
+   * present) flows downstream, but they never re-execute. Used by the
+   * background `reactive-runner` subscription so changing a Text input
+   * propagates Array → List → ... live without burning credit on the
+   * expensive nodes upstream.
+   *
+   * In reactive-only the engine doesn't seed "pending" records —
+   * background runs shouldn't sweep the UI's status chips.
+   */
+  mode?: "full" | "reactive-only";
 }
 
 export interface RunWorkflowResult {
@@ -255,7 +275,9 @@ export async function runWorkflow(
     signal,
     maxConcurrent = DEFAULT_MAX_CONCURRENT,
     endAtNodeId,
+    mode = "full",
   } = opts;
+  const isReactiveOnly = mode === "reactive-only";
 
   // Slice 5.8 — Run-here. If `endAtNodeId` is set, narrow the working
   // set to it + every upstream ancestor. Everything else stays out of
@@ -295,7 +317,13 @@ export async function runWorkflow(
   // Seed everyone as `pending` up-front so the UI can paint the whole run
   // shape immediately — better feedback than nodes popping into existence
   // one by one as the engine reaches them.
-  for (const n of topo.order) emit(n.id, { status: "pending" });
+  //
+  // In reactive-only mode we skip this: background runs shouldn't sweep
+  // the UI's status chips into "pending" (would flicker every keystroke).
+  // Each per-node emit during the run handles its own state.
+  if (!isReactiveOnly) {
+    for (const n of topo.order) emit(n.id, { status: "pending" });
+  }
 
   // Per-node output map (live during this run, consumed by downstreams).
   const outputs = new Map<
@@ -411,6 +439,16 @@ export async function runWorkflow(
         hash: nodeHash,
         ...(cached.usage ? { usage: cached.usage } : {}),
       });
+      continue;
+    }
+
+    // Slice 6.3 — reactive-only mode. Non-reactive nodes (LLM, Higgsfield,
+    // Soul ID, Export) NEVER auto-execute in reactive runs; they require
+    // an explicit Run / Run-here. We've already let cached output flow
+    // above, so reactive consumers downstream still see fresh inputs when
+    // the cache is warm. With no cache, just skip — the node stays in
+    // whatever state it was in before this background run.
+    if (isReactiveOnly && schema.reactive !== true) {
       continue;
     }
 

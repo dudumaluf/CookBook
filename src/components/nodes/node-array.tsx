@@ -5,6 +5,7 @@ import { useId } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 /**
@@ -31,6 +32,7 @@ export interface ArrayNodeConfig {
 }
 
 function ArrayNodeBody({
+  nodeId,
   config,
   updateConfig,
 }: NodeBodyProps<ArrayNodeConfig>) {
@@ -39,8 +41,22 @@ function ArrayNodeBody({
   const delimiter = config.delimiter ?? ",";
   const trim = config.trim ?? true;
 
+  // Slice 6.3 — live preview. The reactive runner re-executes Array
+  // whenever its config or upstream changes. Read the live record's
+  // output to surface the split items in the body without waiting for
+  // an explicit Run.
+  const record = useExecutionStore((s) => s.records.get(nodeId));
+  const items: string[] =
+    record?.output && Array.isArray(record.output)
+      ? record.output
+          .filter((o): o is StandardizedOutput & { type: "text" } =>
+            o.type === "text",
+          )
+          .map((o) => o.value)
+      : [];
+
   return (
-    <div className="flex w-full min-w-[200px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+    <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-2">
         <label
           htmlFor={delimiterId}
@@ -74,9 +90,32 @@ function ArrayNodeBody({
         Trim each item (drop empty)
       </label>
 
-      <div className="rounded-md bg-foreground/[0.04] px-2 py-1 text-[10.5px] text-muted-foreground">
-        Splits the upstream text into items, then fan-outs downstream.
-      </div>
+      {items.length > 0 ? (
+        <div
+          data-testid="array-items-preview"
+          className="nowheel max-h-44 overflow-y-auto rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[10.5px]"
+          onWheelCapture={(e) => e.stopPropagation()}
+        >
+          <p className="mb-1 text-muted-foreground">
+            {items.length} {items.length === 1 ? "item" : "items"}
+          </p>
+          <ol className="ml-3 list-decimal space-y-0.5 text-foreground/80">
+            {items.map((item, i) => (
+              <li
+                key={`${i}-${item.slice(0, 8)}`}
+                className="line-clamp-2"
+                title={item}
+              >
+                {item}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : (
+        <div className="rounded-md bg-foreground/[0.04] px-2 py-1 text-[10.5px] text-muted-foreground">
+          Splits the upstream text into items, then fan-outs downstream.
+        </div>
+      )}
     </div>
   );
 }

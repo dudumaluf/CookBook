@@ -1011,6 +1011,189 @@ describe("computeAncestorSubgraph (Slice 5.8)", () => {
   });
 });
 
+describe("runWorkflow with mode='reactive-only' (Slice 6.3)", () => {
+  it("skips non-reactive nodes when no cache, runs reactive nodes", async () => {
+    const registry = new NodeRegistry();
+    let nonReactiveCalls = 0;
+    let reactiveCalls = 0;
+    registry.register({
+      kind: "non-reactive",
+      category: "ai-text",
+      title: "non-reactive",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: { tag: "" },
+      reactive: false,
+      execute: async () => {
+        nonReactiveCalls++;
+        return { type: "text", value: "non-reactive output" };
+      },
+      Body: EmptyBody as never,
+    });
+    registry.register({
+      kind: "reactive",
+      category: "input",
+      title: "reactive",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: true,
+      execute: async () => {
+        reactiveCalls++;
+        return { type: "text", value: "reactive output" };
+      },
+      Body: EmptyBody as never,
+    });
+
+    const cache: ExecutionCache = new Map();
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        { id: "a", kind: "non-reactive", position: { x: 0, y: 0 }, config: {} },
+        { id: "b", kind: "reactive", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      mode: "reactive-only",
+    });
+
+    expect(nonReactiveCalls).toBe(0); // Skipped — non-reactive in reactive-only mode.
+    expect(reactiveCalls).toBe(1);
+    expect(records.get("b")?.status).toBe("done");
+    // Non-reactive node has no record because it was skipped without emit.
+    expect(records.has("a")).toBe(false);
+  });
+
+  it("non-reactive cache hits flow to reactive consumers", async () => {
+    const registry = new NodeRegistry();
+    let nonReactiveCalls = 0;
+    let reactiveCalls = 0;
+    registry.register({
+      kind: "non-reactive",
+      category: "ai-text",
+      title: "non-reactive",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: false,
+      execute: async () => {
+        nonReactiveCalls++;
+        return { type: "text", value: "cached-result" };
+      },
+      Body: EmptyBody as never,
+    });
+    registry.register({
+      kind: "reactive-consumer",
+      category: "input",
+      title: "reactive consumer",
+      description: "",
+      icon: Type,
+      inputs: [{ id: "in", label: "in", dataType: "text" }],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: true,
+      execute: async ({ inputs }) => {
+        reactiveCalls++;
+        const upstream = (inputs.in as { value: string } | undefined)?.value ?? "?";
+        return { type: "text", value: `wrap(${upstream})` };
+      },
+      Body: EmptyBody as never,
+    });
+
+    const cache: ExecutionCache = new Map();
+    const records1 = new Map<string, ExecutionRecord>();
+    // Full run first to populate cache.
+    await runWorkflow({
+      nodes: [
+        { id: "a", kind: "non-reactive", position: { x: 0, y: 0 }, config: {} },
+        {
+          id: "b",
+          kind: "reactive-consumer",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [{ id: "ab", source: "a", sourceHandle: "out", target: "b", targetHandle: "in" }],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records1.set(id, r),
+    });
+    expect(nonReactiveCalls).toBe(1);
+    expect(reactiveCalls).toBe(1);
+
+    // Now reactive-only run: non-reactive is cached, reactive consumes it.
+    const records2 = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        { id: "a", kind: "non-reactive", position: { x: 0, y: 0 }, config: {} },
+        {
+          id: "b",
+          kind: "reactive-consumer",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [{ id: "ab", source: "a", sourceHandle: "out", target: "b", targetHandle: "in" }],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records2.set(id, r),
+      mode: "reactive-only",
+    });
+
+    // Non-reactive: cache hit, no execute.
+    expect(nonReactiveCalls).toBe(1);
+    // Reactive: also cache hit (same hashes), no execute.
+    expect(reactiveCalls).toBe(1);
+    expect(records2.get("a")?.status).toBe("cached");
+    expect(records2.get("b")?.status).toBe("cached");
+  });
+
+  it("does NOT seed pending records in reactive-only mode", async () => {
+    const registry = new NodeRegistry();
+    registry.register({
+      kind: "noisy",
+      category: "ai-text",
+      title: "noisy",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: {},
+      reactive: false,
+      execute: async () => ({ type: "text", value: "x" }),
+      Body: EmptyBody as never,
+    });
+
+    const cache: ExecutionCache = new Map();
+    const seenStatuses: string[] = [];
+    await runWorkflow({
+      nodes: [
+        { id: "a", kind: "noisy", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (_id, r) => seenStatuses.push(r.status),
+      mode: "reactive-only",
+    });
+
+    // No pending emit, no done emit (skipped) — just nothing.
+    expect(seenStatuses).not.toContain("pending");
+  });
+});
+
 describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
   it("runs the target + ancestors only; downstream sibling branches stay idle (no records emitted)", async () => {
     const registry = new NodeRegistry();

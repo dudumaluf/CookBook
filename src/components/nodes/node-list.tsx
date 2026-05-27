@@ -5,6 +5,7 @@ import { useId } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type {
   NodeBodyProps,
@@ -72,23 +73,40 @@ function clampCursor(cursor: number, count: number): number {
 }
 
 function ListNodeBody({
+  nodeId,
   config,
   updateConfig,
 }: NodeBodyProps<ListNodeConfig>) {
   const modeId = useId();
+  const pickerId = useId();
   const mode = config.mode ?? "fixed";
   const cursor = config.cursor ?? 0;
 
+  // Slice 6.3 — live preview. List subscribes to its upstream record
+  // (the node connected to `items`) and shows a dropdown of every
+  // available item. Selecting one writes `config.cursor` so the next
+  // emit yields that item.
+  const upstream = useUpstreamItemsForList(nodeId);
+  const items = upstream.items;
+
+  function describeItem(item: StandardizedOutput, index: number): string {
+    if (item.type === "text") {
+      const v = String(item.value);
+      return v.length > 60 ? `${v.slice(0, 57)}…` : v;
+    }
+    if (item.type === "image") return `Image ${index + 1}`;
+    if (item.type === "video") return `Video ${index + 1}`;
+    if (item.type === "number") return `Number ${item.value}`;
+    if (item.type === "soul-id") return `Soul ID ${item.value.name ?? index + 1}`;
+    return `Item ${index + 1}`;
+  }
+
   return (
-    <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+    <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center justify-between gap-2">
-        {/* Cursor count is unknown at render time (depends on upstream).
-            Render the navigation control with count=1 placeholder until
-            an actual run resolves the array — body is purely a setting
-            surface. */}
         <IteratorCursor
-          count={Math.max(cursor + 1, 1)}
-          cursor={cursor}
+          count={Math.max(items.length, 1)}
+          cursor={Math.min(cursor, Math.max(items.length - 1, 0))}
           onCursorChange={(next) => updateConfig({ cursor: next })}
           ariaLabelPrefix="List"
         />
@@ -99,6 +117,33 @@ function ListNodeBody({
           {mode}
         </span>
       </div>
+
+      {items.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor={pickerId}
+            className="text-[10.5px] uppercase tracking-wider text-muted-foreground"
+          >
+            Pick
+          </label>
+          <select
+            id={pickerId}
+            data-testid="list-item-picker"
+            value={Math.min(cursor, items.length - 1)}
+            onChange={(e) =>
+              updateConfig({ cursor: Number(e.target.value) })
+            }
+            onPointerDown={(e) => e.stopPropagation()}
+            className="h-7 rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+          >
+            {items.map((item, i) => (
+              <option key={i} value={i}>
+                {`${i + 1}. ${describeItem(item, i)}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-2">
         <label
@@ -124,12 +169,37 @@ function ListNodeBody({
         </select>
       </div>
 
-      <p className="rounded-md bg-foreground/[0.04] px-2 py-1 text-[10.5px] text-muted-foreground">
-        Wire an array into <code className="font-mono">items</code>; the list emits one item per run.
-        Wire a Number into <code className="font-mono">cursor</code> to drive selection externally.
-      </p>
+      {items.length === 0 ? (
+        <p className="rounded-md bg-foreground/[0.04] px-2 py-1 text-[10.5px] text-muted-foreground">
+          Wire an array into <code className="font-mono">items</code>; the list emits one item per run.
+          Wire a Number into <code className="font-mono">cursor</code> to drive selection externally.
+        </p>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Resolve the upstream items array for a given List node by walking the
+ * workflow graph for the `items` edge and reading its source's record.
+ */
+function useUpstreamItemsForList(nodeId: string): {
+  items: StandardizedOutput[];
+} {
+  const sourceNodeId = useWorkflowStore((s) => {
+    const edge = s.edges.find(
+      (e) => e.target === nodeId && e.targetHandle === "items",
+    );
+    return edge?.source ?? null;
+  });
+  const upstreamRecord = useExecutionStore((s) =>
+    sourceNodeId ? s.records.get(sourceNodeId) : undefined,
+  );
+  const out = upstreamRecord?.output;
+  if (!out) return { items: [] };
+  return {
+    items: Array.isArray(out) ? out : [out],
+  };
 }
 
 export const listNodeSchema = defineNode<ListNodeConfig>({

@@ -1310,3 +1310,77 @@ Falhas no rehost são logadas mas não bloqueiam — gera-se com URL externa ori
 - ADR-0012 (Gallery) — Day-1 stub agora ganha dados reais.
 - ADR-0018b (cloud-canonical assets) — auto-rehost garante que toda image gerada vira cloud-canonical, não só uploads.
 
+## ADR-0036 — Reactive engine: schema flag becomes meaningful + live preview UX (M0a Slice 6.3)
+
+- **Date**: 2026-05-26
+- **Status**: implemented in Slice 6.3.
+- **Context**: Slice 5.7 entregou Number / Array / List, mas user feedback (post-5.8) flagou que Array deveria mostrar os items split assim que conectado, sem clicar Run. List idem — dropdown selecionável dos items disponíveis. Hoje a flag `schema.reactive` só é metadata; engine não age sobre ela. Slice 6.3 ativa reactivity de verdade pra utility nodes baratos, sem queimar crédito nos nodes caros (LLM, Higgsfield, Soul ID, Export).
+
+### 1. Engine — modo `reactive-only`
+
+Nova opção em `RunWorkflowOptions`: `mode?: "full" | "reactive-only"` (default `"full"`).
+
+Em `reactive-only`:
+
+- **Não seed pending records** — background runs não devem sweepar status chips em "pending" a cada keystroke.
+- Pra cada node em topo order:
+  - Se `schema.reactive !== true` (LLM, Higgsfield, Soul ID, Export): tenta cache. Cache hit → emite `cached`, output flui pra reactive consumers downstream. Cache miss → SKIP (sem emit, sem output, downstream reactive nodes que dependem dele também não conseguem rodar).
+  - Se `schema.reactive === true`: lógica normal — cache check, fan-out ou single-execute.
+
+Anti-loop: subscription só ouve workflow-store (config + edges), não execution-store. Reactive runs mutam records; ouvir records criaria feedback loop infinito. Convergência fica em O(depth) de chamadas reactivas (cada uma com cache fresca), porque execute() é função pura de `(config, inputs)`.
+
+### 2. Subscription layer (`reactive-runner.ts`)
+
+`startReactiveRunner({ debounceMs = 150 })`:
+
+- Subscribe em `useWorkflowStore` (qualquer mutação — addNode, updateNodeConfig, edges, etc.).
+- Debounce 150ms — coalesce typing bursts e drag sequences.
+- Cada flush dispara `runWorkflow({ mode: "reactive-only" })` com **cache fresca** (não contamina `sessionCache`).
+- Se isRunning está true (full-run em flight), back-off — full run vence reactive.
+- onProgress patcheia execution-store records sem disparar nova reactive run (ouve só workflow-store).
+
+Inicia no shell após auth bootstrap, returns unsubscribe.
+
+### 3. Schema flag audit
+
+Estado canônico após auditoria:
+
+| Node | reactive | Reasoning |
+|---|---|---|
+| Text, Image, Number | `true` | Pure config-driven, custo zero. |
+| Array, List, Image Iterator, Text Iterator | `true` | Pure function sobre input, custo zero. |
+| Soul ID | `true` | Apenas emite ref, sem chamada externa. |
+| LLM Text | `false` | $$$ — auto-run queimaria crédito a cada keystroke. |
+| Higgsfield Image Gen | `false` | $$$. |
+| Export | `false` | Side-effect (upload pra Supabase + asset-store mutation). |
+
+Esses já estavam corretos no schema antes; ADR-0036 só ativa o comportamento.
+
+### 4. Live preview UX
+
+**Array body** (`node-array.tsx`): subscribe ao próprio record. Quando reactive run completa, output é o array de items. Body renderiza:
+
+- "N items" badge.
+- Lista numerada (max-height + overflow-y-auto + nowheel).
+
+**List body** (`node-list.tsx`): subscribe ao record do upstream node conectado em `items`. Renderiza um `<select>` dropdown com cada item (label = primeiros 60 chars do value pra text, "Image #N" pra image). Selecionar → atualiza `config.cursor`.
+
+**LLM Text body**: fix CSS de overflow. BaseNode agora aplica `flex-1 min-h-0` na body wrapper quando schema tem `maxHeight` OU `height` (era só `height`). Garante que o output area faz scroll interno em vez de transbordar visualmente.
+
+### 5. Loop / convergência
+
+Pure-function reactive nodes garantem que cada flush converge em uma rodada (mesma config + mesmos inputs → mesmo output → cache hit na próxima). Mutações intencionais (Number node com mode=increment, List com mode=increment) bumpam `value`/`cursor` na config, que dispara nova reactive flush — terminada quando config estabiliza ou usuário muda outra coisa.
+
+### 6. Trade-offs aceitos
+
+- **Cache compartilhada full × reactive**: reactive runs usam cache fresca por flush; full runs usam `sessionCache` global. Não há cross-pollination — full run cache não acelera reactive flush. Aceito porque flush reactivo é cheap (~ms).
+- **Reactive não rodá quando sem upstream**: List vazio (sem upstream wired) ainda mostra dropdown placeholder. Bodies empty-state cobre isso.
+- **Não-realtime entre clientes**: reactive rod só localmente. Cross-machine syncs via `cookbook_projects` state JSONB (Slice 6.1) e `cookbook_generations` rows (Slice 6.2). Reactive é puramente UX local.
+
+### 7. Cross-references
+
+- ADR-0019 (engine serial topo) — ADR-0036 estende com `mode` flag, não substitui.
+- ADR-0030 (engine fan-out) — ADR-0036 funciona ortogonal a fan-out (reactive nodes podem ser fan-out sources também).
+- ADR-0028 (size schema) — body wrapper aplica `flex-1 min-h-0` quando há `maxHeight`, garantindo overflow funcionar.
+- Slice 5.8 (`record.history`) — reactive runs também adicionam history entries quando emit `done`. Cross-session history persiste via `cookbook_generations` (ADR-0035).
+

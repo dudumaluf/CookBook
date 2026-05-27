@@ -27,6 +27,7 @@ import {
   startAutoSave,
 } from "@/lib/sync/project-sync";
 import { startAutoPersistGenerations } from "@/lib/sync/generation-sync";
+import { startReactiveRunner } from "@/lib/engine/reactive-runner";
 
 /**
  * AppShell — refactor v3 (ADR-0013) + v4 (ADR-0015 polish)
@@ -78,6 +79,7 @@ export function AppShell() {
     if (!user) return;
     let unsubscribeAutoSave: (() => void) | null = null;
     let unsubscribeGenerations: (() => void) | null = null;
+    let unsubscribeReactive: (() => void) | null = null;
     let cancelled = false;
     void (async () => {
       setSyncStatus("loading");
@@ -102,6 +104,11 @@ export function AppShell() {
         unsubscribeGenerations = startAutoPersistGenerations({
           ownerId: user.id,
         });
+        // Slice 6.3 — reactive runner subscribes to workflow-store and
+        // dispatches debounced `runWorkflow({ mode: "reactive-only" })` so
+        // Array / List / Number / Iterators update live as the user
+        // tweaks config / edges, without re-running the expensive nodes.
+        unsubscribeReactive = startReactiveRunner();
         setSyncStatus("ready");
       } catch (err) {
         if (cancelled) return;
@@ -114,6 +121,7 @@ export function AppShell() {
       cancelled = true;
       unsubscribeAutoSave?.();
       unsubscribeGenerations?.();
+      unsubscribeReactive?.();
     };
   }, [user]);
 
