@@ -86,10 +86,22 @@ export function useSession(): UseSessionResult {
       }
       const client = getSupabaseClient();
       // `emailRedirectTo` lands the user back on the app after they click the
-      // link. Defaults to `window.location.origin` so dev (localhost) and
-      // production (artificial-cookbook.vercel.app) both resolve correctly.
+      // link. Resolution order:
+      //   1. `NEXT_PUBLIC_SITE_URL` env var — pin to production from any
+      //      surface (Vercel preview, dev server, embedded webview).
+      //   2. `window.location.origin` — works in dev (localhost) + naive
+      //      production deploys.
+      //
+      // Whichever resolves, Supabase only honors it if the value is in the
+      // project's `uri_allow_list` (see supabase/AUTH-CONFIG.md). Otherwise
+      // it falls back to the project's Site URL setting.
+      const envSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
       const emailRedirectTo =
-        typeof window !== "undefined" ? window.location.origin : undefined;
+        envSiteUrl && envSiteUrl.length > 0
+          ? envSiteUrl
+          : typeof window !== "undefined"
+            ? window.location.origin
+            : undefined;
       const { error } = await client.auth.signInWithOtp({
         email: trimmed,
         options: emailRedirectTo ? { emailRedirectTo } : undefined,
