@@ -16,6 +16,17 @@ import { useAssetStore } from "@/lib/stores/asset-store";
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const ACCEPTED_IMAGE_MIME = /^image\//;
 
+/**
+ * Media (video/audio) import caps (Slice C). Larger than images because a
+ * song or a driving clip is naturally heavier, but still under common
+ * bucket limits. Seedance's own per-file caps (30 MB image / 50 MB video /
+ * 15 MB audio total) are enforced separately at generation time.
+ */
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+export const MAX_AUDIO_BYTES = 30 * 1024 * 1024;
+export const ACCEPTED_VIDEO_MIME = /^video\//;
+export const ACCEPTED_AUDIO_MIME = /^audio\//;
+
 export interface ImportResult {
   /** Number of assets successfully created. */
   created: number;
@@ -43,6 +54,47 @@ export async function importImageFiles(files: File[]): Promise<ImportResult> {
     }
     try {
       const id = await createImageAssetFromFile(file);
+      ids.push(id);
+    } catch (err) {
+      errors.push(
+        `${file.name}: ${err instanceof Error ? err.message : "failed to import"}`,
+      );
+    }
+  }
+
+  return { created: ids.length, errors, ids };
+}
+
+/**
+ * Import video / audio files (Slice C). Mirrors `importImageFiles`: MIME +
+ * size policy in one place, returns the same result shape. `kind` picks the
+ * accepted MIME + size cap + the asset-store creator.
+ */
+export async function importMediaFiles(
+  files: File[],
+  kind: "video" | "audio",
+): Promise<ImportResult> {
+  const createMediaAssetFromFile =
+    useAssetStore.getState().createMediaAssetFromFile;
+  const acceptMime =
+    kind === "video" ? ACCEPTED_VIDEO_MIME : ACCEPTED_AUDIO_MIME;
+  const maxBytes = kind === "video" ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES;
+  const maxLabel = kind === "video" ? "100 MB" : "30 MB";
+
+  const errors: string[] = [];
+  const ids: string[] = [];
+
+  for (const file of files) {
+    if (!acceptMime.test(file.type)) {
+      errors.push(`${file.name}: not ${kind === "video" ? "a video" : "an audio file"}`);
+      continue;
+    }
+    if (file.size > maxBytes) {
+      errors.push(`${file.name}: too large (max ${maxLabel})`);
+      continue;
+    }
+    try {
+      const id = await createMediaAssetFromFile(file, kind);
       ids.push(id);
     } catch (err) {
       errors.push(

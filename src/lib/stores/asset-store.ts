@@ -4,14 +4,17 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   deleteAssetObject,
   uploadImageAsset,
+  uploadMediaAsset,
 } from "@/lib/library/upload-asset";
 import type {
   Asset,
   AssetGroupAsset,
   AssetKind,
   AssetScope,
+  AudioAsset,
   ImageAsset,
   SoulIdAsset,
+  VideoAsset,
 } from "@/types/asset";
 
 /**
@@ -55,6 +58,17 @@ export interface AssetState {
       tags?: string[];
       scope?: AssetScope;
     },
+  ) => Promise<string>;
+
+  /**
+   * Upload a video/audio File from disk → Supabase Storage → create a
+   * `VideoAsset` / `AudioAsset` record (Slice C). `durationMs` is optional;
+   * the consuming node probes lazily when it needs it. Returns the new id.
+   */
+  createMediaAssetFromFile: (
+    file: File,
+    kind: "video" | "audio",
+    params?: { name?: string; tags?: string[]; scope?: AssetScope },
   ) => Promise<string>;
 
   /** Create an Image asset from a remote URL (the "Paste URL" escape hatch). */
@@ -277,6 +291,36 @@ export const useAssetStore = create<AssetState>()(
           createdAt: now,
           updatedAt: now,
         };
+        set((state) => ({ assets: [...state.assets, asset] }));
+        return id;
+      },
+
+      createMediaAssetFromFile: async (file, kind, params) => {
+        const folder = kind === "video" ? "videos" : "audio";
+        const uploaded = await uploadMediaAsset(file, folder);
+        const id = makeAssetId();
+        const now = Date.now();
+        const source = {
+          type: "remote" as const,
+          bucket: uploaded.bucket,
+          key: uploaded.key,
+          url: uploaded.url,
+          mime: uploaded.mime,
+          sizeBytes: uploaded.sizeBytes,
+        };
+        const common = {
+          id,
+          name: params?.name?.trim() || deriveNameFromFile(file),
+          tags: params?.tags ?? [],
+          scope: params?.scope ?? ("project" as AssetScope),
+          source,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const asset: VideoAsset | AudioAsset =
+          kind === "video"
+            ? { ...common, kind: "video" }
+            : { ...common, kind: "audio" };
         set((state) => ({ assets: [...state.assets, asset] }));
         return id;
       },

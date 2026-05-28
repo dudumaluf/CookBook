@@ -666,9 +666,11 @@ function CanvasFlowInner() {
               });
             } else if (out.type === "text" && typeof out.value === "string") {
               ws.addNode("text", offset, { text: out.value });
+            } else if (out.type === "video" && out.value && out.value.url) {
+              ws.addNode("video", offset, { url: out.value.url });
+            } else if (out.type === "audio" && out.value && out.value.url) {
+              ws.addNode("audio", offset, { url: out.value.url });
             }
-            // video: M0c. Drop silently for now; the MIME guard already
-            // prevents non-supported types from arriving here in M0a.
           });
         }
         return;

@@ -1,4 +1,5 @@
 import { arrayNodeSchema } from "@/components/nodes/node-array";
+import { audioNodeSchema } from "@/components/nodes/node-audio";
 import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { exportNodeSchema } from "@/components/nodes/node-export";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
@@ -9,6 +10,7 @@ import { listNodeSchema } from "@/components/nodes/node-list";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { numberNodeSchema } from "@/components/nodes/node-number";
 import { passthroughNodeSchema } from "@/components/nodes/node-passthrough";
+import { videoNodeSchema } from "@/components/nodes/node-video";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
@@ -35,6 +37,8 @@ export function registerAllNodes(): void {
   if (registered) return;
   nodeRegistry.register(textNodeSchema);
   nodeRegistry.register(imageNodeSchema);
+  nodeRegistry.register(videoNodeSchema);
+  nodeRegistry.register(audioNodeSchema);
   nodeRegistry.register(numberNodeSchema);
   nodeRegistry.register(llmTextNodeSchema);
   nodeRegistry.register(soulIdNodeSchema);
