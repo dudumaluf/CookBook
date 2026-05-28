@@ -601,10 +601,14 @@ function GenerationCard({
           serializeGenerationDrag({ items }),
         );
         e.dataTransfer.effectAllowed = "copy";
-        // Tell the parent to fade the overlay so the canvas behind
-        // becomes a valid drop target. The drawer DOM stays mounted —
-        // unmounting the drag source mid-gesture aborts the drag.
-        onDragStartCommit();
+        // Defer the parent's pointer-events-none flip to the next frame.
+        // Mutating the source's ancestor (pointer-events / opacity / DOM
+        // structure) inside the same tick as `dragstart` makes some
+        // browsers cancel the drag before it fully commits — that's
+        // why "drag started but never moved" was happening. By the time
+        // rAF fires, the OS-level drag is firmly in flight and CSS
+        // changes are safe.
+        requestAnimationFrame(() => onDragStartCommit());
       }}
       onDragEnd={(e) => {
         // dropEffect tells us whether a drop target accepted the drag.
