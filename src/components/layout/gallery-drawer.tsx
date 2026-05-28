@@ -258,15 +258,28 @@ export function GalleryDrawer() {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex flex-col items-stretch">
-        {/* Backdrop. While a card is being dragged we ONLY disable
-         *  pointer-events on this top region (the area above the
-         *  drawer section). That way the React Flow canvas underneath
-         *  catches the drag's hover + drop. We deliberately do NOT
-         *  fade the drawer or apply pointer-events-none to the outer
-         *  wrapper — both would cascade into the drag source's
-         *  ancestor chain and wreck the drag preview / abort the
-         *  gesture in some browsers. */}
+      <div
+        // Why both this wrapper AND the backdrop need pointer-events-none
+        // during drag:
+        //
+        // The drawer is `fixed inset-0 z-50`, so its OUTER wrapper covers
+        // the whole viewport — it sits above the React Flow canvas in the
+        // stacking order. CSS hit-testing walks front-to-back; with only
+        // the backdrop set to pointer-events-none, the next hit-target is
+        // the wrapper itself (still pointer-events-auto by default), which
+        // has no drag handler and silently rejects the drop. The card
+        // "snaps back" because the drop never reached the canvas.
+        //
+        // Setting pointer-events-none on the wrapper too makes it
+        // transparent to events, so the canvas underneath catches them.
+        // Crucially, pointer-events is NOT a CSS inherited property —
+        // children with `auto` (default) keep their own interactivity
+        // independently. Section + cards stay fully interactive, drag
+        // source survives, drop reaches the canvas above the drawer.
+        className={`fixed inset-0 z-50 flex flex-col items-stretch ${
+          isDragging ? "pointer-events-none" : ""
+        }`}
+      >
         <button
           type="button"
           aria-label="Close gallery"
