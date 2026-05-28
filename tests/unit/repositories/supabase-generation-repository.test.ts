@@ -224,7 +224,8 @@ describe("SupabaseGenerationRepository", () => {
     await repo.list({ projectId: "p1", outputType: "image" });
     expect(capturedIn).not.toBeNull();
     expect(capturedIn!.col).toBe("node_kind");
-    expect(capturedIn!.vals).toEqual(["higgsfield-image-gen"]);
+    expect(capturedIn!.vals).toContain("higgsfield-image-gen");
+    expect(capturedIn!.vals).toContain("fal-image");
   });
 
   it("list filter outputType=video queries node_kind in (seedance-video) (Slice B)", async () => {
@@ -252,6 +253,6 @@ describe("SupabaseGenerationRepository", () => {
     await repo.list({ projectId: "p1", outputType: "video" });
     expect(capturedIn).not.toBeNull();
     expect(capturedIn!.col).toBe("node_kind");
-    expect(capturedIn!.vals).toEqual(["seedance-video"]);
+    expect(capturedIn!.vals).toContain("seedance-video");
   });
 });

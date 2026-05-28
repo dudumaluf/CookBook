@@ -70,3 +70,44 @@ export interface FalErrorResponse {
   error: string;
   code?: FalErrorCode;
 }
+
+/* ────────────────────────── Fal image generation ──────────────────────── */
+
+/**
+ * The image models we expose (Slice F). One node, a model picker. Each maps
+ * to a text-to-image endpoint + an edit endpoint (used when reference images
+ * are wired). Endpoint ids are best-effort from the Fal catalog and verified
+ * during the test phase. Default: nano-banana-2 (the user's daily driver).
+ */
+export const FAL_IMAGE_MODELS = [
+  "nano-banana-2",
+  "flux-2-pro",
+  "seedream-v4.5",
+] as const;
+
+export type FalImageModel = (typeof FAL_IMAGE_MODELS)[number];
+
+export const FAL_IMAGE_MODEL_LABELS: Record<FalImageModel, string> = {
+  "nano-banana-2": "Nano Banana 2 (Google)",
+  "flux-2-pro": "Flux 2 [pro]",
+  "seedream-v4.5": "Seedream 4.5 (ByteDance)",
+};
+
+export const falImageRequestSchema = z
+  .object({
+    model: z.enum(FAL_IMAGE_MODELS),
+    prompt: z.string().min(1),
+    /** When present, switches to the model's edit endpoint. */
+    imageUrls: z.array(z.string().url()).max(8).optional(),
+    numImages: z.number().int().min(1).max(4).optional(),
+    seed: z.number().int().optional(),
+  })
+  .strict();
+
+export type FalImageRequest = z.infer<typeof falImageRequestSchema>;
+
+export interface FalImageSuccessResponse {
+  imageUrls: string[];
+  seed?: number;
+  model: string;
+}

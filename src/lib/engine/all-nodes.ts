@@ -3,6 +3,7 @@ import { audioNodeSchema } from "@/components/nodes/node-audio";
 import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { continuityBuilderNodeSchema } from "@/components/nodes/node-continuity-builder";
 import { exportNodeSchema } from "@/components/nodes/node-export";
+import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
@@ -45,6 +46,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(llmTextNodeSchema);
   nodeRegistry.register(soulIdNodeSchema);
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
+  nodeRegistry.register(falImageNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);

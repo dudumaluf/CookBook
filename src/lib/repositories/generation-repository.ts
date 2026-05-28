@@ -56,9 +56,9 @@ export type GenerationOutputType = "image" | "text" | "video";
 
 /** Maps a Gallery output type to the kinds whose outputs match it. */
 export const OUTPUT_TYPE_NODE_KINDS: Record<GenerationOutputType, string[]> = {
-  image: ["higgsfield-image-gen"],
+  image: ["higgsfield-image-gen", "fal-image"], // + Slice F Fal models.
   text: ["llm-text"],
-  video: ["seedance-video"], // Slice B — Fal Seedance 2.0.
+  video: ["seedance-video", "continuity-builder", "video-concat"],
 };
 
 export interface GenerationFilter {
