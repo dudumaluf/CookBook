@@ -10,7 +10,7 @@ The user wants to generate **a lot of personal photos and videos of themselves**
 - **Tone**: premium, editorial, calm. The interface should feel like a high-end design tool, not a programmer's IDE.
 - **Future**: could be opened to a small circle of friends/collaborators, but never a mass-market product. Personal-grade only.
 
-## What it _is_
+## What it *is*
 
 - A **node-graph platform** ("Cookbook") where small, composable "lego" nodes group into reusable "**recipes**".
 - A canvas where the user can:
@@ -20,7 +20,7 @@ The user wants to generate **a lot of personal photos and videos of themselves**
 - An **LLM assistant** that orchestrates: reads references via vision, writes prompts, builds workflows from natural language, runs them through the engine, surfaces results.
 - **Local-first MVP**, architected so it scales to the cloud (Supabase + Vercel + GitHub auth) without major refactors.
 
-## What it is _not_
+## What it is *not*
 
 - Not a generic node editor (no audio synthesis, no shader graphs, no scripting nodes in v1).
 - Not a marketing automation tool (no scheduling, no social posting).

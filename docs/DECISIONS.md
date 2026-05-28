@@ -2116,3 +2116,56 @@ The `textSearch` query uses Postgres's `websearch_to_tsquery` parser via the Sup
 - ADR-0034 (auth + projects) — owner_id RLS is the security boundary cross-project search relies on.
 - ADR-0042 (reasoner) — RAG tools dispatch through the same loop.
 - M1 candidate: embedding population job using a chosen provider (likely OpenAI text-embedding-3-small via direct API). 
+
+## ADR-0046 — Media layer foundation: audio/video output+asset types + mediabunny client-side media ops (M1 Slice A)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice A (multimodal media arc).
+- **Context**: the two target use cases (continuous performance video; AI modeling agency) need video + audio to flow through the graph, plus client-side media operations (frame extraction, audio slicing, concat, normalize). `StandardizedOutput` already had a `video` variant (reserved since Slice 4) but no `audio`; the Asset union had no video/audio kinds; uploads + the generation-sync rehost were image-only; and there was no media-processing toolkit. ADR-0046 lays that foundation.
+
+### 1. Decisão: mediabunny for client-side media ops (no server ffmpeg)
+
+`mediabunny` (v1.45.4) is a zero-dependency, pure-TypeScript WebCodecs toolkit — "FFmpeg for the web" — that reads, writes, and converts media entirely in the browser (frame extraction via `VideoSampleSink`, trim/transcode/resize via the `Conversion` API, concat/mux via `Output` + sources). We adopt it as the media layer instead of standing up a server-side ffmpeg pipeline.
+
+Why:
+- Zero new infra. No ffmpeg binary, no media worker service, no extra deploy surface. The browser does the work.
+- Hardware-accelerated via WebCodecs.
+- Tree-shakable, zero deps, TypeScript-native.
+- Fits the existing client-first architecture (uploads already happen browser-side).
+
+Trade-off: WebCodecs is browser-only, so these ops are untestable in happy-dom (unit env). We mitigate by splitting PURE logic (windowing math, constraint validation) — fully unit-tested — from the WebCodecs-backed execution, which is smoke-tested in a real browser when the consuming nodes land (Slice D).
+
+### 2. Decisão: ship the PURE + testable foundation in Slice A; defer WebCodecs bodies to Slice D
+
+Slice A delivers, in `src/lib/media/`:
+- `windows.ts` — `computeMediaWindows` / `countMediaWindows`: pure windowing math that splits a track into per-call windows (Seedance's 15s cap), with optional too-short-tail folding. This drives the chunk count + timing of the whole performance pipeline; fully tested.
+- `constraints.ts` — Seedance limits (duration, ref counts, sizes, the audio-needs-a-visual rule) as pure validators + `clampSeedanceDuration`. Catches bad requests client-side before spend; fully tested.
+- `probe.ts` — `probeMedia` via mediabunny demuxing (duration, dimensions, track presence). No WebCodecs decode; the cheapest, safest mediabunny op.
+- `index.ts` — re-exports + declares the contract for the WebCodecs-heavy ops (`extractFrame`, `sliceAudio`, `concatVideos`, `normalizeMedia`) that Slice D implements alongside the nodes that consume them.
+
+This keeps Slice A green + tight (no untestable speculative code) while laying the real foundation.
+
+### 3. Decisão: additive audio/video types, mirroring the image pattern
+
+- `DataType` gains `"audio"`; `StandardizedOutput` gains `{ type: "audio"; value: AudioRef }`. `video` was already present. `extractInputByType` / `extractInputArrayByType` gain `audio` overloads.
+- `Asset` union gains `VideoAsset` + `AudioAsset` with a shared `MediaAssetSource` (`remote` vs `url`, same split as images per ADR-0018b). `asset-to-node` maps both to (future) `video` / `audio` input nodes — registered now to keep the `AssetKind` union exhaustive, unreachable until those nodes land.
+- Handle-dot gains an `audio` datatype color (teal, distinct from video's purple).
+
+All additive — no existing node, asset, or migration changes shape.
+
+### 4. Decisão: generalize uploads + rehost beyond images
+
+- `upload-asset.ts` gains `buildMediaObjectKey(folder, ...)` (folders `images` / `videos` / `audio`), `uploadMediaAsset`, `uploadMediaFromUrl`, and the convenience `uploadVideoFromUrl` / `uploadAudioFromUrl`. Same Supabase bucket + per-user RLS key scheme as images.
+- `generation-sync` rehost generalized: `rehostExternalImagesIfNeeded` → `rehostExternalMediaIfNeeded`, now rehosting external image / video / audio CDN URLs to our bucket (Fal/Seedance results become durable + user-owned). `isExternalImageUrl` → `isExternalUrl`.
+
+### 5. Trade-offs aceitos
+
+- **WebCodecs untestable in unit env** — pure logic is tested; execution is browser-smoked in Slice D.
+- **video/audio asset spawn maps point at nodes that don't exist yet** — kept exhaustive for the type system; unreachable until Slices B/C/D.
+- **mediabunny adds a dependency** — justified: it replaces an entire server media pipeline with a client lib.
+
+### 6. Cross-references
+
+- ADR-0018b (image asset source `remote` vs `url`) — `MediaAssetSource` reuses the split.
+- ADR-0035 (durable generations) — rehost generalization keeps video/audio generations durable like images.
+- The arc plan (`.cursor/plans/`) — Slice A is the foundation; Slices B-G build on it.

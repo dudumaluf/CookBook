@@ -2,7 +2,11 @@
 
 import { nodeRegistry } from "@/lib/engine/registry";
 import { getGenerationRepository } from "@/lib/repositories/supabase-generation-repository";
-import { uploadImageFromUrl } from "@/lib/library/upload-asset";
+import {
+  uploadAudioFromUrl,
+  uploadImageFromUrl,
+  uploadVideoFromUrl,
+} from "@/lib/library/upload-asset";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -67,7 +71,7 @@ const GALLERY_CATEGORIES: ReadonlySet<NodeCategory> = new Set([
 
 const SUPABASE_BUCKET_HOST_HINT = "supabase.";
 
-function isExternalImageUrl(url: string): boolean {
+function isExternalUrl(url: string): boolean {
   // Heuristic: anything not pointing at our Supabase project's bucket.
   // We don't have the exact host string at build-time without an env var,
   // but Supabase Storage URLs all carry `supabase.` in the hostname. CDN
@@ -77,25 +81,18 @@ function isExternalImageUrl(url: string): boolean {
   return !url.includes(SUPABASE_BUCKET_HOST_HINT);
 }
 
-async function rehostImageRef(
-  url: string,
-  filenameHint: string,
-): Promise<string> {
-  const uploaded = await uploadImageFromUrl(url, filenameHint);
-  return uploaded.url;
-}
-
 interface RehostedOutputResult {
   output: StandardizedOutput | StandardizedOutput[];
   rehosted: boolean;
 }
 
 /**
- * Walk a node's output (single or array), rehosting any image URL that
- * isn't already on our bucket. Returns the new output + a flag indicating
- * whether at least one URL was swapped.
+ * Walk a node's output (single or array), rehosting any image / video /
+ * audio URL that isn't already on our bucket (Slice A generalized this from
+ * image-only). Returns the new output + a flag indicating whether at least
+ * one URL was swapped.
  */
-async function rehostExternalImagesIfNeeded(
+async function rehostExternalMediaIfNeeded(
   output: StandardizedOutput | StandardizedOutput[],
   nodeKind: string,
 ): Promise<RehostedOutputResult> {
@@ -105,23 +102,32 @@ async function rehostExternalImagesIfNeeded(
   const remapped: StandardizedOutput[] = [];
   for (let i = 0; i < list.length; i++) {
     const item = list[i]!;
-    if (item.type !== "image" || !item.value.url) {
-      remapped.push(item);
-      continue;
-    }
-    if (!isExternalImageUrl(item.value.url)) {
+    const isMedia =
+      item.type === "image" || item.type === "video" || item.type === "audio";
+    if (!isMedia || !item.value.url || !isExternalUrl(item.value.url)) {
       remapped.push(item);
       continue;
     }
     try {
-      const newUrl = await rehostImageRef(
-        item.value.url,
-        `${nodeKind}-${i + 1}.png`,
-      );
-      remapped.push({
-        type: "image",
-        value: { ...item.value, url: newUrl },
-      });
+      if (item.type === "image") {
+        const up = await uploadImageFromUrl(
+          item.value.url,
+          `${nodeKind}-${i + 1}.png`,
+        );
+        remapped.push({ type: "image", value: { ...item.value, url: up.url } });
+      } else if (item.type === "video") {
+        const up = await uploadVideoFromUrl(
+          item.value.url,
+          `${nodeKind}-${i + 1}.mp4`,
+        );
+        remapped.push({ type: "video", value: { ...item.value, url: up.url } });
+      } else {
+        const up = await uploadAudioFromUrl(
+          item.value.url,
+          `${nodeKind}-${i + 1}.mp3`,
+        );
+        remapped.push({ type: "audio", value: { ...item.value, url: up.url } });
+      }
       didAny = true;
     } catch (err) {
       // Rehost failed — keep the original CDN URL. UI continues working
@@ -200,7 +206,7 @@ async function persistRecord(
 
   // Step 1: rehost external image URLs to our bucket (best-effort).
   const { output: rehostedOutput, rehosted } =
-    await rehostExternalImagesIfNeeded(record.output, node.kind);
+    await rehostExternalMediaIfNeeded(record.output, node.kind);
 
   // Step 2: patch the live record so UI starts using canonical URLs.
   if (rehosted) {
@@ -275,7 +281,7 @@ export function startAutoPersistGenerations({
 /* ──────────────────── Tests-only helpers ──────────────────── */
 
 export const _internals = {
-  isExternalImageUrl,
-  rehostExternalImagesIfNeeded,
+  isExternalUrl,
+  rehostExternalMediaIfNeeded,
   extractPromptForNode,
 };

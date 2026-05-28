@@ -14,6 +14,7 @@ const DATATYPE_VAR: Record<DataType, string> = {
   text: "var(--datatype-text)",
   image: "var(--datatype-image)",
   video: "var(--datatype-video)",
+  audio: "var(--datatype-audio)",
   number: "var(--datatype-number)",
   "soul-id": "var(--datatype-soul-id)",
   any: "var(--datatype-any)",

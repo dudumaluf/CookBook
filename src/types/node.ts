@@ -16,13 +16,19 @@ import type { ComponentType } from "react";
 
 /**
  * The set of datatypes that can flow through edges. `any` accepts everything;
- * `image`/`video` carry asset refs (URL + minimal metadata); `soul-id`
+ * `image`/`video`/`audio` carry asset refs (URL + minimal metadata); `soul-id`
  * carries a Higgsfield Soul ID character reference (Slice 4 / ADR-0029).
+ *
+ * `audio` lands with the multimodal media arc (Slice A) — needed so a song
+ * can flow through the graph (sliced into windows, fed to Seedance for
+ * lip-sync). `video` was reserved since Slice 4 and is now activated by the
+ * same arc.
  */
 export type DataType =
   | "text"
   | "image"
   | "video"
+  | "audio"
   | "number"
   | "soul-id"
   | "any";
@@ -39,6 +45,18 @@ export interface VideoRef {
   durationMs?: number;
   width?: number;
   height?: number;
+  mime?: string;
+}
+
+/**
+ * Audio reference (Slice A — multimodal media arc). A URL to an audio file
+ * (song, narration, SFX) plus minimal metadata. `durationMs` is what the
+ * Audio Slice node + the Continuity Builder rely on to window a track into
+ * 15s chunks aligned to Seedance's per-call limit.
+ */
+export interface AudioRef {
+  url: string;
+  durationMs?: number;
   mime?: string;
 }
 
@@ -68,6 +86,7 @@ export type StandardizedOutput =
   | { type: "text"; value: string }
   | { type: "image"; value: ImageRef }
   | { type: "video"; value: VideoRef }
+  | { type: "audio"; value: AudioRef }
   | { type: "number"; value: number }
   | { type: "soul-id"; value: SoulIdRef };
 

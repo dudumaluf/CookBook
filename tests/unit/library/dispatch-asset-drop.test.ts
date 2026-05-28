@@ -209,7 +209,7 @@ describe("dispatchAssetDrop (Slice 5.6d, ADR-0032)", () => {
     const actions = dispatchAssetDrop({
       // @ts-expect-error — exercising the runtime branch for a kind
       // that doesn't exist in the union.
-      payload: { assetIds: ["x"], kind: "video" },
+      payload: { assetIds: ["x"], kind: "hologram" },
     });
     expect(actions[0]?.type).toBe("noop");
   });

@@ -79,6 +79,47 @@ export interface ImageAsset extends AssetCommon {
 }
 
 /**
+ * Where a media (video / audio) file's bytes live. Same `remote` vs `url`
+ * split as images (ADR-0018b) — `remote` is uploaded to our Supabase bucket
+ * and we own the object; `url` is an externally hosted file we trust (a Fal
+ * CDN result we haven't rehosted yet, a paste-a-URL escape hatch).
+ */
+export type MediaAssetSource =
+  | {
+      type: "remote";
+      bucket: string;
+      key: string;
+      url: string;
+      mime: string;
+      sizeBytes: number;
+    }
+  | { type: "url"; url: string };
+
+/**
+ * Video asset (Slice A — multimodal media arc). Generated clips (Seedance),
+ * uploaded driving videos, or stitched results land here so they survive as
+ * durable, user-owned library items (Fal CDN URLs are not user-owned).
+ */
+export interface VideoAsset extends AssetCommon {
+  kind: "video";
+  source: MediaAssetSource;
+  durationMs?: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Audio asset (Slice A — multimodal media arc). Songs the user uploads, TTS
+ * narration, or sliced windows. The Continuity Builder feeds these to
+ * Seedance for lip-sync.
+ */
+export interface AudioAsset extends AssetCommon {
+  kind: "audio";
+  source: MediaAssetSource;
+  durationMs?: number;
+}
+
+/**
  * Higgsfield Soul ID character reference (Slice 4, ADR-0029).
  *
  * `customReferenceId` is the UUID Higgsfield assigns each trained character
@@ -149,7 +190,12 @@ export interface AssetGroupAsset extends AssetCommon {
  * The full Asset union. New kinds get added here and to
  * `lib/library/asset-to-node.ts`.
  */
-export type Asset = ImageAsset | SoulIdAsset | AssetGroupAsset;
+export type Asset =
+  | ImageAsset
+  | SoulIdAsset
+  | AssetGroupAsset
+  | VideoAsset
+  | AudioAsset;
 
 export type AssetKind = Asset["kind"];
 

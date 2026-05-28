@@ -80,7 +80,20 @@ function randomKey(): string {
  * folder.
  */
 export function buildObjectKey(filename: string, userId?: string): string {
-  const base = `images/${randomKey()}/${sanitizeFilename(filename)}`;
+  return buildMediaObjectKey("images", filename, userId);
+}
+
+/**
+ * Generalized object-key builder (Slice A). Same shape as `buildObjectKey`
+ * but with an explicit top-level folder so video / audio land in their own
+ * namespaces (`videos/...`, `audio/...`) instead of `images/...`.
+ */
+export function buildMediaObjectKey(
+  folder: "images" | "videos" | "audio",
+  filename: string,
+  userId?: string,
+): string {
+  const base = `${folder}/${randomKey()}/${sanitizeFilename(filename)}`;
   if (!userId) return base;
   return `users/${userId}/${base}`;
 }
@@ -171,6 +184,108 @@ export async function uploadImageFromUrl(
   // Wrap in a File so we can reuse `uploadImageAsset`'s exact upload shape.
   const file = new File([blob], ensureExt, { type: mime });
   return uploadImageAsset(file);
+}
+
+/**
+ * Descriptor for an uploaded video / audio file (Slice A). Same `remote`
+ * shape as images minus pixel dimensions (media carries duration instead,
+ * which the consuming node probes separately via `probeMedia`).
+ */
+export interface UploadedMediaDescriptor {
+  bucket: string;
+  key: string;
+  url: string;
+  mime: string;
+  sizeBytes: number;
+}
+
+const MEDIA_EXT_FALLBACK: Record<"videos" | "audio", string> = {
+  videos: "mp4",
+  audio: "mp3",
+};
+
+/**
+ * Upload a media File (video / audio) to the assets bucket. Mirrors
+ * `uploadImageAsset` but writes under the `videos/` or `audio/` folder and
+ * skips image-dimension extraction.
+ */
+export async function uploadMediaAsset(
+  file: File,
+  folder: "videos" | "audio",
+): Promise<UploadedMediaDescriptor> {
+  const supabase = getSupabaseClient();
+  const bucket = getAssetsBucket();
+  const { data: userData } = await supabase.auth.getUser();
+  const key = buildMediaObjectKey(folder, file.name, userData.user?.id);
+
+  const { error } = await supabase.storage.from(bucket).upload(key, file, {
+    contentType: file.type || "application/octet-stream",
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error) {
+    throw new Error(error.message || "Supabase upload failed");
+  }
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(key);
+  if (!data.publicUrl) {
+    throw new Error("Supabase returned no public URL for the upload");
+  }
+
+  return {
+    bucket,
+    key,
+    url: data.publicUrl,
+    mime: file.type || "application/octet-stream",
+    sizeBytes: file.size,
+  };
+}
+
+/**
+ * Re-host a remote media URL (video / audio) into our bucket (Slice A).
+ * Used to make Fal/Seedance CDN results durable + user-owned, mirroring
+ * `uploadImageFromUrl`. `folder` picks the namespace + extension fallback.
+ */
+export async function uploadMediaFromUrl(
+  url: string,
+  folder: "videos" | "audio",
+  filenameHint?: string,
+): Promise<UploadedMediaDescriptor> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const fallbackExt = MEDIA_EXT_FALLBACK[folder];
+  const mime =
+    blob.type ||
+    res.headers.get("content-type") ||
+    (folder === "videos" ? "video/mp4" : "audio/mpeg");
+
+  const fallbackName =
+    filenameHint ||
+    url.split("?")[0]!.split("/").pop() ||
+    `generated.${fallbackExt}`;
+  const hasExt = /\.[a-z0-9]{2,4}$/i.test(fallbackName);
+  const name = hasExt ? fallbackName : `${fallbackName}.${fallbackExt}`;
+
+  const file = new File([blob], name, { type: mime });
+  return uploadMediaAsset(file, folder);
+}
+
+/** Convenience wrappers for the two media folders. */
+export function uploadVideoFromUrl(
+  url: string,
+  filenameHint?: string,
+): Promise<UploadedMediaDescriptor> {
+  return uploadMediaFromUrl(url, "videos", filenameHint);
+}
+
+export function uploadAudioFromUrl(
+  url: string,
+  filenameHint?: string,
+): Promise<UploadedMediaDescriptor> {
+  return uploadMediaFromUrl(url, "audio", filenameHint);
 }
 
 /**

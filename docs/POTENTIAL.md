@@ -126,3 +126,16 @@ This doc is the input to a **concrete node + recipe plan**. That plan will:
 5. **Crystallize recipes** — the combinations that work become saved recipes we use for real, and seeds for the simplified-UI layer.
 
 > The planning conversation starts from real desired outputs, works backward to nodes. We don't add nodes speculatively — every node traces to a use we actually want.
+
+## 7. Idea bank (long-term, not committed)
+
+[`CATALOGO_E_IDEIAS_DE_NODES.md`](./CATALOGO_E_IDEIAS_DE_NODES.md) is a large catalog exported from a sibling nodal app the user built, plus expansion ideas across nine areas (data sources, transform/logic, AI generators, audio/voice, advanced editor, workflow control, distribution, quality guardrails, meta-nodes). It is inspiration to pull from as Cookbook grows — not a roadmap commitment.
+
+It independently validates several decisions in the active multimodal media arc:
+- "Audio is a giant gap" → matches the arc's audio types + nodes.
+- "For Each Loop is CRITICAL" (they improvised with queue + Number) → matches the arc's sequential continuity orchestrator.
+- Veo `firstFrame/firstLastFrame` + Kling `firstFrame` → confirms frame-in/frame-out is a common cross-model pattern (the arc ships both continuity strategies).
+- "Approval Gate is a killer feature" → matches the arc's cost gate + the assistant's `ask_user`.
+- "Sub-workflow / Composable" → already shipped as composites (Slice 6.6).
+
+The current arc stays focused on the two real use cases (the singer "show" and the AI modeling agency); the catalog is the well we draw from afterward.

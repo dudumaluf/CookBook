@@ -53,6 +53,25 @@ const SPAWN: { [K in AssetKind]: SpawnFn<Extract<Asset, { kind: K }>> } = {
       selectionMode: "all",
     },
   }),
+  // Video / audio assets (Slice A — multimodal media arc). The `video` and
+  // `audio` input nodes land in Slices B/C; the spawn mapping is registered
+  // now so the AssetKind union stays exhaustive. No video/audio assets can
+  // exist yet (no creation path until those slices), so dropping one before
+  // the node exists is not reachable today.
+  video: (asset) => ({
+    kind: "video",
+    initialConfig: {
+      assetId: asset.id,
+      url: asset.source.url,
+    },
+  }),
+  audio: (asset) => ({
+    kind: "audio",
+    initialConfig: {
+      assetId: asset.id,
+      url: asset.source.url,
+    },
+  }),
 };
 
 export function assetToNode(asset: Asset): AssetToNodeResult {

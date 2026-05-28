@@ -1,4 +1,5 @@
 import type {
+  AudioRef,
   DataType,
   ImageRef,
   SoulIdRef,
@@ -41,6 +42,11 @@ export function extractInputByType(
   handleId: string,
   expected: "video",
 ): VideoRef | undefined;
+export function extractInputByType(
+  inputs: InputRecord,
+  handleId: string,
+  expected: "audio",
+): AudioRef | undefined;
 export function extractInputByType(
   inputs: InputRecord,
   handleId: string,
@@ -88,6 +94,11 @@ export function extractInputArrayByType(
   handleId: string,
   expected: "video",
 ): VideoRef[];
+export function extractInputArrayByType(
+  inputs: InputRecord,
+  handleId: string,
+  expected: "audio",
+): AudioRef[];
 export function extractInputArrayByType(
   inputs: InputRecord,
   handleId: string,
