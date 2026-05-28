@@ -14,16 +14,20 @@ This file is the **single starting point** for any new agent / chat session. If 
 
 ## Where we are right now
 
-- **Milestone**: M0a — *Soul Image Burst* recipe (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`). **CLOSED** with Slice 6 Foundations package.
-- **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Postgres + Higgsfield Cloud + Fal OpenRouter. See **ADR-0033** (production-first development) for the deployment convention.
-- **Last shipped slice**: **package M0a Slice 6 — Foundations + M0a close** (2026-05-26). Four sub-slices ship together as the M0a-closing package:
-  - **6.1** — Magic-link auth, `cookbook_projects` table, Repository pattern, sync layer (debounced auto-save 1s + bootstrap-on-login), per-user RLS scoping on the assets bucket. ADR-0034.
-  - **6.2** — `cookbook_generations` table, auto-rehost external CDN URLs to Supabase, generations sync subscription, useGenerations + useNodeHistory hooks, Gallery wired with real data + pin/search/refresh. ADR-0035.
-  - **6.3** — Engine `mode: "reactive-only"` + `reactive-runner` subscription, schema flag audit, live preview UX (Array items list, List dropdown picker), LLM Text overflow CSS fix on BaseNode. ADR-0036.
-  - **6.4** — `cookbook_recipes` table, RecipeRepository, instantiate-on-canvas helper, system "Soul Image Burst" recipe seeded, **assistant DSL** (Claude Sonnet 4.5 → JSON plan → executor), ChatSheet wired, PromptBar live. ADR-0037.
+- **Milestone**: M0a — *Soul Image Burst* recipe + **assistant agent autônomo** (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`). **CLOSED** with Slice 7 (assistant agent arc).
+- **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Postgres + pgvector + Higgsfield Cloud + Fal OpenRouter (OpenAI Chat Completions shape). See **ADR-0033** (production-first development) for the deployment convention.
+- **Last shipped slice**: **package M0a Slice 7 — assistant agent autônomo** (2026-05-28). Six sub-slices ship together as the assistant arc:
+  - **7.1** — Provider abstraction + `POST /api/llm/chat-completions` (OpenAI shape) + `messages[]` / `tools[]` / `tool_choice` / `stream` types + knowledge bus + tool registry shells. `docs/ASSISTANT.md` v1. ADR-0041.
+  - **7.2** — 8 knowledge dimensions (identity, vocabulary, node catalog, recipes, canvas, library, gallery, conversation) threaded into system prompt + `messages[]`. 5 read tools registered.
+  - **7.3** — `runReasoner` bounded loop (20 turns / $0.50 cap), 12 new tools (7 construct + 3 recipe + 3 run + 2 reasoning helpers), `<LiveTrace>` UI rendering tool calls + spinners + ✓/⚠ icons + narrations + ask_user pause. ADR-0042.
+  - **7.4** — `evaluate_result`, `compare_results`, `regenerate` (vision LLM via claude-haiku). `GenerationRepository.get` added. ADR-0043.
+  - **7.5** — `propose_node_schema` (advisory drafts of new NodeSchemas) + `detect_recipe_pattern` (DFS canvas for repeated chains). ADR-0044.
+  - **7.6** — pgvector + tsvector + `cookbook_user_preferences` table (JSONB blob). `find_similar_generations({ scope: "owner" })` for cross-project search + `read_user_preferences` + `update_user_preferences`. ADR-0045.
 
-  Tests **675 → 744** (+69). All four checks (npm test, tsc, lint, docs:check) green at every commit. Five separate commits on `main`, all deployed + smoke 200. M0a Acceptance criterion is now executable end-to-end: type a request, confirm the plan, watch images land in the Gallery.
-- **Next up**: **M0b** — production polish + multi-project + Soul ID training. Open questions: persistent chat (`cookbook_assistant_messages`), tool-loop / multi-turn agent, custom email provider, M2 sharing.
+  Tests **775 → 841** (+66). All four checks (npm test, tsc, lint, docs:check) green at every commit. Six separate commits on `main`, all deployed + smoke 200. **25 tools total** in the registry across 8 categories. The assistant has agency, judgment, capability awareness, and memory — all bounded by a per-message $0.50 cap.
+
+  Snapshot: [`docs/STATE-AFTER-M0a-slice7.md`](./docs/STATE-AFTER-M0a-slice7.md).
+- **Next up**: **practical end-to-end testing** of the agent arc (5 cenários in the snapshot doc), then **M0b** — Reference-driven editing & Soul ID training. Open questions: embedding population job (RAG semantic upgrade), token-streaming SSE, trace persistence (summary-on-completion).
 
 ## Read these first (in order; ~10 min total)
 

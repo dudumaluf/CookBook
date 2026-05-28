@@ -2,6 +2,89 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-28 — M0a Slice 7 — Assistant agent autônomo (6 sub-slices)
+
+Closes the M0a assistant arc. Six commits on `main`, each independently deployed + smoke 200. **Tests 775 → 841 (+66)**. The assistant evolves from a one-shot JSON-in-text plan generator into a real bounded-loop agent with 25 tools across 7 categories: read, construct, recipe, run, reasoning, eval, capability, RAG.
+
+### Slice 7.1 — Provider migration + foundation (ADR-0041)
+
+- **Provider abstraction layer.** `src/lib/llm/provider.ts` adopts a single `getProvider()` indirection so callers don't pin a vendor. Default: Fal's OpenAI-compatible chat completions endpoint (`openrouter/router/openai/v1/chat/completions`); fallback: Fal's simplified router (legacy). Same `FAL_KEY`, no new billing surface.
+- **New API route** `POST /api/llm/chat-completions` (`src/app/api/llm/chat-completions/route.ts`). Speaks the OpenAI Chat Completions shape — multi-turn `messages[]`, `tools[]`, `tool_choice`, `stream`. Replaces (and deletes) the legacy `/api/fal/openrouter`.
+- **Server-side wrapper** `src/lib/llm/chat-completions.ts` builds the OpenAI request body, parses choices, surfaces `tool_calls` in the response.
+- **Client wrapper unchanged externally.** `callOpenRouter()` keeps the same signature; internally points at the new route. Existing callers (LLM Text node, eval tools) continue working without touching them.
+- **Type extensions** (`src/lib/llm/types.ts`): `ChatMessage`, `ChatToolCall`, `ToolDefinition`. `LlmRequest` now accepts both legacy (`user/system/images`) and native (`messages[]`, `tools[]`) shapes via Zod refine.
+- **`docs/ASSISTANT.md` v1** — north-star doc for the agent: identity, vocabulary, knowledge dimensions, tool surface, runtime contract, slice trail.
+- **Knowledge bus + tool registry shells** — `src/lib/assistant/knowledge/identity.ts` (only) + `src/lib/assistant/tools/index.ts` (empty). 7.2 / 7.3 fill them.
+
+Tests: **774 → 775 (+1)**. New: `tests/unit/llm/chat-completions.test.ts`. Commit `a9851d3`. Deploy + smoke 200.
+
+### Slice 7.2 — Knowledge bus + multi-turn memory + read tools (ADR-0041)
+
+- **8 knowledge dimensions** plugged into the system prompt: identity (already shipped 7.1), **vocabulary** (`src/lib/assistant/knowledge/vocabulary.ts`), **node catalog** (auto-derived from `nodeRegistry.list()`), **recipe catalog** (own + system from `cookbook_recipes`), **canvas state** (live nodes / edges / selection / status), **library state** (assets grouped by kind), **gallery state** (15 recent + 10 pinned generations from `cookbook_generations`), **conversation history** (last 20 messages from `useAssistantStore`).
+- **`buildKnowledgeBundle({ ownerId, projectId, skip? })`** — single async entry point. Returns `{ system, messages }` ready for the LLM. Honors `skip` flags for cost-sensitive flows.
+- **Multi-turn memory ON.** `planFromAssistant` (legacy path) now threads `bundle.messages` (oldest → newest) before the new user message. The LLM sees prior turns; "now do X" follow-ups work.
+- **5 read tools registered**: `read_canvas`, `read_node_state(nodeId)`, `read_library({ kind?, includeUrls? })`, `read_gallery({ filters... })`, `read_recipe(recipeId)`. Tool execution dispatch ships in 7.3; 7.2 just registers + describes them in the prompt's `## TOOLS YOU CAN CALL` section.
+- **`/api/llm/chat-completions` hybrid system+messages support.** Caller can pass BOTH `system` (string) AND `messages[]` — wrapper prepends system as the first system-role message. Lets `planFromAssistant` keep them clean.
+- **Slice 6.4-era `system-prompt.ts` deleted.** Replaced by knowledge bundle.
+
+Tests: **775 → 797 (+22)**. New: `tests/unit/assistant/knowledge.test.ts` (11), `tests/unit/assistant/read-tools.test.ts` (11). Commit `d3c43a8`. Deploy + smoke 200.
+
+### Slice 7.3 — Reasoner runtime + 12 new tools + live trace UI (ADR-0042)
+
+- **`runReasoner({ userMessage, ownerId, projectId, signal, onEvent })`** in `src/lib/assistant/reasoner.ts`. Bounded tool-call loop: up to 20 turns / $0.50 cumulative cost per user submit. Each turn: build messages → POST chat completions with `tools[]` + `tool_choice: "auto"` → if `tool_calls`, dispatch each, append result → loop. Stops on final text, cost cap, turn cap, `ask_user` pause, abort signal.
+- **12 new tools** dispatched from the same registry:
+  - **Construct (7)**: `add_node`, `add_edge`, `remove_node`, `remove_edge`, `update_node_config`, `move_node`, `select_nodes`. Each Zod-validates its args against the live `nodeRegistry` / workflow store.
+  - **Recipe (3)**: `instantiate_recipe(recipeId, { position?, mode? })`, `save_selection_as_recipe({ name, ... })`, `unpack_composite(compositeNodeId)`.
+  - **Run (3)**: `run_workflow()`, `run_from(nodeId)`, `cancel_run()`.
+  - **Reasoning (2)**: `narrate({ message })` (italic chat note, no state mut), `ask_user({ question, options? })` (returns `__pause: true` sentinel; reasoner exits with `paused: true`).
+- **`ReasonerEvent` stream** — typed events the reasoner emits via `onEvent` callback: `user`, `tool_call`, `tool_result`, `narration`, `ask_user`, `assistant_text`, `error`, `cap_hit`. Caller (the prompt-bar) subscribes; ChatSheet renders progressive trace.
+- **`useAssistantStore`** extended with `liveEvents[]`, `pendingQuestion`, `appendLiveEvent`, `resetLive`, `setPendingQuestion`. Live trace lives in-memory only — only the final text persists in `cookbook_assistant_messages`.
+- **`<PromptBar>`** swapped from `planFromAssistant` to `runReasoner`. Resets `liveEvents`, subscribes to `onEvent`, persists final text + cost (or aborted/capped marker).
+- **`<ChatSheet>`** new components: `<LiveTrace>` (tool-call rows with spinner → ✓/⚠ icons + duration), `<PendingQuestionCard>`, narration / error / cap_hit treatments. Legacy `<PlanCard>` kept for old persisted messages.
+
+Tests: **797 → 812 (+15)**. New: `tests/unit/assistant/construct-tools.test.ts` (9), `tests/unit/assistant/reasoner.test.ts` (6, uses `vi.hoisted` to avoid TDZ on `all-nodes` import). Commit `3111241`. Deploy + smoke 200.
+
+### Slice 7.4 — Vision evaluation tools (ADR-0043)
+
+- **`evaluate_result({ generationId | imageUrl, criteria, model? })`** — vision LLM scores an image against criteria. Returns `{ score 0-1, strengths[], weaknesses[], reasoning, costUsd }`. Default model: `anthropic/claude-haiku-4.5` (vision-capable, fast, cheap).
+- **`compare_results({ generationIds[], criteria, model? })`** — vision LLM ranks 2-8 images. Returns `{ ranking: [{ index, rank, score, notes, generationId }], summary }`.
+- **`regenerate({ generationId, configPatch? })`** — convenience composition: looks up the source node from the generation row, optionally `update_node_config`, then `start_run_from(nodeId)`. Saves 2-3 turns per "try that again with X".
+- **`GenerationRepository.get(id)`** — new method backing the eval tools' image URL resolution.
+- **No auto-eval daemon** — the LLM owns the decision (after run_workflow it can `narrate("checking the 4 images...") → evaluate_result`).
+
+Tests: **812 → 823 (+11)**. New: `tests/unit/assistant/eval-tools.test.ts` (9). Extended: `tests/unit/repositories/supabase-generation-repository.test.ts` (+2). Commit `cf3ebc2`. Deploy + smoke 200.
+
+### Slice 7.5 — Capability gap proposals + recipe pattern detection (ADR-0044)
+
+- **`propose_node_schema({ kind, title, category, description, inputs, outputs, defaultConfig?, rationale })`** — when the user asks for a missing capability, the agent drafts a NodeSchema spec instead of refusing or improvising. Refuses to clobber existing kinds. Returns `{ proposalId: 'proposal:<kind>-<iso>', proposal }`. **Advisory only** — does NOT modify the registry. The dev (us) lands the implementation in code; the proposal is the spec.
+- **`detect_recipe_pattern({ minOccurrences? })`** — DFS the live canvas from every source node, aggregate kind sequences (length ≥ 2), surface sequences appearing ≥ `minOccurrences` (default 2). Sorted longest-first (longer = more valuable as recipe). Output feeds directly into `select_nodes` + `save_selection_as_recipe`.
+
+Tests: **823 → 829 (+6)**. New: `tests/unit/assistant/capability-tools.test.ts` (6). Commit `1bdcb3b`. Deploy + smoke 200.
+
+### Slice 7.6 — RAG foundation + cross-project search + user preferences (ADR-0045)
+
+- **Migrations applied**: `pgvector` extension enabled; `embedding vector(1536)` (nullable) added to `cookbook_generations` with HNSW index on cosine distance; `search_vector` tsvector generated column over `prompt_text + title` with GIN index — powers immediate full-text search until embeddings populate. Plus `cookbook_user_preferences (owner_id pk, preferences jsonb, updated_at)` + RLS + touch trigger.
+- **`UserPreferencesRepository`** + Supabase impl. `get`, `set`, `patch` (shallow-merge; `null` value deletes key).
+- **`GenerationRepository.findSimilar({ query, scope, projectId?, ownerId?, outputType?, limit })`** — `scope: "owner"` enables cross-project search. Uses `websearch_to_tsquery` for graceful natural-language parsing.
+- **3 new tools**:
+  - `find_similar_generations({ query, scope?, outputType?, limit? })` — full-text today, semantic when embeddings populate (no API change to flip).
+  - `read_user_preferences()` — returns `{ preferences, updatedAt }`. Recommend calling at session start.
+  - `update_user_preferences({ patch })` — shallow-merge. Use AFTER user confirms a preference / repeats it 2+ times.
+
+Tests: **829 → 841 (+12)**. New: `tests/unit/assistant/rag-tools.test.ts` (8), `tests/unit/repositories/supabase-user-preferences-repository.test.ts` (4). Commit `672056a`. Deploy + smoke 200.
+
+### Arc summary
+
+- **6 commits**, each independently deployed.
+- **Tests 775 → 841 (+66)**.
+- **5 ADRs** (0041 → 0045) ratifying the architecture.
+- **25 tools** total in the registry (5 read + 7 construct + 3 recipe + 3 run + 2 reasoning + 3 eval + 2 capability + 3 RAG).
+- **2 new repositories** (`UserPreferencesRepository`) + 4 extended methods (`GenerationRepository.get / findSimilar`, etc.).
+- **2 new Supabase migrations** applied.
+- **`docs/ASSISTANT.md` v1** introduced as the agent's north-star doc.
+
+The agent now has agency (construct/run), judgment (eval), capability awareness (proposals), and memory (RAG + preferences). All within bounded cost ($0.50 per user submit, hard cap).
+
 ## 2026-05-26 — M0a Slice 6 Foundations + M0a close (4 sub-slices)
 
 Closes M0a. Five commits on `main`, each independently deployed + smoke 200. **Tests 675 → 744 (+69)**. Four-pillar foundation lands:

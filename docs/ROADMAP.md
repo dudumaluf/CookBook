@@ -33,7 +33,7 @@ Scaffold the project, lock the design language, and prove the testing rhythm.
 
 ---
 
-## M0a — Soul Image Burst _(in progress — Slices 1 + 2 + 3 shipped)_
+## M0a — Soul Image Burst _(SHIPPED 2026-05-28 — all slices closed)_
 
 The first end-to-end recipe: pick a Soul ID + 1–5 references → get N images of "me" in the referenced contexts.
 
@@ -94,10 +94,35 @@ Broken into 6 vertical slices. Each is independently committable + testable + de
   - **Reference image — caveat**: `/soul/v2/standard` accepts `image_url` in the body but the visible influence on the output is subtle (the model leans on the prompt much more than the ref). Stronger ref-driven style transfer is a recipe-level pattern — `[Image] → [LLM Text with vision system prompt] → text → [HiggsfieldImageGen.prompt]` — that becomes a single first-class **"Image Describer"** node once "save recipe as reusable node" lands in M0d. Documented in ADR-0029 + the polish backlog.
   - 409 passing tests (+127 vs Slice 3's 290 — Higgsfield route 53, SoulID 12, library popover 7, HiggsfieldImageGen 14, ImageIterator 8, Export 8, fan-out engine 7, integration 8, plus a handful of incidental updates). See **[STATE-AFTER-M0a-slice4.md](./STATE-AFTER-M0a-slice4.md)** for the full snapshot.
   - **Still parked** for later slices: persistent cache + queue thumbnails + node-anchored Properties popover (Slice 5), assistant DSL (Slice 6), per-recipe `maxConcurrent` config (Slice 5+), per-item fan-out cache fragmentation (Slice 5+), `ArraySplit` (deferred — turned out to be a text concept; the recipe doesn't need it; revisit if the assistant DSL surfaces a need).
-- **Slice 5 — Properties popover + queue thumbnails + save/load**: node-anchored properties popover, queue with thumbnails, SQLite (Drizzle) replaces localStorage for workflow + assets (the Asset repository abstraction lands here, swapping storage without touching `asset-store`'s public API).
-- **Slice 6 — Assistant DSL + M0a close**: LLM assistant catalog auto-gen, tool calls (createWorkflow / runNodes / getCost), prompt bar wires to assistant.
+- **Slice 5 — UX polish + iterators + AssetGroups + utility nodes + run-here + per-node history** _(shipped 2026-05-22 → 2026-05-25, sub-slices 5.4 → 5.8)_
+  - **5.4 (UX papercuts)**: queue-panel scroll, image-source disambiguation, project-store sync, library-action context menus.
+  - **5.5 (Iterators)**: `ImageIterator` + `TextIterator` carry their own asset references (no upstream wiring for the common case), `+ Add` button surfaces an import flow, fan-out flows from internal store.
+  - **5.6 (AssetGroups)**: curated `AssetGroupAsset` kind, drag-asset-into-group, `ImageIterator` always points at one. Avoids re-importing the same set N times.
+  - **5.6f (Library polish)**: rename, multi-select, bulk delete, context menus everywhere — single keystroke per common operation.
+  - **5.7 (Utility nodes)**: `Number`, `Array`, `List` + `dataType: "number"`. Reactive helpers used by recipes and the assistant.
+  - **5.8 (Run-here + history)**: per-node ▶ button on non-reactive nodes (Run-here = node + ancestors), `ExecutionRecord.history` ring buffer for past outputs.
+  - 675 passing tests at end of Slice 5.8 (+266 vs Slice 4's 409). See `STATE-AFTER-M0a-slice5-*` snapshots.
+- **Slice 6 — Foundations: cloud-canonical projects + auto-persisted generations + reactive engine + assistant DSL + recipes + composite nodes + Image Describer + persistent chat** _(shipped 2026-05-26, sub-slices 6.1 → 6.8)_
+  - **6.1 (Auth + cloud projects)**: magic-link auth, `cookbook_projects` Postgres table, sync layer (bootstrap + auto-save), per-user storage RLS. ADR-0034.
+  - **6.2 (Generations + Gallery)**: `cookbook_generations` table, auto-rehost (Higgsfield CDN → Supabase Storage), Gallery wired to corpus. ADR-0035.
+  - **6.3 (Reactive engine)**: `NodeSchema.reactive` flag becomes meaningful, reactive runner subscribes to workflow + execution stores, live preview UX. ADR-0036.
+  - **6.4 (Recipes + Assistant DSL)**: `cookbook_recipes` table, `instantiateRecipeOnCanvas`, JSON-in-text plan protocol, `<ChatSheet>` with PlanCard + Run plan button. ADR-0037.
+  - **6.5 (Gallery overhaul)**: filter chips, multi-select, bulk actions, lightbox preview, drag-to-canvas, inline rename, output-type filter. ADR-0038.
+  - **6.6 (Composite recipes)**: a workflow as a single node — `composite` kind, `RecipeExposedHandle`, `unpackComposite`. Frozen + Unpack approach. ADR-0039.
+  - **6.7 (Image Describer recipe)**: seeded composite recipe via SQL migration that turns an image into a text prompt (LLM Text + vision). First system recipe.
+  - **6.8 (Persistent chat)**: `cookbook_assistant_messages` table, hydration on bootstrap, scroll-fixed ChatSheet. ADR-0040.
+  - 775 passing tests at end of Slice 6.8 (+100 vs Slice 5.8's 675).
+- **Slice 7 — Assistant agent autônomo** _(shipped 2026-05-28, sub-slices 7.1 → 7.6)_
+  - **7.1 (Provider migration + foundation)**: Fal OpenAI-compatible chat completions endpoint, provider abstraction, `messages[]` + `tools[]` + `tool_choice` + `stream` types, knowledge bus + tool registry shells, `docs/ASSISTANT.md` v1. ADR-0041.
+  - **7.2 (Knowledge bus + multi-turn + read tools)**: 8 knowledge dimensions threaded into the system prompt, conversation history threaded into `messages[]`, 5 read tools registered (`read_canvas`, `read_node_state`, `read_library`, `read_gallery`, `read_recipe`).
+  - **7.3 (Reasoner runtime + 12 new tools + live trace UI)**: bounded tool-call loop (20 turns / $0.50 cap), 7 construct + 3 recipe + 3 run + 2 reasoning helpers (`narrate`, `ask_user`), `ReasonerEvent` stream rendered live in `<ChatSheet>`. ADR-0042.
+  - **7.4 (Vision evaluation)**: `evaluate_result`, `compare_results`, `regenerate` via vision LLM (claude-haiku). `GenerationRepository.get` added. ADR-0043.
+  - **7.5 (Capability gaps + recipe pattern detection)**: `propose_node_schema` (advisory only — drafts NodeSchema for missing capabilities), `detect_recipe_pattern` (DFS canvas for repeated chains). ADR-0044.
+  - **7.6 (RAG foundation + cross-project search + user preferences)**: pgvector extension + nullable embedding column + HNSW index + `search_vector` tsvector + GIN index, `cookbook_user_preferences` JSONB blob + RLS, 3 RAG tools (`find_similar_generations`, `read_user_preferences`, `update_user_preferences`). ADR-0045.
+  - 841 passing tests at end of Slice 7.6 (+66 vs Slice 6.8's 775).
+  - **Total Slice 7 surface**: 25 tools across 8 categories, 5 ADRs, 2 new Supabase migrations, 2 new repositories.
 
-**Acceptance** (end of M0a): User drops a Soul ID + an image iterator with 3 references, sends "give me 8 variations" to the assistant, confirms cost, and gets 8 images saved to disk + visible in the queue.
+**Acceptance** (end of M0a, achieved): User drops a Soul ID + asset group with N references, sends a free-form prompt to the assistant, confirms cost when prompted, gets N images saved to gallery + accessible cross-project. Bonus: assistant evaluates the batch, surfaces a winner, and can regenerate with adjustments. All within the $0.50 per-message cost cap.
 
 ---
 
