@@ -19,12 +19,13 @@
  *   - `sliceAudio(src, windows)` => WAV Blob[] — Conversion API trim;
  *     feeds per-chunk @Audio1 to Seedance.
  *
- * What lands in Slice D (consumed by the Continuity Builder, verified with
- * the loop):
- *   - `concatVideos(clips) => Promise<Blob>` — Output + multiple sources;
- *     stitches the chunk array into one continuous video.
- *   - `normalizeMedia(src, target) => Promise<Blob>` — Conversion API
- *     transcode/resize to fit Seedance's resolution/size/format limits.
+ * Slice D.2:
+ *   - `concatVideos(clips)` => MP4 Blob — remux (packet-copy) join of the
+ *     chunk array into one continuous video.
+ *
+ * Still deferred (only when a real pipeline needs it):
+ *   - `normalizeMedia(src, target)` — Conversion API transcode/resize to fit
+ *     Seedance's resolution/size/format limits.
  */
 
 export {
@@ -48,3 +49,5 @@ export { probeMedia, type MediaProbeResult } from "./probe";
 export { extractFrame, type FramePosition } from "./extract-frame";
 
 export { sliceAudio } from "./slice-audio";
+
+export { concatVideos } from "./concat";

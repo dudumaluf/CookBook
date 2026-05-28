@@ -15,6 +15,7 @@ import { videoNodeSchema } from "@/components/nodes/node-video";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
+import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
 
 import { nodeRegistry } from "./registry";
 
@@ -46,6 +47,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);
+  nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
   nodeRegistry.register(textIteratorNodeSchema);
   nodeRegistry.register(arrayNodeSchema);
