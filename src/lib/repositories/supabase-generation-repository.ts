@@ -4,6 +4,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import type { NodeUsage, StandardizedOutput } from "@/types/node";
 
 import {
+  type FindSimilarFilter,
   type GenerationFilter,
   type GenerationRecord,
   type GenerationRepository,
@@ -150,6 +151,52 @@ export class SupabaseGenerationRepository implements GenerationRepository {
     limit: number = 50,
   ): Promise<GenerationRecord[]> {
     return this.list({ projectId, nodeId, limit });
+  }
+
+  async findSimilar(
+    filter: FindSimilarFilter,
+  ): Promise<GenerationRecord[]> {
+    // Slice 7.6 — full-text search via the `search_vector` tsvector
+    // column populated by the migration. Future: add an embedding-
+    // based path when generations have been embedded.
+    const phrase = filter.query.trim();
+    if (phrase.length === 0) return [];
+    let query = this.client
+      .from("cookbook_generations")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (filter.scope === "project") {
+      if (!filter.projectId) {
+        throw new GenerationRepositoryError(
+          "scope:'project' requires projectId",
+          "unknown",
+        );
+      }
+      query = query.eq("project_id", filter.projectId);
+    } else {
+      if (!filter.ownerId) {
+        throw new GenerationRepositoryError(
+          "scope:'owner' requires ownerId",
+          "unknown",
+        );
+      }
+      query = query.eq("owner_id", filter.ownerId);
+    }
+    if (filter.outputType) {
+      const kinds = OUTPUT_TYPE_NODE_KINDS[filter.outputType];
+      if (kinds.length > 0) query = query.in("node_kind", kinds);
+      else query = query.eq("node_kind", "__none__");
+    }
+    // websearch_to_tsquery handles natural-language queries
+    // (quoted phrases, AND/OR/NOT) gracefully, unlike plainto.
+    query = query.textSearch("search_vector", phrase, {
+      type: "websearch",
+      config: "english",
+    });
+    query = query.limit(filter.limit ?? 20);
+    const { data, error } = await query;
+    if (error) throw mapError(error, "Failed to find similar generations");
+    return ((data ?? []) as RawGenerationRow[]).map(rowToRecord);
   }
 
   async setPinned(id: string, pinned: boolean): Promise<void> {

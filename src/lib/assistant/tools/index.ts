@@ -2,6 +2,9 @@ import type { ToolDefinition } from "@/lib/llm/types";
 
 import { detectRecipePatternTool } from "./capability/detect-recipe-pattern";
 import { proposeNodeSchemaTool } from "./capability/propose-node-schema";
+import { findSimilarGenerationsTool } from "./rag/find-similar-generations";
+import { readUserPreferencesTool } from "./rag/read-user-preferences";
+import { updateUserPreferencesTool } from "./rag/update-user-preferences";
 import { addEdgeTool } from "./construct/add-edge";
 import { addNodeTool } from "./construct/add-node";
 import { moveNodeTool } from "./construct/move-node";
@@ -113,7 +116,10 @@ const tools: AssistantTool[] = [
   // Slice 7.5 — capability gap proposals + recipe pattern detection.
   proposeNodeSchemaTool,
   detectRecipePatternTool,
-  // Slice 7.6 adds RAG tools.
+  // Slice 7.6 — RAG: cross-session memory + cross-project search.
+  findSimilarGenerationsTool,
+  readUserPreferencesTool,
+  updateUserPreferencesTool,
 ];
 
 /**

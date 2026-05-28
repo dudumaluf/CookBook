@@ -9,7 +9,7 @@ This doc evolves slice by slice. Each section is tagged with status:
 - **maturing** — wired but rough; expected to improve next slice.
 - **planned** — designed but not implemented yet (cite the slice that will ship it).
 
-> **Last updated:** Slice 7.5 ship — capability gap proposals + recipe pattern detection.
+> **Last updated:** Slice 7.6 ship — RAG foundation (pgvector + tsvector) + cross-project search + user preferences.
 
 ---
 
@@ -55,8 +55,8 @@ Twelve sources of context the assistant queries when reasoning. Each is a module
 | 8 | Gallery state | **shipped** | `cookbook_generations` — recent + pinned + filtered |
 | 9 | Conversation history | **shipped** | `useAssistantStore` (cloud-hydrated) — last 20 messages |
 | 10 | External APIs / models | **planned (7.4)** | hand-curated; updated when new providers ship |
-| 11 | Cross-project context | **planned (7.6)** | sibling `cookbook_projects` summaries |
-| 12 | Learned preferences | **planned (7.6)** | `cookbook_user_preferences` — patterns + overrides |
+| 11 | Cross-project context | **shipped** | `cookbook_generations` cross-project search via `find_similar_generations({ scope: "owner" })` |
+| 12 | Learned preferences | **shipped** | `cookbook_user_preferences` (JSONB blob) via `read_user_preferences` / `update_user_preferences` |
 
 Bus entry point: [`src/lib/assistant/knowledge/index.ts`](../src/lib/assistant/knowledge/index.ts) `buildKnowledgeBundle({ relevance })`.
 
@@ -101,6 +101,11 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 ### Capability tools (shipped, Slice 7.5)
 - `propose_node_schema({ kind, title, category, description, inputs, outputs, defaultConfig?, rationale })` — draft a NodeSchema spec when the registry is missing a capability. Advisory only — does NOT modify the registry.
 - `detect_recipe_pattern({ minOccurrences? })` — scan canvas for repeated kind-sequence chains; surface candidates for "save as recipe".
+
+### RAG / memory tools (shipped, Slice 7.6)
+- `find_similar_generations({ query, scope?, outputType?, limit? })` — search persisted generations by natural-language query. `scope: "owner"` enables cross-project memory.
+- `read_user_preferences()` — read the user's saved preferences blob (cross-session, cross-project).
+- `update_user_preferences({ patch })` — shallow-merge a patch into the preferences blob.
 
 ### Construct tools (planned, Slice 7.3)
 - `add_node({ kind, position, config })` — spawn a new node.
@@ -200,6 +205,6 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 | 7.3 | ADR-0042 | **shipped** | Native tool calling + reasoner + construct/recipe/run/reasoning tools + live trace UI |
 | 7.4 | ADR-0043 | **shipped** | Vision evaluation + compare + regenerate |
 | 7.5 | ADR-0044 | **shipped** | Capability gaps + recipe pattern detection |
-| 7.6 | ADR-0045 | planned | RAG + cross-project + preferences |
+| 7.6 | ADR-0045 | **shipped** | RAG foundation (pgvector + tsvector) + cross-project search + user preferences |
 
 Master plan: see Slice 7.x section in [`docs/ROADMAP.md`](./ROADMAP.md) (planned to land alongside Slice 7.2 ship). Each slice closes with a CHANGELOG entry + `STATE-AFTER-*.md` snapshot when relevant.

@@ -79,6 +79,21 @@ export interface GenerationFilter {
   offset?: number;
 }
 
+/**
+ * Slice 7.6 — semantic / lexical search across the user's generations.
+ * `scope: "project"` filters by `projectId`; `scope: "owner"` searches
+ * across all projects of the same owner (`ownerId`). Use the latter
+ * when the assistant needs cross-project memory.
+ */
+export interface FindSimilarFilter {
+  query: string;
+  scope: "project" | "owner";
+  projectId?: string;
+  ownerId?: string;
+  outputType?: GenerationOutputType;
+  limit?: number;
+}
+
 export interface GenerationRepository {
   insert(input: InsertGenerationInput): Promise<GenerationRecord>;
   list(filter: GenerationFilter): Promise<GenerationRecord[]>;
@@ -90,6 +105,12 @@ export interface GenerationRepository {
     nodeId: string,
     limit?: number,
   ): Promise<GenerationRecord[]>;
+  /**
+   * Slice 7.6 — find generations whose prompt_text + title match the
+   * query lexically (full-text search) or semantically (when embeddings
+   * exist). `scope: "owner"` enables cross-project search.
+   */
+  findSimilar(filter: FindSimilarFilter): Promise<GenerationRecord[]>;
   setPinned(id: string, pinned: boolean): Promise<void>;
   setTags(id: string, tags: string[]): Promise<void>;
   /** User-set display title; pass null to clear. (Slice 6.5) */

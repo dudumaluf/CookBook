@@ -2028,3 +2028,91 @@ The simplest possible thing: proposals are emitted as tool results, rendered in 
 
 - ADR-0042 (reasoner) — capability tools live in the same registry; behaviour identical to construct/recipe/run/eval tools.
 - ADR-0039 (composite recipes) — `detect_recipe_pattern` outputs feed directly into `select_nodes` + `save_selection_as_recipe`.
+
+## ADR-0045 — RAG foundation: full-text + pgvector + cross-project memory + user preferences (M0a Slice 7.6)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 7.6.
+- **Context**: ADR-0042 + 0043 + 0044 gave the assistant tools for construction, evaluation, and capability proposals. The remaining gap is **memory across sessions and projects**. Today, every conversation starts from zero — the assistant can't say "you usually want 16:9 cinematic" because that knowledge died with the chat. ADR-0045 closes that with a search corpus over the user's persistent generations + a learnable preferences blob.
+
+### 1. Decisão: pgvector for embeddings + tsvector for immediate search
+
+The migration enables `pgvector` and adds `embedding vector(1536)` (nullable) to `cookbook_generations`. An HNSW index on cosine distance handles fast ANN retrieval. Embedding population is OUT OF SCOPE for 7.6 — until rows have been embedded, `find_similar_generations` falls back to **full-text search** via a `search_vector` tsvector generated column over `prompt_text + title`. A GIN index keeps it fast.
+
+Why hybrid?
+
+- Full-text gives 80% of the value at zero new infra cost. "Find my noir portraits" works today even with no embeddings.
+- pgvector is wired NOW so when embeddings land (Slice 7.7+ or ad-hoc when budget allows), the tool gains semantic capability transparently — same API, same scope flags.
+- Embedding 1000 prompts × ~50 tokens × $0.02/1M = $0.001 lifetime. Trivial. The bottleneck is *which* embedding provider — Fal openrouter doesn't expose embeddings; we'd add a third API surface (OpenAI / Voyage / Cohere). Defer until needed.
+
+`vector(1536)` matches OpenAI text-embedding-3-small / ada-002. If a different provider lands, a re-embed migration bumps the type.
+
+### 2. Decisão: cross-project search via owner-scoped queries
+
+`find_similar_generations({ scope: "owner" | "project" })`:
+
+- `"project"` (default): RLS already scopes by `owner_id`, but we extra-filter by `project_id` to avoid leaking other projects' clutter into a focused chat.
+- `"owner"`: drops the project filter — the user sees ALL their generations across projects. RLS keeps it secure (owner_id check).
+
+Use case: assistant in project A says "you made a similar thing in project B last week — want me to riff on that?". Cross-session, cross-project memory by query.
+
+### 3. Decisão: cookbook_user_preferences = single-row JSONB blob per owner
+
+Slice 7.6 ships:
+
+- `cookbook_user_preferences (owner_id pk, preferences jsonb, updated_at)`.
+- RLS: owner CRUD only.
+- `touch_user_prefs_updated_at` trigger.
+
+Two tools front it:
+
+- `read_user_preferences()` — assistant calls this at the start of a session to surface defaults.
+- `update_user_preferences({ patch })` — shallow-merge a patch onto the blob. Keys with `null` value get deleted. Use AFTER the user explicitly confirms a preference or repeats it 2+ times.
+
+Why JSONB and not a structured schema?
+
+- The assistant invents keys over time (preferred_aspect_ratio, preferred_lighting, preferred_model, narrative_tone, etc.). Forcing a schema today commits the API to a shape we don't know yet.
+- JSONB queries can index specific paths if perf becomes an issue (M1+).
+- Migrations add structure when patterns settle.
+
+Trade-off: type safety is loose at the boundary. The Zod schema on the patch input keeps it sane (string keys + arbitrary JSON values).
+
+### 4. Decisão: 3 new tools in the registry
+
+| Tool | Source | Use |
+|---|---|---|
+| `find_similar_generations({ query, scope?, outputType?, limit? })` | `cookbook_generations` via `findSimilar` | Cross-project memory; full-text today, semantic when embeddings land |
+| `read_user_preferences()` | `cookbook_user_preferences` | Surface defaults at session start |
+| `update_user_preferences({ patch })` | `cookbook_user_preferences` | Persist new preference after confirmation |
+
+All three follow the existing tool registry pattern (Zod args, JSON schema, `execute(args, ctx)` returning a serializable result). Same dispatch through the reasoner loop.
+
+### 5. Decisão: GenerationRepository.findSimilar uses websearch_to_tsquery
+
+The `textSearch` query uses Postgres's `websearch_to_tsquery` parser via the Supabase client's `type: "websearch"`. It handles natural-language queries gracefully — quoted phrases, AND/OR/NOT, no error on malformed input. Good fit for the LLM passing through whatever the user typed.
+
+### 6. Trade-offs aceitos
+
+- **No embeddings written today** — `find_similar_generations` falls back to lexical. Real semantic search lands when embeddings populate.
+- **No background embedding job** — would need a cron / worker, plus an external embedding API. Defer until either Fal exposes embeddings or we accept a 3rd API key.
+- **No vector index over the preferences blob** — assistant reads the full blob on demand. At single-row-per-user the blob stays small (KB scale).
+- **Preferences are last-write-wins** — concurrent writes from two devices could clobber. Acceptable; M0a is single-user typical-single-device.
+
+### 7. Implementação resumida
+
+- `supabase/migrations/20260528_pgvector_embeddings.sql` (applied) — pgvector + embedding column + search_vector + GIN index.
+- `supabase/migrations/20260528_user_preferences.sql` (applied) — table + trigger + RLS.
+- `src/lib/repositories/user-preferences-repository.ts` (interface) + `supabase-user-preferences-repository.ts` (impl with shallow-merge).
+- `src/lib/repositories/generation-repository.ts`: `FindSimilarFilter` + `findSimilar` interface method.
+- `src/lib/repositories/supabase-generation-repository.ts`: `findSimilar` impl using websearch tsquery.
+- `src/lib/assistant/tools/rag/{find-similar-generations,read-user-preferences,update-user-preferences}.ts` — 3 tools.
+- `src/lib/assistant/tools/index.ts`: 3 tools registered.
+- `tests/unit/assistant/rag-tools.test.ts` (new, 8) — every tool's happy + sad path.
+- `tests/unit/repositories/supabase-user-preferences-repository.test.ts` (new, 4) — get/set/patch.
+
+### 8. Cross-references
+
+- ADR-0035 (durable generations) — provides the corpus that 7.6 indexes + searches.
+- ADR-0034 (auth + projects) — owner_id RLS is the security boundary cross-project search relies on.
+- ADR-0042 (reasoner) — RAG tools dispatch through the same loop.
+- M1 candidate: embedding population job using a chosen provider (likely OpenAI text-embedding-3-small via direct API). 
