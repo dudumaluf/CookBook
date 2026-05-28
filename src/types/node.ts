@@ -119,8 +119,21 @@ export interface NodeSchema<TConfig = unknown> {
   title: string;
   description: string;
   icon: ComponentType<{ className?: string }>;
+  /**
+   * Static handle declarations. The 99% case — most nodes know their
+   * inputs and outputs at design time.
+   */
   inputs: NodeIO[];
   outputs: NodeIO[];
+  /**
+   * Slice 6.6 — composite nodes (recipes saved as a single node) carry
+   * their I/O in `config.exposedInputs/Outputs`, so their handle list is
+   * per-instance. When `getInputs` / `getOutputs` is provided, callers
+   * (BaseNode renderer + engine input resolver) prefer the dynamic list
+   * over the static one. Most nodes leave these undefined.
+   */
+  getInputs?: (config: TConfig) => NodeIO[];
+  getOutputs?: (config: TConfig) => NodeIO[];
   defaultConfig: TConfig;
   /**
    * Reactive nodes derive their output from `config` alone (Text, Image,

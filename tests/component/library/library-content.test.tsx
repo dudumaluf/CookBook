@@ -14,6 +14,18 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// Slice 6.6 — LibraryContent now uses useRecipes() which transitively
+// touches Supabase. These tests don't care about recipes; stub the
+// hook so it just yields an empty list with no network calls.
+vi.mock("@/lib/hooks/use-recipes", () => ({
+  useRecipes: () => ({
+    data: [],
+    isLoading: false,
+    error: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
 function makeImageAsset(id: string, url: string, name = id): ImageAsset {
   return {
     id,

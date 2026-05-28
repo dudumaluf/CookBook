@@ -13,28 +13,41 @@ import type { NodeInstance, WorkflowEdge } from "@/types/node";
  * subgraph. Updates are rare; sharing is M2.
  */
 
+/**
+ * One exposed handle on a composite recipe.
+ *
+ * `internalNodeId` + `internalHandleId` point at the saved-subgraph
+ * node + handle that the public composite handle binds to. `label` is
+ * the user-visible name on the composite (defaults to the internal
+ * handle's label, customizable via the Save-as-recipe modal). `dataType`
+ * is captured at save time so we don't have to re-inspect the schema
+ * registry when rendering the composite's handles.
+ *
+ * Slice 6.6 (ADR-0039) — `dataType` is a string here (rather than the
+ * `DataType` literal union) so the recipe row stays decoupled from any
+ * specific build's schema; we coerce at the composite-node boundary.
+ */
+export interface RecipeExposedHandle {
+  internalNodeId: string;
+  internalHandleId: string;
+  label: string;
+  dataType: string;
+}
+
 export interface RecipeSubgraph {
   /** Version tag — bumped when the subgraph shape changes. */
   version: number;
   nodes: NodeInstance[];
   edges: WorkflowEdge[];
   /**
-   * When `is_node === true` (M0d composite mode), these declare which
-   * internal handles surface as the composite's external pins. Empty /
-   * undefined when instantiating expands the subgraph as raw nodes.
+   * Slice 6.6 — composite-mode recipes always carry these. Each public
+   * handle binds to one internal-node + internal-handle pair. When a
+   * recipe is instantiated as a single composite node, these become the
+   * node's `getInputs(config)` / `getOutputs(config)` lookup table.
+   * Expand-mode recipes (`is_node = false`) ignore the lists.
    */
-  exposedInputs?: {
-    internalNodeId: string;
-    internalHandleId: string;
-    label: string;
-    dataType: string;
-  }[];
-  exposedOutputs?: {
-    internalNodeId: string;
-    internalHandleId: string;
-    label: string;
-    dataType: string;
-  }[];
+  exposedInputs?: RecipeExposedHandle[];
+  exposedOutputs?: RecipeExposedHandle[];
 }
 
 export const RECIPE_SUBGRAPH_VERSION = 1;

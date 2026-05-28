@@ -1310,6 +1310,104 @@ Falhas no rehost são logadas mas não bloqueiam — gera-se com URL externa ori
 - ADR-0012 (Gallery) — Day-1 stub agora ganha dados reais.
 - ADR-0018b (cloud-canonical assets) — auto-rehost garante que toda image gerada vira cloud-canonical, não só uploads.
 
+## ADR-0039 — Composite recipes: a workflow as a single node (M0a Slice 6.6)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 6.6.
+- **Context**: a partir do M0a-close (ADR-0037) recipes existiam como subgraphs salvos, mas só eram instanciados via "expand" — drag de uma recipe no canvas materializava todos os N nodes individualmente. O usuário pediu a forma natural de "Lego": **transformar um workflow num único node**. Vai bem além de cosmético — é a primitiva que vai habilitar Image Describer, Soul Image Burst comprimido, e qualquer composição reusável criada pelo user ou pelo assistant DSL.
+
+### 1. Conceito: composite-as-node
+
+Um *composite node* é uma instância do schema kind `composite` cujo `config` carrega o subgraph completo + uma lista de I/O exposed. Visualmente é um único node na canvas; internamente, ao executar, ele recursa pra dentro do próprio engine rodando o subgraph capturado, com os inputs externos injetados via "phantom passthrough nodes".
+
+Editability: **frozen + unpack** (opção A do plano). O composite é imutável; pra modificar, o user faz unpack pra subgraph expandido, edita os nodes individualmente, e re-saves como nova recipe (ou substitui a antiga). Live drill-in editing fica parqueado pra M0d.
+
+### 2. Schema dinâmico — `getInputs(config)` / `getOutputs(config)`
+
+`NodeSchema` ganha duas funções opcionais:
+
+```typescript
+getInputs?: (config: TConfig) => NodeIO[];
+getOutputs?: (config: TConfig) => NodeIO[];
+```
+
+Quando presentes, a UI ([`canvas-flow.tsx`](../src/components/canvas/canvas-flow.tsx)) e o engine ([`run-workflow.ts`](../src/lib/engine/run-workflow.ts) via [`node-io.ts`](../src/lib/engine/node-io.ts) helper) preferem o resultado dinâmico. Composite-only path; todo o resto continua usando o array estático `inputs[]` / `outputs[]`. Aditivo, sem breaking changes.
+
+`BaseNode` ganhou props `inputs?` / `outputs?` opcionais — quando o canvas-flow wrapper já calculou via `getInputs(config)`, passa pra cá. BaseNode fallback no schema array quando não. Sem cascade entre BaseNode e o resolver — separação limpa.
+
+### 3. `passthrough` node — internal helper
+
+Schema kind `passthrough`: emite `config.value` direto. Categoria `input`, sem Body visível. Usado APENAS pelo composite execute() pra sintetizar phantom upstream nodes que carregam external inputs:
+
+```typescript
+const phantomNodes: NodeInstance[] = [];
+const phantomEdges: WorkflowEdge[] = [];
+for (const exposed of exposedInputs) {
+  const value = inputs[exposed.label];
+  if (value === undefined) continue;
+  phantomNodes.push({ kind: "passthrough", config: { value: ... }, ... });
+  phantomEdges.push({ source: phantom, target: internalNodeId, ... });
+}
+```
+
+Engine não precisa de feature nova de "preset inputs" — phantom-source com edge resolve via lógica existente.
+
+### 4. Composite execute()
+
+Em [`node-composite.tsx`](../src/components/nodes/node-composite.tsx):
+
+1. Constroi phantom passthrough nodes + edges pros inputs externos.
+2. Chama `runWorkflow({ nodes: [...phantoms, ...subgraph.nodes], edges: [...phantomEdges, ...subgraph.edges], cache: new Map(), mode: "full" })` — fresh cache por invocação, full mode (subgraph pode conter LLM/Higgsfield).
+3. Lê `subResult.records.get(exposed.internalNodeId)?.output` pra cada output exposed.
+4. Retorna single output ou array (engine entende ambos).
+
+Sub-progress não é piped pro outer execution-store — composite emite UM record (running → done/error). Drill-in tooling pra ver progresso interno é polish futuro.
+
+### 5. Save-from-canvas
+
+[`auto-detect-io.ts`](../src/lib/recipes/auto-detect-io.ts): walk dos edges da seleção pra inferir inputs/outputs publics. Regras:
+
+- **Input exposto**: handle de input cujo nenhum edge dentro da seleção termina nele (precisa de feed externo).
+- **Output exposto**: handle de output que (a) tem edge saindo da seleção pra fora, OU (b) é leaf (nenhum edge saindo).
+- **Label dedup**: labels colidentes ganham prefix `<NodeTitle>.<handle>` pra desambiguar.
+
+[`save-from-canvas.ts`](../src/lib/recipes/save-from-canvas.ts) — `saveSelectionAsRecipe(input)`:
+
+1. Slice o workflow-store: nodes selecionados + edges internos.
+2. `RecipeRepository.save({ subgraph, isNode: true })` → row em `cookbook_recipes`.
+3. Se `replaceWithComposite` (default): wipe os selected nodes + internal edges, spawn composite no centroide, **rewire edges crossing** pra landar nos handles expostos do composite.
+
+Edges atravessando que apontam pra handles NÃO expostos são droppados — surface-area mismatch protetiva (melhor dropar do que mis-rotear silenciosamente).
+
+### 6. UI
+
+[`<SaveRecipeDialog>`](../src/components/library/save-recipe-dialog.tsx): modal Dialog com nome + descrição + lista de I/O auto-detectada (rename inline + remove cada item) + checkbox "Replace selection with composite node" (default ON).
+
+[`<CanvasContextMenu>`](../src/components/layout/canvas-context-menu.tsx): right-click no canvas com seleção ≥1 mostra "Save N nodes as recipe…" — abre o dialog com a seleção snapshot.
+
+[`<RecipeCard>`](../src/components/library/recipe-card.tsx) + Recipes section em [`library-content.tsx`](../src/components/library/library-content.tsx): list todas as recipes (own + system) via `useRecipes()`. Cada card é draggable; drag MIME `application/x-cookbook-recipe`.
+
+[`canvas-flow.tsx`](../src/components/canvas/canvas-flow.tsx) `onDrop`: pra recipes em `is_node` mode, addNode("composite", pos, { recipeId, recipeName, subgraph, exposedInputs, exposedOutputs }). Pra `expand` mode, `instantiateRecipeOnCanvas` (helper já existente).
+
+Composite `settings` slot: button "Unpack into subgraph" → [`unpackComposite`](../src/lib/recipes/unpack-composite.ts) faz o inverso de saveSelectionAsRecipe (re-id nodes, translada posições, re-wire edges externas pra landar nos internal handles via labels).
+
+### 7. Trade-offs aceitos
+
+- **Frozen composites**. Pra editar, unpack → edit → re-save. Live drill-in (dupla-click pra entrar dentro do composite) é M0d trabalho — requer canvas-mode-switching que é grande.
+- **Sub-progress invisível**. Composite emite UM record; o user não vê per-internal-node status. Drill-in pra debug fica polish.
+- **Cache fresca por invocação** do composite — composite não compartilha cache com outer session. Custo extra trivial; isolation > optimization.
+- **Drop edges crossing pra handles não expostos** em vez de auto-expor. Defensive: previne misroute silencioso quando o user removeu uma I/O propositadamente.
+- **Schema dinâmico** só pra composite hoje. Outros nodes (Iterators, future "ports" feature) podem reusar o mesmo `getInputs/getOutputs` shape sem refactor.
+- **Recipes table sem versioning**. Re-save substitui in-place; histórico de recipes só fica no git. M0a-final acceptable; futuro pode adicionar `recipe_revisions` se precisar.
+
+### 8. Cross-references
+
+- ADR-0034 — `cookbook_projects` table base. `cookbook_recipes` segue o mesmo padrão de RLS owner-only.
+- ADR-0037 — recipes infra base; ADR-0039 ativa o `is_node` flag que estava parqueado.
+- ADR-0030 — engine fan-out continua funcionando dentro de composites; o engine não sabe que tá rodando dentro de um composite.
+- ADR-0028 — composite tem `size` schema (defaultWidth 240, resizable horizontal); herda BaseNode chrome standard.
+- Polish backlog → "Image Describer recipe → first-class node": agora viável; será seedado em Slice 6.7 como system recipe.
+
 ## ADR-0036 — Reactive engine: schema flag becomes meaningful + live preview UX (M0a Slice 6.3)
 
 - **Date**: 2026-05-26

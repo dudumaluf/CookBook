@@ -33,7 +33,13 @@ import {
   GENERATION_DRAG_MIME,
   parseGenerationDrag,
 } from "@/lib/library/generation-drag";
+import {
+  RECIPE_DRAG_MIME,
+  parseRecipeDrag,
+} from "@/lib/library/recipe-drag";
 import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
+import { instantiateRecipeOnCanvas } from "@/lib/recipes/instantiate";
+import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
@@ -172,6 +178,17 @@ function GenericNode({ id, data, selected }: NodeProps<FlowNode>) {
         }
       : undefined;
 
+  // Slice 6.6 — composite nodes derive their handle list from
+  // `config.exposedInputs/Outputs`. When a schema declares these
+  // resolver functions, evaluate them per-instance; otherwise fall
+  // back to the static schema arrays inside BaseNode.
+  const dynamicInputs = schema.getInputs
+    ? schema.getInputs(data.config)
+    : undefined;
+  const dynamicOutputs = schema.getOutputs
+    ? schema.getOutputs(data.config)
+    : undefined;
+
   return (
     <BaseNode
       nodeId={id}
@@ -181,6 +198,8 @@ function GenericNode({ id, data, selected }: NodeProps<FlowNode>) {
       onRename={(label) => renameNode(id, label)}
       settings={settingsSlot}
       size={sizeSlot}
+      inputs={dynamicInputs}
+      outputs={dynamicOutputs}
     >
       <Body
         nodeId={id}
@@ -564,7 +583,8 @@ function CanvasFlowInner() {
     const types = event.dataTransfer.types;
     if (
       types.includes(ASSET_DRAG_MIME) ||
-      types.includes(GENERATION_DRAG_MIME)
+      types.includes(GENERATION_DRAG_MIME) ||
+      types.includes(RECIPE_DRAG_MIME)
     ) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
@@ -573,6 +593,53 @@ function CanvasFlowInner() {
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      // Slice 6.6 — Library → canvas drag of a recipe card. We fetch
+      // the full recipe (subgraph) lazily here so the drag payload
+      // stays small. Mode "node" spawns a single composite; "expand"
+      // instantiates the saved subgraph as raw nodes (legacy / opt-in
+      // for recipes saved with `is_node: false`).
+      const recipeRaw = event.dataTransfer.getData(RECIPE_DRAG_MIME);
+      if (recipeRaw) {
+        event.preventDefault();
+        const recipePayload = parseRecipeDrag(recipeRaw);
+        if (recipePayload) {
+          const dropPos = screenToFlowPosition({
+            x: event.clientX,
+            y: event.clientY,
+          });
+          void getRecipeRepository()
+            .get(recipePayload.recipeId)
+            .then((recipe) => {
+              if (!recipe) return;
+              if (recipePayload.mode === "node") {
+                // Spawn a single composite node — its config carries
+                // the entire subgraph + the exposed I/O list, so the
+                // composite renders the right handles and execute()
+                // recurses into runWorkflow.
+                const ws = useWorkflowStore.getState();
+                ws.addNode("composite", dropPos, {
+                  recipeId: recipe.id,
+                  recipeName: recipe.name,
+                  subgraph: recipe.subgraph,
+                  exposedInputs: recipe.subgraph.exposedInputs ?? [],
+                  exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
+                });
+              } else {
+                // Expand subgraph mode — same path the assistant DSL
+                // uses today (Slice 6.4).
+                instantiateRecipeOnCanvas({
+                  subgraph: recipe.subgraph,
+                  position: dropPos,
+                });
+              }
+            })
+            .catch((err) => {
+              console.warn("[canvas] recipe drop failed:", err);
+            });
+        }
+        return;
+      }
+
       // Slice 6.5 — Gallery → canvas drag. Each generation item spawns
       // a fresh node (image / text / video) at the drop point, offset
       // by 24px per index so multi-select drags fan out cleanly.

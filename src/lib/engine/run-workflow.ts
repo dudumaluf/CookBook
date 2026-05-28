@@ -10,6 +10,7 @@ import type {
 
 import { NodeRegistry } from "./registry";
 import { hashString, stableStringify } from "./hash";
+import { getNodeInputs } from "./node-io";
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Public types                                                               */
@@ -378,6 +379,12 @@ export async function runWorkflow(
       return { ok: false, failedNodeId: node.id, records };
     }
 
+    // Slice 6.6 — composite nodes (recipes saved as a single node) have
+    // dynamic I/O derived from their config. Resolve once here so the
+    // edge / handle lookups below work for both static and dynamic node
+    // schemas.
+    const effectiveInputs = getNodeInputs(schema, node);
+
     // Collect inputs from upstream outputs, grouped by target handle.
     // Track which (if any) handle is a fan-out source so the runner can
     // dispatch the iterator branch later.
@@ -399,7 +406,7 @@ export async function runWorkflow(
       }
       const handleInputs = inputs[edge.targetHandle];
       const isMulti =
-        schema.inputs.find((i) => i.id === edge.targetHandle)?.multiple ??
+        effectiveInputs.find((i) => i.id === edge.targetHandle)?.multiple ??
         false;
       if (isMulti) {
         const arr = Array.isArray(handleInputs)

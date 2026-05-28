@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { cn } from "@/lib/utils";
-import type { NodeResizable, NodeSchema } from "@/types/node";
+import type { NodeIO, NodeResizable, NodeSchema } from "@/types/node";
 
 import { DotHandle } from "./handle-dot";
 import { NodeStatusChip } from "./status-chip";
@@ -102,6 +102,15 @@ export interface BaseNodeProps {
    * standardized drag handle in the matching position.
    */
   size?: BaseNodeSize;
+  /**
+   * Optional override for the rendered handles. Lets callers pass a
+   * dynamically-computed I/O list (e.g. composite nodes whose handles
+   * come from `config.exposedInputs/Outputs`) without making BaseNode
+   * itself aware of how that derivation works. Falls back to the
+   * schema's static `inputs` / `outputs` when omitted.
+   */
+  inputs?: NodeIO[];
+  outputs?: NodeIO[];
   children: ReactNode;
 }
 
@@ -167,6 +176,8 @@ export function BaseNode({
   onRename,
   settings,
   size,
+  inputs,
+  outputs,
   children,
 }: BaseNodeProps) {
   const Icon = schema.icon;
@@ -295,7 +306,7 @@ export function BaseNode({
        *  so a small mouse miss still picks up the connection intent. The
        *  hover tooltip (DotHandle) reads the label without inline chrome. */}
       <div className="pointer-events-none absolute -left-1 top-0 flex h-full flex-col items-start justify-around py-3">
-        {schema.inputs.map((io) => (
+        {(inputs ?? schema.inputs).map((io) => (
           <div
             key={io.id}
             className="pointer-events-auto flex h-6 -translate-x-1/2 items-center"
@@ -311,7 +322,7 @@ export function BaseNode({
       </div>
 
       <div className="pointer-events-none absolute -right-1 top-0 flex h-full flex-col items-end justify-around py-3">
-        {schema.outputs.map((io) => (
+        {(outputs ?? schema.outputs).map((io) => (
           <div
             key={io.id}
             className="pointer-events-auto flex h-6 translate-x-1/2 items-center"

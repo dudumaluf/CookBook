@@ -1,4 +1,5 @@
 import { arrayNodeSchema } from "@/components/nodes/node-array";
+import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { exportNodeSchema } from "@/components/nodes/node-export";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
@@ -6,6 +7,7 @@ import { imageNodeSchema } from "@/components/nodes/node-image";
 import { listNodeSchema } from "@/components/nodes/node-list";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { numberNodeSchema } from "@/components/nodes/node-number";
+import { passthroughNodeSchema } from "@/components/nodes/node-passthrough";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
@@ -41,6 +43,11 @@ export function registerAllNodes(): void {
   nodeRegistry.register(arrayNodeSchema);
   nodeRegistry.register(listNodeSchema);
   nodeRegistry.register(exportNodeSchema);
+  // Slice 6.6 — composite + passthrough lands. `composite` is the
+  // recipe-as-node primitive; `passthrough` is its internal injection
+  // helper (never spawned by the user, only by composite execute()).
+  nodeRegistry.register(compositeNodeSchema);
+  nodeRegistry.register(passthroughNodeSchema);
   registered = true;
 }
 

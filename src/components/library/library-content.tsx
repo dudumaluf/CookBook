@@ -14,9 +14,12 @@ import type {
   SoulIdAsset,
 } from "@/types/asset";
 
+import { useRecipes } from "@/lib/hooks/use-recipes";
+
 import { AssetCard } from "./asset-card";
 import { ImportAsGroupDialog } from "./import-as-group-dialog";
 import { InlineRename } from "./inline-rename";
+import { RecipeCard } from "./recipe-card";
 
 /**
  * LibraryContent
@@ -191,6 +194,10 @@ function TopLevelView({
   const groupAssets = assets.filter(
     (a): a is AssetGroupAsset => a.kind === "asset-group",
   );
+  // Slice 6.6 — recipes saved by the user (and seeded system recipes)
+  // live in cookbook_recipes; the hook merges own + system. Drag onto
+  // canvas spawns a composite node.
+  const { data: recipes, refresh: refreshRecipes } = useRecipes();
 
   // Slice 5.6.1 — images that are members of any group hide from the
   // top-level "Images" section. The user enters the group via the
@@ -207,7 +214,8 @@ function TopLevelView({
   if (
     bareImageAssets.length === 0 &&
     soulIdAssets.length === 0 &&
-    groupAssets.length === 0
+    groupAssets.length === 0 &&
+    recipes.length === 0
   ) {
     return (
       <div className="flex flex-col items-start gap-1.5">
@@ -250,6 +258,23 @@ function TopLevelView({
           <div className="grid grid-cols-2 gap-1.5">
             {bareImageAssets.map((asset) => (
               <AssetCard key={asset.id} asset={asset} onOpen={onAssetOpen} />
+            ))}
+          </div>
+        </Section>
+      ) : null}
+      {recipes.length > 0 ? (
+        <Section
+          title="Recipes"
+          count={recipes.length}
+          dataTestId="library-section-recipes"
+        >
+          <div className="grid grid-cols-2 gap-1.5">
+            {recipes.map((recipe) => (
+              <RecipeCard
+                key={recipe.id}
+                recipe={recipe}
+                onChanged={() => void refreshRecipes()}
+              />
             ))}
           </div>
         </Section>

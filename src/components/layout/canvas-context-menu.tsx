@@ -7,9 +7,12 @@ import {
   Library as LibraryIcon,
   Activity,
   Images,
+  Package,
 } from "lucide-react";
 
+import { SaveRecipeDialog } from "@/components/library/save-recipe-dialog";
 import { useLayoutStore } from "@/lib/stores/layout-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 /**
  * CanvasContextMenu
@@ -24,8 +27,13 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
  */
 export function CanvasContextMenu({ children }: { children: ReactNode }) {
   const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [savingIds, setSavingIds] = useState<string[]>([]);
   const { setAddNodePopoverOpen, toggleLibrary, toggleQueue, toggleGallery } =
     useLayoutStore();
+  // Reads selectedNodeIds reactively so the "Save selection as recipe…"
+  // entry only renders when the user actually has nodes selected.
+  const selectedNodeIds = useWorkflowStore((s) => s.selectedNodeIds);
 
   const close = useCallback(() => setCoords(null), []);
 
@@ -76,6 +84,20 @@ export function CanvasContextMenu({ children }: { children: ReactNode }) {
                 close();
               }}
             />
+            {selectedNodeIds.length > 0 ? (
+              <MenuItem
+                icon={<Package className="h-3.5 w-3.5" />}
+                label={`Save ${selectedNodeIds.length} ${selectedNodeIds.length === 1 ? "node" : "nodes"} as recipe…`}
+                onClick={() => {
+                  // Snapshot the selection at click-time. The dialog
+                  // re-derives I/O from these ids so the user can keep
+                  // panning / zooming without affecting the save.
+                  setSavingIds(selectedNodeIds);
+                  setSaveOpen(true);
+                  close();
+                }}
+              />
+            ) : null}
             <Separator />
             <MenuItem
               icon={<LibraryIcon className="h-3.5 w-3.5" />}
@@ -107,6 +129,14 @@ export function CanvasContextMenu({ children }: { children: ReactNode }) {
           </div>
         </>
       )}
+      <SaveRecipeDialog
+        open={saveOpen}
+        onOpenChange={(open) => {
+          setSaveOpen(open);
+          if (!open) setSavingIds([]);
+        }}
+        selectedNodeIds={savingIds}
+      />
     </div>
   );
 }
