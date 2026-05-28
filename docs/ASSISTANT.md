@@ -9,7 +9,7 @@ This doc evolves slice by slice. Each section is tagged with status:
 - **maturing** — wired but rough; expected to improve next slice.
 - **planned** — designed but not implemented yet (cite the slice that will ship it).
 
-> **Last updated:** Slice 7.1 ship — provider migration + foundation.
+> **Last updated:** Slice 7.2 ship — knowledge bus + multi-turn memory + read tools.
 
 ---
 
@@ -46,14 +46,14 @@ Twelve sources of context the assistant queries when reasoning. Each is a module
 | # | Dimension | Status | Source |
 |---|---|---|---|
 | 1 | App identity | **shipped** | static (this doc, condensed) |
-| 2 | Vocabulary | **planned (7.2)** | `docs/GLOSSARY.md` condensed |
-| 3 | Node catalog | **planned (7.2)** | `nodeRegistry.list()` |
-| 4 | Recipe catalog | **planned (7.2)** | `cookbook_recipes` (own + system) |
-| 5 | Live canvas state | **planned (7.2)** | `useWorkflowStore` — nodes + edges + selection + spatial layout |
-| 6 | Per-node execution state | **planned (7.2)** | `useExecutionStore` — status, output, history |
-| 7 | Library state | **planned (7.2)** | `useAssetStore` — counts, names, soul-id variants |
-| 8 | Gallery state | **planned (7.2)** | `cookbook_generations` — recent + pinned + filtered |
-| 9 | Conversation history | **planned (7.2)** | `cookbook_assistant_messages` — last N |
+| 2 | Vocabulary | **shipped** | `docs/GLOSSARY.md` condensed |
+| 3 | Node catalog | **shipped** | `nodeRegistry.list()` |
+| 4 | Recipe catalog | **shipped** | `cookbook_recipes` (own + system) |
+| 5 | Live canvas state | **shipped** | `useWorkflowStore` — nodes + edges + selection + spatial layout |
+| 6 | Per-node execution state | **shipped** | `useExecutionStore` — status, output, usage |
+| 7 | Library state | **shipped** | `useAssetStore` — counts, names, soul-id variants |
+| 8 | Gallery state | **shipped** | `cookbook_generations` — recent + pinned + filtered |
+| 9 | Conversation history | **shipped** | `useAssistantStore` (cloud-hydrated) — last 20 messages |
 | 10 | External APIs / models | **planned (7.4)** | hand-curated; updated when new providers ship |
 | 11 | Cross-project context | **planned (7.6)** | sibling `cookbook_projects` summaries |
 | 12 | Learned preferences | **planned (7.6)** | `cookbook_user_preferences` — patterns + overrides |
@@ -64,12 +64,12 @@ Bus entry point: [`src/lib/assistant/knowledge/index.ts`](../src/lib/assistant/k
 
 The full list of functions the assistant can call. Auto-generated from [`src/lib/assistant/tools/index.ts`](../src/lib/assistant/tools/index.ts) at runtime; this doc lists them grouped by category. Empty until Slice 7.2.
 
-### Read tools (planned, Slice 7.2)
+### Read tools (shipped, Slice 7.2)
 - `read_canvas` — full graph + spatial layout + per-node status.
-- `read_node_state(nodeId)` — record status, output, history for one node.
-- `read_library` — assets summary.
-- `read_gallery({ filter })` — generation rows matching filter.
-- `read_recipe(recipeId)` — full recipe details.
+- `read_node_state(nodeId)` — record status, output, error, usage, edges for one node.
+- `read_library({ kind?, includeUrls? })` — assets summary, optional filter by kind.
+- `read_gallery({ nodeId?, nodeKind?, outputType?, pinnedOnly?, promptContains?, limit? })` — generation rows.
+- `read_recipe(recipeId)` — full recipe details (subgraph + exposed I/O).
 
 ### Construct tools (planned, Slice 7.3)
 - `add_node({ kind, position, config })` — spawn a new node.
@@ -108,10 +108,11 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 
 The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/reasoner.ts) (lands in Slice 7.3).
 
-**Slice 7.1 contract** (current):
+**Slice 7.2 contract** (current):
 - One LLM call per user submit.
-- Multi-turn STILL DISABLED for the LLM (chat history persists in UI but isn't threaded into the call yet — Slice 7.2 wires it).
-- JSON-in-text plan; legacy single shot.
+- Multi-turn ON: last 20 chat messages threaded into `messages[]`. The LLM sees prior turns; "now do X" follow-ups work.
+- Knowledge bundle (8 dimensions) + plan instructions go in the system prompt.
+- Read tools registered + described in the prompt, but tool DISPATCH still uses JSON-in-text plan (no native tool-call loop yet — Slice 7.3 enables).
 
 **Slice 7.3+ target contract**:
 - Tool-call loop. LLM emits `tool_use`; we execute; we send `tool_result`; loop until `finish_reason: "stop"` or cap.
@@ -162,7 +163,7 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 | Slice | ADR | Status | Title |
 |---|---|---|---|
 | 7.1 | ADR-0041 | **shipped** | Provider migration + foundation |
-| 7.2 |  | planned | Knowledge bus + memory + read tools |
+| 7.2 | ADR-0041 | **shipped** | Knowledge bus + memory + read tools |
 | 7.3 | ADR-0042 | planned | Native tool calling + streaming + construct tools |
 | 7.4 | ADR-0043 | planned | Vision evaluation + result reasoning |
 | 7.5 | ADR-0044 | planned | Capability gaps + recipe pattern detection |

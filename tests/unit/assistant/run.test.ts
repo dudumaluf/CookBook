@@ -18,16 +18,35 @@ vi.mock("@/lib/repositories/supabase-recipe-repository", () => ({
   SupabaseRecipeRepository: class {},
 }));
 
+// Slice 7.2 — knowledge bundle now pulls from cookbook_generations
+// (gallery) too. Stub it to keep these unit tests off the network.
+const generationRepoMocks = {
+  list: vi.fn().mockResolvedValue([]),
+  insert: vi.fn(),
+  setPinned: vi.fn(),
+  setTitle: vi.fn(),
+  setTags: vi.fn(),
+  remove: vi.fn(),
+  listForNode: vi.fn().mockResolvedValue([]),
+};
+vi.mock("@/lib/repositories/supabase-generation-repository", () => ({
+  getGenerationRepository: () => generationRepoMocks,
+  SupabaseGenerationRepository: class {},
+}));
+
 const { planFromAssistant, executePlan } = await import(
   "@/lib/assistant/run"
 );
 const { useAssetStore } = await import("@/lib/stores/asset-store");
 const { useExecutionStore } = await import("@/lib/stores/execution-store");
+const { useProjectStore } = await import("@/lib/stores/project-store");
 const { useWorkflowStore } = await import("@/lib/stores/workflow-store");
 
 beforeEach(() => {
   callOpenRouterMock.mockReset();
   Object.values(recipeRepoMocks).forEach((m) => m.mockReset());
+  generationRepoMocks.list.mockReset();
+  generationRepoMocks.list.mockResolvedValue([]);
   useAssetStore.setState({
     assets: [],
     selectedAssetIds: [],
@@ -44,6 +63,9 @@ beforeEach(() => {
     isRunning: false,
     records: new Map(),
   });
+  // Slice 7.2 — assistant requires an active project. Tests that
+  // exercise planFromAssistant must seed one.
+  useProjectStore.setState({ id: "test-project-1", name: "Test" });
   recipeRepoMocks.list.mockResolvedValue([
     {
       id: "recipe-1",

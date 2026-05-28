@@ -76,12 +76,25 @@ interface ProviderError {
 
 /**
  * Build the OpenAI-shape request body from our internal LlmRequest.
- * Handles both input modes (legacy + native).
+ * Handles both input modes (legacy + native) and the hybrid case
+ * where the caller passes BOTH `system` (string) AND `messages[]` —
+ * we prepend the system as a system-role message at index 0, so the
+ * caller doesn't need to remember the OpenAI convention every time.
  */
 function buildRequestBody(args: LlmRequest): Record<string, unknown> {
-  const messages: ChatMessage[] = args.messages
-    ? args.messages
-    : buildMessagesFromLegacyShape(args);
+  let messages: ChatMessage[];
+  if (args.messages) {
+    messages = [...args.messages];
+    if (
+      args.system &&
+      args.system.length > 0 &&
+      messages[0]?.role !== "system"
+    ) {
+      messages = [{ role: "system", content: args.system }, ...messages];
+    }
+  } else {
+    messages = buildMessagesFromLegacyShape(args);
+  }
 
   const body: Record<string, unknown> = {
     model: args.model,

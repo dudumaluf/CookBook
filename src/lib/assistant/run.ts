@@ -3,13 +3,12 @@
 import { callOpenRouter } from "@/lib/llm/call-openrouter";
 import { instantiateRecipeOnCanvas } from "@/lib/recipes/instantiate";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
-import { useAssetStore } from "@/lib/stores/asset-store";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
-import { buildSystemPrompt } from "./system-prompt";
+import { buildKnowledgeBundle } from "./knowledge";
 import {
-  type AssistantContext,
   type AssistantPlan,
   assistantPlanSchema,
   type AssistantStep,
@@ -50,49 +49,6 @@ interface PlanFromAssistantOptions {
 }
 
 /**
- * Assemble the assistant context from live stores. Stays minimal so the
- * system prompt doesn't blow the LLM's context window.
- */
-async function buildContext(ownerId: string): Promise<AssistantContext> {
-  // Recipes — own + system.
-  const recipes = await getRecipeRepository().list({
-    ownerId,
-    includeSystem: true,
-    limit: 20,
-  });
-  const assets = useAssetStore.getState().assets;
-  const soulIds = assets
-    .filter((a): a is typeof a & { kind: "soul-id" } => a.kind === "soul-id")
-    .slice(0, 20)
-    .map((a) => ({
-      id: a.id,
-      name: a.name,
-      // Variant is on the soul-id asset shape.
-      variant:
-        (a as unknown as { variant?: string }).variant ?? "personalized",
-    }));
-  const images = assets
-    .filter((a): a is typeof a & { kind: "image" } => a.kind === "image")
-    .slice(0, 20)
-    .map((a) => ({
-      id: a.id,
-      name: a.name,
-      url: (a as unknown as { url: string }).url ?? "",
-    }));
-  const { nodes, edges } = useWorkflowStore.getState();
-  return {
-    recipes: recipes.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description,
-    })),
-    soulIds,
-    images,
-    canvas: { nodeCount: nodes.length, edgeCount: edges.length },
-  };
-}
-
-/**
  * Strip optional code fences if the LLM included them despite our
  * instruction. Defensive — most well-tuned models obey the JSON-only
  * directive but a few wrap output in ```json … ``` regardless.
@@ -102,17 +58,53 @@ function stripFences(s: string): string {
   return fenced ? fenced[1]!.trim() : s.trim();
 }
 
+const PLAN_INSTRUCTIONS = `## RESPONSE SHAPE
+
+Always respond with a JSON object matching:
+
+{
+  "reasoning": string,                  // 1-2 sentences explaining what you're doing
+  "steps": [                            // ordered execution list
+    { "kind": "clear-canvas" } |
+    { "kind": "instantiate-recipe", "recipeId": <uuid>, "position": { "x": 100, "y": 100 } } |
+    { "kind": "set-node-config", "nodeId": <string>, "config": { ... } } |
+    { "kind": "link-soul-id", "nodeId": <string>, "assetId": <string> } |
+    { "kind": "run" }
+  ],
+  "estimatedCostUsd": number,           // sum of gen+llm costs in this plan
+  "confirmation": string                // 1 line "are you sure?" if cost > 0.05
+}
+
+DO NOT include markdown fences. DO NOT explain in prose. Output ONLY the JSON object.
+
+If the user just asked a question (no action needed), still respond with the JSON shape — \`steps: []\` and put the answer in \`reasoning\`. The user reads the reasoning verbatim.`;
+
 export async function planFromAssistant(
   options: PlanFromAssistantOptions,
 ): Promise<PlanResult> {
   const { userMessage, signal, ownerId, model = DEFAULT_MODEL } = options;
-  const context = await buildContext(ownerId);
-  const system = buildSystemPrompt(context);
+  const projectId = useProjectStore.getState().id;
+  if (!projectId) {
+    return {
+      rawText: "",
+      error: "No active project — sign in and load a project first.",
+    };
+  }
+  // Slice 7.2 — full knowledge bundle (8 dimensions) + multi-turn
+  // conversation messages threaded into the LLM call.
+  const bundle = await buildKnowledgeBundle({ ownerId, projectId });
+  const system = bundle.system + "\n\n" + PLAN_INSTRUCTIONS;
+  // Conversation history goes BEFORE the new user message so the LLM
+  // sees follow-up framing ("now do X" makes sense after "did Y").
+  const messages = [
+    ...bundle.messages,
+    { role: "user" as const, content: userMessage },
+  ];
   let response;
   try {
     response = await callOpenRouter({
       model,
-      user: userMessage,
+      messages,
       system,
       temperature: 0.2,
       maxTokens: 1500,

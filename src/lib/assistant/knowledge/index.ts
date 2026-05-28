@@ -1,55 +1,101 @@
+import { buildCanvasKnowledge } from "./canvas";
+import { buildGalleryKnowledge } from "./gallery";
 import { buildIdentityKnowledge } from "./identity";
+import { buildLibraryKnowledge } from "./library";
+import { buildNodeCatalogKnowledge } from "./node-catalog";
+import { buildRecipeCatalogKnowledge } from "./recipes";
+import { buildVocabularyKnowledge } from "./vocabulary";
+import { getToolDefinitions } from "@/lib/assistant/tools";
+import type { ChatMessage } from "@/lib/llm/types";
+
+import { buildConversationMessages } from "./conversation";
 
 /**
- * Knowledge bus — Slice 7.1 (ADR-0041) shell, full implementation in
- * Slice 7.2.
+ * Knowledge bus — Slice 7.2 (ADR-0041).
  *
- * The bus is the single entry point for "what does the assistant know
- * right now?". Each dimension is a module under `knowledge/` that
- * builds a markdown / structured chunk to embed in the system prompt
- * (or, in 7.6, retrievable via RAG).
+ * Single entry point for "what does the assistant know right now?".
+ * Returns:
+ *   - `system`: a long markdown string going into the system prompt
+ *     (identity + vocabulary + node catalog + recipes + canvas +
+ *     library + gallery + tool surface description).
+ *   - `messages`: the conversation history converted to OpenAI Chat
+ *     Completions `messages[]` shape, ready to prepend to the new
+ *     user message.
  *
- * Slice 7.1 ships ONE dimension: `identity`. The other 8 (catalog,
- * canvas, library, gallery, recipes, conversation, plus 2 reserved)
- * land in 7.2 — the bus structure exists today so adding them is
- * mechanical.
+ * Slice 7.2 ships ALL eight knowledge dimensions. The `relevance`
+ * hints are honored as filters (skip dimensions when the caller
+ * knows they're irrelevant) but default to "include everything"
+ * because token budget at M0a-scale is comfortable.
  *
- * `buildKnowledgeBundle({ relevance })` will eventually accept hints
- * to scope what's loaded (e.g. "user is asking about generations →
- * include gallery + conversation, skip library"). 7.1 ignores the
- * hints and just emits identity; 7.2 expands.
+ * The function is async because two dimensions (recipes + gallery)
+ * are DB-backed. Callers (the assistant) await once at the top of
+ * `planFromAssistant`.
  */
 
 export interface KnowledgeBundleOptions {
+  /** Owner uuid — required; recipe catalog scopes by it. */
+  ownerId: string;
+  /** Project uuid — required; gallery scopes by it. */
+  projectId: string;
   /**
-   * Hints the relevance scorer that picks which dimensions to load.
-   * Slice 7.1 ignores; 7.2+ honors.
+   * Hints to skip specific dimensions (default: include all). Useful
+   * for cost-sensitive flows or when the assistant is recursing on
+   * itself and doesn't need the full context blob again.
    */
-  relevance?: {
-    needsCanvas?: boolean;
-    needsLibrary?: boolean;
-    needsGallery?: boolean;
-    needsRecipes?: boolean;
-    needsConversation?: boolean;
+  skip?: {
+    canvas?: boolean;
+    library?: boolean;
+    gallery?: boolean;
+    recipes?: boolean;
+    nodeCatalog?: boolean;
+    conversation?: boolean;
   };
 }
 
-/**
- * Returns the system-prompt knowledge block as a single markdown
- * string. Caller embeds it into the system message of the LLM call.
- */
-export function buildKnowledgeBundle(
-  _options: KnowledgeBundleOptions = {},
-): string {
+export interface KnowledgeBundle {
+  /** Concatenated markdown for the system prompt. */
+  system: string;
+  /** OpenAI-shape conversation history (oldest-first). */
+  messages: ChatMessage[];
+}
+
+export async function buildKnowledgeBundle(
+  options: KnowledgeBundleOptions,
+): Promise<KnowledgeBundle> {
+  const { ownerId, projectId, skip = {} } = options;
+
+  // Two async dimensions in parallel for speed.
+  const [recipeMd, galleryMd] = await Promise.all([
+    skip.recipes ? null : buildRecipeCatalogKnowledge(ownerId),
+    skip.gallery ? null : buildGalleryKnowledge(projectId),
+  ]);
+
   const sections: string[] = [];
   sections.push(buildIdentityKnowledge());
-  // Future dimensions (Slice 7.2):
-  //   sections.push(buildVocabularyKnowledge());
-  //   sections.push(buildNodeCatalogKnowledge());
-  //   sections.push(buildRecipeCatalogKnowledge(...));
-  //   sections.push(buildCanvasKnowledge(...));
-  //   sections.push(buildLibraryKnowledge(...));
-  //   sections.push(buildGalleryKnowledge(...));
-  //   sections.push(buildConversationKnowledge(...));
-  return sections.join("\n\n");
+  sections.push(buildVocabularyKnowledge());
+  if (!skip.nodeCatalog) sections.push(buildNodeCatalogKnowledge());
+  if (recipeMd) sections.push(recipeMd);
+  if (!skip.canvas) sections.push(buildCanvasKnowledge());
+  if (!skip.library) sections.push(buildLibraryKnowledge());
+  if (galleryMd) sections.push(galleryMd);
+  // Tool surface description — auto-generated from the registry. Empty
+  // until Slice 7.2 read tools register; populated by 7.2 onwards.
+  const tools = getToolDefinitions();
+  if (tools.length > 0) {
+    const lines = ["## TOOLS YOU CAN CALL"];
+    for (const t of tools) {
+      lines.push(
+        `### \`${t.function.name}\``,
+        t.function.description,
+      );
+    }
+    sections.push(lines.join("\n\n"));
+  }
+
+  const messages = skip.conversation ? [] : buildConversationMessages();
+
+  return {
+    system: sections.join("\n\n"),
+    messages,
+  };
 }

@@ -76,17 +76,6 @@ export const assistantPlanSchema = z.object({
 
 export type AssistantPlan = z.infer<typeof assistantPlanSchema>;
 
-export interface AssistantContext {
-  /** Recipes available to use in `instantiate-recipe`. */
-  recipes: { id: string; name: string; description: string | null }[];
-  /** Soul ID assets available to link. */
-  soulIds: { id: string; name: string; variant: string }[];
-  /** Image assets available (URL refs). */
-  images: { id: string; name: string; url: string }[];
-  /** Current canvas state (counts only — full graph would blow context). */
-  canvas: { nodeCount: number; edgeCount: number };
-}
-
 export interface AssistantMessage {
   role: "user" | "assistant" | "system";
   content: string;

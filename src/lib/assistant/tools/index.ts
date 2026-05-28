@@ -1,5 +1,11 @@
 import type { ToolDefinition } from "@/lib/llm/types";
 
+import { readCanvasTool } from "./read/read-canvas";
+import { readGalleryTool } from "./read/read-gallery";
+import { readLibraryTool } from "./read/read-library";
+import { readNodeStateTool } from "./read/read-node-state";
+import { readRecipeTool } from "./read/read-recipe";
+
 /**
  * Tool registry — Slice 7.1 (ADR-0041) shell.
  *
@@ -55,9 +61,17 @@ export interface ToolExecutionContext {
 }
 
 const tools: AssistantTool[] = [
-  // Empty until 7.2. Each future slice imports its tools from
-  // `tools/<category>/...` and pushes them here (or registers via a
-  // `registerTool(...)` helper if we grow > 30 tools).
+  // Slice 7.2 — read tools. Sync access to the assistant's
+  // observability surface (canvas, library, gallery, recipes).
+  readCanvasTool,
+  readNodeStateTool,
+  readLibraryTool,
+  readGalleryTool,
+  readRecipeTool,
+  // Slice 7.3 will add construct / recipe / run / reasoning tools.
+  // Slice 7.4 adds eval tools.
+  // Slice 7.5 adds capability-gap tools.
+  // Slice 7.6 adds RAG tools.
 ];
 
 /**
