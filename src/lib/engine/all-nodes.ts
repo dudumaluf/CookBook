@@ -1,6 +1,7 @@
 import { arrayNodeSchema } from "@/components/nodes/node-array";
 import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { exportNodeSchema } from "@/components/nodes/node-export";
+import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
@@ -38,6 +39,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(llmTextNodeSchema);
   nodeRegistry.register(soulIdNodeSchema);
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
+  nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
   nodeRegistry.register(textIteratorNodeSchema);
   nodeRegistry.register(arrayNodeSchema);

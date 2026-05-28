@@ -227,23 +227,22 @@ describe("SupabaseGenerationRepository", () => {
     expect(capturedIn!.vals).toEqual(["higgsfield-image-gen"]);
   });
 
-  it("list filter outputType=video short-circuits to no rows (M0c reserved)", async () => {
-    let capturedEq: { col: string; val: unknown } | null = null;
+  it("list filter outputType=video queries node_kind in (seedance-video) (Slice B)", async () => {
+    let capturedIn: { col: string; vals: unknown[] } | null = null;
     const client = {
       from: () => {
         const builder: Record<string, unknown> = {};
         builder.select = () => builder;
-        builder.eq = (col: string, val: unknown) => {
-          // Last eq() call wins — we expect the short-circuit one.
-          capturedEq = { col, val };
-          return builder;
-        };
+        builder.eq = () => builder;
         builder.is = () => builder;
         builder.ilike = () => builder;
         builder.order = () => builder;
         builder.limit = () => builder;
         builder.range = () => builder;
-        builder.in = () => builder;
+        builder.in = (col: string, vals: unknown[]) => {
+          capturedIn = { col, vals };
+          return builder;
+        };
         builder.then = (resolve: (v: unknown) => unknown) =>
           Promise.resolve([]).then(resolve);
         return builder;
@@ -251,8 +250,8 @@ describe("SupabaseGenerationRepository", () => {
     };
     const repo = new SupabaseGenerationRepository(client as never);
     await repo.list({ projectId: "p1", outputType: "video" });
-    expect(capturedEq).not.toBeNull();
-    expect(capturedEq!.col).toBe("node_kind");
-    expect(capturedEq!.val).toBe("__none__");
+    expect(capturedIn).not.toBeNull();
+    expect(capturedIn!.col).toBe("node_kind");
+    expect(capturedIn!.vals).toEqual(["seedance-video"]);
   });
 });

@@ -2169,3 +2169,51 @@ All additive — no existing node, asset, or migration changes shape.
 - ADR-0018b (image asset source `remote` vs `url`) — `MediaAssetSource` reuses the split.
 - ADR-0035 (durable generations) — rehost generalization keeps video/audio generations durable like images.
 - The arc plan (`.cursor/plans/`) — Slice A is the foundation; Slices B-G build on it.
+
+## ADR-0047 — Seedance video node + Fal media route via @fal-ai/client (M1 Slice B)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice B (multimodal media arc).
+- **Context**: the centerpiece of the performance-video use case is Fal's `bytedance/seedance-2.0/*` — it natively does person-swap, lip-sync, native audio, and video extension. Slice B ships a single `seedance-video` node that can generate one clip end-to-end, the foundation the Continuity Builder (Slice D) loops over.
+
+### 1. Decisão: use @fal-ai/client `subscribe` instead of a hand-rolled poll loop
+
+The Higgsfield wrapper (ADR-0029) predates our use of the Fal client and hand-rolls submit + 3s poll. For Seedance we use `@fal-ai/client` (already a dependency, v1.10.1) `fal.subscribe(endpoint, { input, abortSignal })`, which handles queue submission + polling + abort natively and returns `{ data: { video: { url }, seed } }`. Less code, less surface to get wrong. `fal.config({ credentials: FAL_KEY })` once, server-side.
+
+### 2. Decisão: one node, endpoint dispatch by references present
+
+`seedance-video` (category `ai-video`, non-reactive) has inputs prompt (text) + image/video/audio (each multiple). The server wrapper picks the endpoint:
+- any image or video reference -> `reference-to-video` (up to 9 img + 3 vid + 3 audio; the capable path for continuity + lipsync)
+- none -> `text-to-video`
+- `request.fast` selects the `/fast/` tier per call.
+
+This keeps the canvas simple (one node) while covering all three Fal endpoints. The image-to-video start/end-frame variant (for the frame-chain continuity strategy) lands in Slice D.
+
+### 3. Decisão: synchronous subscribe-in-route with maxDuration=300
+
+The route blocks on `subscribe` until the clip is ready (1-3 min for 15s) and sets `export const maxDuration = 300`. This mirrors Higgsfield's proven blocking pattern (its 43s jobs work in prod). Trade-off: holds a serverless function open for minutes. If real-world latency exceeds the ceiling, a future slice moves to the async webhook path (submit -> request id -> client polls a status route, or fal_webhook callback). Noted as the known scaling limit.
+
+### 4. Decisão: client-side constraint check before spend
+
+The node's `execute()` runs `validateSeedanceRequest` (Slice A constraints) before calling the API — out-of-range duration / too many refs / audio-without-visual fail locally with a clear message instead of a wasted upstream 400 (and wasted latency). `seedance-video` added to `OUTPUT_TYPE_NODE_KINDS.video` so the Gallery's Video tab surfaces results, and `generation-sync` (Slice A) already rehosts the Fal CDN video URL to our bucket on `done`.
+
+### 5. File layout (the Fal node pattern, distinct from Higgsfield's)
+
+- `src/lib/fal/types.ts` — Zod request schema + success/error types.
+- `src/lib/fal/seedance-api.ts` — `server-only`; `fal.subscribe` dispatch.
+- `src/lib/fal/call-seedance.ts` — client wrapper (`FalCallError`, 499 -> AbortError).
+- `src/app/api/fal/seedance/route.ts` — route (maxDuration 300, mirror Higgsfield error mapping).
+- `src/components/nodes/node-fal-seedance.tsx` — the node (`<video controls>` preview, history cursor, settings popover).
+
+### 6. Trade-offs aceitos
+
+- **Blocking route** (vs async/webhook) — simplest MVP, proven by Higgsfield; webhook is the documented next step if needed.
+- **No image-to-video start/end-frame mode yet** — Slice D adds it for frame-chain continuity.
+- **Video preview is basic** (`<video controls>`) — Gallery video thumbnail polish is Slice D.
+- **@fal-ai/client now actually used** — diverges from the "raw fetch to fal.run" pattern in `provider.ts`, but the queue/poll handling is worth it for long video jobs.
+
+### 7. Cross-references
+
+- ADR-0029 (Higgsfield route) — same route/wrapper/node shape, different poll mechanism.
+- ADR-0046 (media layer) — provides VideoRef, constraints, rehost.
+- ADR-0035 (durable generations) — Seedance CDN URLs rehosted on `done`.

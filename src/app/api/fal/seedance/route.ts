@@ -1,0 +1,82 @@
+import { NextResponse, type NextRequest } from "next/server";
+
+import { generateSeedanceVideo } from "@/lib/fal/seedance-api";
+import {
+  type FalErrorResponse,
+  seedanceVideoRequestSchema,
+} from "@/lib/fal/types";
+
+/**
+ * POST /api/fal/seedance — Slice B (multimodal media arc).
+ *
+ * Proxies a Seedance 2.0 video generation, keeping FAL_KEY server-only.
+ * Mirrors the Higgsfield route shape. The client wrapper
+ * `callSeedanceVideo()` is the only intended caller.
+ *
+ * Returns:
+ *   200 -> SeedanceVideoSuccessResponse ({ videoUrl, mime, seed, model })
+ *   400 -> { code: "invalid_request" }
+ *   499 -> { code: "aborted" }
+ *   500 -> { code: "missing_key" | "unknown" }
+ *   502 -> { code: "upstream_error" | "timeout" }
+ *
+ * `maxDuration` is bumped because a single 15s clip can take 1-3 min to
+ * render and `subscribe` blocks the route until it completes. If real-world
+ * latency exceeds this, a future slice moves to the webhook/async path
+ * (request id -> client polls a status route) — noted in the ADR.
+ */
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
+export async function POST(req: NextRequest) {
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return errorResponse(400, "invalid_request", "Body must be JSON");
+  }
+
+  const parsed = seedanceVideoRequestSchema.safeParse(json);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "request";
+    const message = issue
+      ? `${path}: ${issue.message}`
+      : "Invalid request payload";
+    return errorResponse(400, "invalid_request", message);
+  }
+
+  try {
+    const result = await generateSeedanceVideo(parsed.data, req.signal);
+    return NextResponse.json(result, { status: 200 });
+  } catch (err) {
+    return mapErrorToResponse(err);
+  }
+}
+
+function mapErrorToResponse(err: unknown): NextResponse<FalErrorResponse> {
+  const e = err as Error & { code?: FalErrorResponse["code"] };
+  if (e?.name === "AbortError" || e?.code === "aborted") {
+    return errorResponse(499, "aborted", "Request cancelled");
+  }
+  if (e?.code === "missing_key") {
+    return errorResponse(500, "missing_key", e.message);
+  }
+  if (e?.code === "timeout") {
+    return errorResponse(502, "timeout", e.message);
+  }
+  if (e?.code === "upstream_error") {
+    return errorResponse(502, "upstream_error", e.message);
+  }
+  console.error("[api/fal/seedance] unexpected failure:", e);
+  return errorResponse(500, "unknown", "Video generation failed");
+}
+
+function errorResponse(
+  status: number,
+  code: NonNullable<FalErrorResponse["code"]>,
+  message: string,
+): NextResponse<FalErrorResponse> {
+  return NextResponse.json({ error: message, code }, { status });
+}
