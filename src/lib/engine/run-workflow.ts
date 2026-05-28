@@ -635,6 +635,19 @@ export async function runWorkflow(
         config: node.config,
         inputs,
         signal,
+        // Slice D — long-running nodes (Continuity Builder) emit per-chunk
+        // progress + partial output through this. Forwarded as a `running`
+        // record so the UI previews chunks as they land.
+        reportProgress: (progress) => {
+          emit(node.id, {
+            status: "running",
+            hash: nodeHash,
+            ...(progress.fanOut ? { fanOut: progress.fanOut } : {}),
+            ...(progress.output !== undefined
+              ? { output: progress.output }
+              : {}),
+          });
+        },
       });
       const { output, usage } = normalizeExecuteResult(rawResult);
       const elapsedMs = Math.round(performance.now() - start);

@@ -1359,3 +1359,56 @@ describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
     expect(records.size).toBe(0);
   });
 });
+
+/* reportProgress wiring (Slice D) ----------------------------------------- */
+
+describe("reportProgress (Slice D)", () => {
+  it("forwards a node's progress calls as `running` records with fanOut + output", async () => {
+    const registry = new NodeRegistry();
+    registry.register(
+      defineNode<{ n: number }>({
+        kind: "looper",
+        category: "ai-video",
+        title: "Looper",
+        description: "",
+        icon: Sparkles,
+        inputs: [],
+        outputs: [{ id: "out", label: "out", dataType: "video" }],
+        defaultConfig: { n: 0 },
+        reactive: false,
+        execute: async ({ config, reportProgress }) => {
+          const chunks: StandardizedOutput[] = [];
+          for (let i = 0; i < config.n; i++) {
+            reportProgress?.({
+              fanOut: { total: config.n, done: i },
+              output: chunks.slice(),
+            });
+            chunks.push({ type: "video", value: { url: `c${i}.mp4` } });
+          }
+          return chunks;
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+
+    const runningRecords: ExecutionRecord[] = [];
+    await runWorkflow({
+      nodes: [node("a", "looper", { n: 3 })],
+      edges: [],
+      registry,
+      cache: new Map() as ExecutionCache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => {
+        if (id === "a" && r.status === "running" && r.fanOut) {
+          runningRecords.push(r);
+        }
+      },
+    });
+
+    // Three progress emits (done 0, 1, 2), each carrying the partial output.
+    expect(runningRecords.length).toBe(3);
+    expect(runningRecords[0]?.fanOut).toEqual({ total: 3, done: 0 });
+    expect(runningRecords[2]?.fanOut).toEqual({ total: 3, done: 2 });
+    expect(Array.isArray(runningRecords[2]?.output)).toBe(true);
+  });
+});

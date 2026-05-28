@@ -323,6 +323,25 @@ export interface ExecContext<TConfig = unknown> {
     StandardizedOutput | StandardizedOutput[] | undefined
   >;
   signal: AbortSignal;
+  /**
+   * Optional progress reporter (Slice D — multimodal media arc). The engine
+   * wires this so a long-running, multi-step node (the Continuity Builder
+   * looping Seedance per chunk) can emit intermediate progress + partial
+   * output WITHOUT finishing. The engine forwards each call to `onProgress`
+   * as a `running` record with the given `fanOut` / `output`. Nodes that
+   * don't loop ignore it (backward-compatible — all existing nodes do).
+   */
+  reportProgress?: (progress: ExecProgress) => void;
+}
+
+/**
+ * Partial progress a long-running node emits mid-execute (Slice D). Mirrors
+ * the `fanOut` ring already used by the parallel fan-out path, plus an
+ * optional partial output so the UI can preview chunks as they land.
+ */
+export interface ExecProgress {
+  fanOut?: { total: number; done: number };
+  output?: StandardizedOutput | StandardizedOutput[];
 }
 
 export interface NodeInstance<TConfig = unknown> {
