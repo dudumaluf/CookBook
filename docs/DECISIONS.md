@@ -1899,3 +1899,73 @@ The `executePlan` legacy path remains in `src/lib/assistant/run.ts` for any pre-
 - ADR-0041 (provider abstraction) — Slice 7.1 set up the chat completions wrapper. 7.3 actually uses `tools[]` + `tool_choice` here.
 - ADR-0037 (assistant DSL) — superseded by 7.3's native tools. The JSON-in-text plan path remains for legacy persisted messages but new flows go through the reasoner.
 - ADR-0042's caps generalize ADR-0040's per-message persistence model — chat history threads naturally with multi-turn reasoning.
+
+## ADR-0043 — Vision evaluation tools (M0a Slice 7.4)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 7.4.
+- **Context**: ADR-0042 gave the assistant a tool-call loop. The next gap is **judgment** — when a Higgsfield batch produces 4 images, the assistant needs to know if any of them actually match the user's intent before claiming "done". Without vision evaluation, the assistant is blind: it can spend $0.30 generating, but it can't tell if the result is on-brief or off-brief. ADR-0043 closes that loop.
+
+### 1. Decisão: 3 vision tools, single-shot (no auto-eval daemon)
+
+Three new tools register in the existing tool registry (no new infrastructure):
+
+| Tool | Input | Output |
+|---|---|---|
+| `evaluate_result` | `generationId` (preferred) or `imageUrl` + `criteria` | `{ score 0-1, strengths[], weaknesses[], reasoning }` |
+| `compare_results` | `generationIds[]` (2-8) + `criteria` | `{ ranking: [{ generationId, rank, score, notes }], summary }` |
+| `regenerate` | `generationId` + optional `configPatch` | `{ runId, nodeId }` (re-runs source node) |
+
+These three together let the LLM:
+
+- Score one image against intent.
+- Pick a winner from a batch.
+- Apply learnings by tweaking the source node's config and re-running.
+
+**No "auto-eval daemon"**. The user's master plan called out "auto-eval hook for batch runs" — implemented in 7.4 by giving the LLM the tools + system-prompt nudge (`narrate("checking the 4 images against your criteria…")`) + the autonomy to call `evaluate_result` after a `run_workflow`. A passive background daemon would either run too often (wasted spend) or miss intent (criteria the LLM heard during the conversation). The active, in-loop pattern matches how a senior creative would actually work.
+
+### 2. Decisão: vision LLM via the existing chat completions wrapper
+
+Both eval tools route through `callOpenRouter` with `images: [url]` (or `images: [url1, ..., urlN]` for compare). No new endpoint, no new auth — same Fal OpenRouter chat completions surface ADR-0041 set up. Default model: `anthropic/claude-haiku-4.5` (vision-capable, fast, cheap). Caller can override via `model` arg.
+
+The eval prompts demand strict JSON. Tools strip optional ```json fences and validate via Zod. On parse failure the tool returns `ok: false` with a `rawText` field — the LLM can choose to retry with a different model or simply convey the parse error to the user.
+
+### 3. Decisão: `regenerate` is a thin convenience wrapper
+
+`regenerate` doesn't add new mutation primitives — it composes existing ones:
+
+1. Look up the source node from the generation row.
+2. If `configPatch` provided: `update_node_config(nodeId, configPatch)`.
+3. `start_run_from(nodeId)`.
+
+The LLM could orchestrate this manually (read_node_state + update_node_config + run_from), but `regenerate` is so common after eval that surfacing it as one tool saves 2-3 turns per "try that again with X" interaction. Same Karpathy-tested principle: prefer one verb over three when the verb is what the user actually means.
+
+### 4. Decisão: eval costs are owned by the assistant's cost budget
+
+The reasoner's cost cap (Slice 7.3, $0.50 per `runReasoner` call) covers BOTH the orchestration LLM AND the eval LLMs. A single eval = ~$0.001, so the budget can absorb 50+ evals per turn. Cap firing naturally keeps the assistant from running away.
+
+### 5. Decisão: GenerationRepository now exposes `get(id)`
+
+Slice 7.4 added a `get(id): Promise<GenerationRecord | null>` method. The eval tools resolve image URLs from generation IDs by hitting this row-by-row. Same pattern used in 6.6 / 6.7 — repositories grow surgical methods as new tools need them, no big-bang refactors.
+
+### 6. Trade-offs aceitos
+
+- **No vision streaming** — eval LLM is single-shot; no progressive output. Eval LLM responses are short (200-400 tokens), so the latency is fine (~1-2s).
+- **No multi-image diff** — `compare_results` rates each image independently against criteria; it doesn't surface "image 1 has the best lighting, image 2 has the best pose". Future tool `analyze_dimensions` could do this if needed.
+- **Eval model isn't fine-tuned** — using off-the-shelf claude-haiku. Good enough at M0a; bespoke vision rubrics could land in M1+.
+- **Regenerate doesn't auto-evaluate the new output** — the loop choice (re-eval after regenerate?) is left to the LLM's judgment. If the user said "regenerate with more contrast then check it", the LLM will chain `regenerate` → wait → `evaluate_result`.
+
+### 7. Implementação resumida
+
+- `src/lib/assistant/tools/eval/{evaluate-result,compare-results,regenerate}.ts` — 3 new tools.
+- `src/lib/repositories/generation-repository.ts`: `get(id)` added to interface.
+- `src/lib/repositories/supabase-generation-repository.ts`: `get` impl using `.maybeSingle()`.
+- `src/lib/assistant/tools/index.ts`: 3 tools registered.
+- `tests/unit/assistant/eval-tools.test.ts` (new, 9): every tool's happy + sad path.
+- `tests/unit/repositories/supabase-generation-repository.test.ts`: 2 new tests for `get`.
+
+### 8. Cross-references
+
+- ADR-0042 (reasoner) — eval tools live in the same registry, dispatched the same way as construct/recipe/run tools.
+- ADR-0035 (durable generations) — eval tools rely on the persistent `cookbook_generations` table being the source of truth for any generated image.
+- ADR-0027 (LLM Text vision) — uses the same `images: []` shape on `callOpenRouter` that LLM Text node already does for vision.

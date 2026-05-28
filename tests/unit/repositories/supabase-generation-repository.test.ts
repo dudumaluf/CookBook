@@ -37,6 +37,7 @@ function makeMockClient(handler: (state: QueryState) => unknown) {
       return builder;
     };
     builder.single = async () => handler(state);
+    builder.maybeSingle = async () => handler(state);
     builder.then = (resolve: (v: unknown) => unknown) =>
       Promise.resolve(handler(state)).then(resolve);
     builder.insert = (payload: unknown) => {
@@ -133,6 +134,23 @@ describe("SupabaseGenerationRepository", () => {
       val: "%cat%",
     });
     expect(capturedState!.limitN).toBe(25);
+  });
+
+  /* Slice 7.4 — get(id) for the eval tools. */
+  it("get returns null when the row isn't present", async () => {
+    const client = makeMockClient(() => ({ data: null, error: null }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    const result = await repo.get("missing");
+    expect(result).toBeNull();
+  });
+
+  it("get returns the camelCase record when present", async () => {
+    const client = makeMockClient(() => ({ data: FAKE_ROW, error: null }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    const result = await repo.get("g1");
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("g1");
+    expect(result!.promptText).toBe("a cat");
   });
 
   it("setPinned issues an update with the right column", async () => {

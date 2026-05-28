@@ -7,6 +7,9 @@ import { removeEdgeTool } from "./construct/remove-edge";
 import { removeNodeTool } from "./construct/remove-node";
 import { selectNodesTool } from "./construct/select-nodes";
 import { updateNodeConfigTool } from "./construct/update-node-config";
+import { compareResultsTool } from "./eval/compare-results";
+import { evaluateResultTool } from "./eval/evaluate-result";
+import { regenerateTool } from "./eval/regenerate";
 import { readCanvasTool } from "./read/read-canvas";
 import { readGalleryTool } from "./read/read-gallery";
 import { readLibraryTool } from "./read/read-library";
@@ -101,7 +104,10 @@ const tools: AssistantTool[] = [
   // Slice 7.3 — reasoning helpers.
   narrateTool,
   askUserTool,
-  // Slice 7.4 adds eval tools.
+  // Slice 7.4 — vision evaluation.
+  evaluateResultTool,
+  compareResultsTool,
+  regenerateTool,
   // Slice 7.5 adds capability-gap tools.
   // Slice 7.6 adds RAG tools.
 ];

@@ -9,7 +9,7 @@ This doc evolves slice by slice. Each section is tagged with status:
 - **maturing** — wired but rough; expected to improve next slice.
 - **planned** — designed but not implemented yet (cite the slice that will ship it).
 
-> **Last updated:** Slice 7.3 ship — native tool-call loop + reasoner + 12 new tools + live trace UI.
+> **Last updated:** Slice 7.4 ship — vision evaluation tools (evaluate / compare / regenerate).
 
 ---
 
@@ -92,6 +92,11 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 ### Reasoning helpers (shipped, Slice 7.3)
 - `narrate({ message })` — surface progress text in chat.
 - `ask_user({ question, options? })` — pause loop, await human reply.
+
+### Evaluation tools (shipped, Slice 7.4)
+- `evaluate_result({ generationId | imageUrl, criteria })` — vision LLM scores one image against criteria.
+- `compare_results({ generationIds[], criteria })` — vision LLM ranks 2-8 images.
+- `regenerate({ generationId, configPatch? })` — patch source node config + run_from.
 
 ### Construct tools (planned, Slice 7.3)
 - `add_node({ kind, position, config })` — spawn a new node.
@@ -189,7 +194,7 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 | 7.1 | ADR-0041 | **shipped** | Provider migration + foundation |
 | 7.2 | ADR-0041 | **shipped** | Knowledge bus + memory + read tools |
 | 7.3 | ADR-0042 | **shipped** | Native tool calling + reasoner + construct/recipe/run/reasoning tools + live trace UI |
-| 7.4 | ADR-0043 | planned | Vision evaluation + result reasoning |
+| 7.4 | ADR-0043 | **shipped** | Vision evaluation + compare + regenerate |
 | 7.5 | ADR-0044 | planned | Capability gaps + recipe pattern detection |
 | 7.6 | ADR-0045 | planned | RAG + cross-project + preferences |
 

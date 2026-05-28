@@ -97,6 +97,17 @@ export class SupabaseGenerationRepository implements GenerationRepository {
     return rowToRecord(data as RawGenerationRow);
   }
 
+  async get(id: string): Promise<GenerationRecord | null> {
+    const { data, error } = await this.client
+      .from("cookbook_generations")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw mapError(error, "Failed to load generation");
+    if (!data) return null;
+    return rowToRecord(data as RawGenerationRow);
+  }
+
   async list(filter: GenerationFilter): Promise<GenerationRecord[]> {
     let query = this.client
       .from("cookbook_generations")

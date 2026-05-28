@@ -82,6 +82,8 @@ export interface GenerationFilter {
 export interface GenerationRepository {
   insert(input: InsertGenerationInput): Promise<GenerationRecord>;
   list(filter: GenerationFilter): Promise<GenerationRecord[]>;
+  /** Fetch a single row by id. Slice 7.4 — needed by the eval tools. */
+  get(id: string): Promise<GenerationRecord | null>;
   /** Latest N rows for a specific node — used by per-node history cursors. */
   listForNode(
     projectId: string,
