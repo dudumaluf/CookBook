@@ -258,22 +258,22 @@ export function GalleryDrawer() {
 
   return (
     <>
-      <div
-        // While a card is being dragged we make the entire overlay
-        // transparent to mouse events (`pointer-events-none`). The DOM
-        // stays mounted (so the drag source survives) but every drop
-        // target underneath — i.e. the React Flow canvas — becomes
-        // reachable. Visual fade telegraphs to the user that the
-        // gallery has yielded the drop layer.
-        className={`fixed inset-0 z-50 flex flex-col items-stretch transition-opacity duration-150 ${
-          isDragging ? "pointer-events-none opacity-30" : ""
-        }`}
-      >
+      <div className="fixed inset-0 z-50 flex flex-col items-stretch">
+        {/* Backdrop. While a card is being dragged we ONLY disable
+         *  pointer-events on this top region (the area above the
+         *  drawer section). That way the React Flow canvas underneath
+         *  catches the drag's hover + drop. We deliberately do NOT
+         *  fade the drawer or apply pointer-events-none to the outer
+         *  wrapper — both would cascade into the drag source's
+         *  ancestor chain and wreck the drag preview / abort the
+         *  gesture in some browsers. */}
         <button
           type="button"
           aria-label="Close gallery"
           onClick={() => setGalleryOpen(false)}
-          className="flex-1 cursor-default bg-background/60 backdrop-blur-sm"
+          className={`flex-1 cursor-default bg-background/60 backdrop-blur-sm ${
+            isDragging ? "pointer-events-none" : ""
+          }`}
         />
         <section
           aria-label="Gallery"
