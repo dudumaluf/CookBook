@@ -1,5 +1,7 @@
 import type { ToolDefinition } from "@/lib/llm/types";
 
+import { detectRecipePatternTool } from "./capability/detect-recipe-pattern";
+import { proposeNodeSchemaTool } from "./capability/propose-node-schema";
 import { addEdgeTool } from "./construct/add-edge";
 import { addNodeTool } from "./construct/add-node";
 import { moveNodeTool } from "./construct/move-node";
@@ -108,7 +110,9 @@ const tools: AssistantTool[] = [
   evaluateResultTool,
   compareResultsTool,
   regenerateTool,
-  // Slice 7.5 adds capability-gap tools.
+  // Slice 7.5 — capability gap proposals + recipe pattern detection.
+  proposeNodeSchemaTool,
+  detectRecipePatternTool,
   // Slice 7.6 adds RAG tools.
 ];
 

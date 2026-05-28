@@ -1969,3 +1969,62 @@ Slice 7.4 added a `get(id): Promise<GenerationRecord | null>` method. The eval t
 - ADR-0042 (reasoner) — eval tools live in the same registry, dispatched the same way as construct/recipe/run tools.
 - ADR-0035 (durable generations) — eval tools rely on the persistent `cookbook_generations` table being the source of truth for any generated image.
 - ADR-0027 (LLM Text vision) — uses the same `images: []` shape on `callOpenRouter` that LLM Text node already does for vision.
+
+## ADR-0044 — Capability gap proposals + recipe pattern detection (M0a Slice 7.5)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 7.5.
+- **Context**: ADR-0042/0043 gave the assistant agency to construct, run, and evaluate workflows. Two gaps remained: (1) when the user asks for a capability the registry doesn't have ("use Flux", "give me a 4-image grid compose node"), the assistant has to either lie ("I can do that!") or refuse uselessly. (2) When the user manually wires the same chain repeatedly, nobody nudges them to save it as a recipe — the value of the recipes feature is hidden behind discovery friction. ADR-0044 closes both with two new tools.
+
+### 1. Decisão: `propose_node_schema` is structured + advisory only
+
+When the user asks for a missing capability, the assistant calls `propose_node_schema` with a draft NodeSchema (kind, title, category, description, inputs, outputs, defaultConfig, rationale). The tool:
+
+1. Validates the args via Zod (kind must be lowercase kebab-case + match the public NodeIO shape).
+2. Checks that the kind isn't already in the registry — refuses to propose a clobber.
+3. Returns the structured proposal plus a `proposalId` (`proposal:<kind>-<iso-timestamp>`) that the user/dev can refer back to across turns.
+
+**The tool DOES NOT modify the registry.** Auto-codegen is out of scope at M0a — registering a real node requires writing TypeScript, wiring `execute`, adding tests, etc. The proposal is a SPEC the assistant + user agree on; the human dev (you) lands the implementation in a follow-up. No new DB table either — proposals live in the chat trace; the user can copy the JSON into a follow-up dev task.
+
+This avoids the failure mode where the LLM "creates" a node that doesn't actually work because the implementation never landed. By convention, the assistant uses `propose_node_schema` after ASKING the user "would you like me to draft a spec for this?" — not as a unilateral fallback.
+
+### 2. Decisão: `detect_recipe_pattern` works on the live canvas, not the gallery
+
+When the user has wired the same node-kind chain multiple times on canvas, the assistant detects it and suggests saving as a recipe. Algorithm:
+
+1. Build adjacency lists from `useWorkflowStore.getState()`.
+2. From every source node (no incoming edges), DFS the canvas.
+3. For each kind sequence of length ≥ 2 reached, hash by `kind1 → kind2 → ...`.
+4. Count distinct source instances per sequence.
+5. Surface sequences with count ≥ `minOccurrences` (default 2).
+
+We use the **live canvas**, not the gallery / generations history, because:
+
+- Generations record *what was produced*, not *how it was wired*. The user might have built the same chain 3 times today (different prompts, different runs) and never executed any of them — pattern detection still wants to fire.
+- Canvas state is sync, in-memory, no DB roundtrip — the pattern detection is essentially free.
+- Patterns spanning multiple historical sessions can be added later via gallery analysis (M1+).
+
+The output is `{ patterns: [{ kindSequence, count, exampleNodeIds[] }] }`, sorted by sequence length descending (longer = more valuable as a recipe). The LLM uses `select_nodes` + `save_selection_as_recipe` to act on it.
+
+### 3. Decisão: no `cookbook_node_proposals` table this slice
+
+The simplest possible thing: proposals are emitted as tool results, rendered in the chat by the existing trace UI, and the user copies the spec by hand if they want to share it with the dev. A persistent table (with admin UI to triage proposals) is a fine addition LATER, but at M0a (single-tenant, dev = user) the conversation IS the persistence layer.
+
+### 4. Trade-offs aceitos
+
+- **No auto-codegen** — proposals are advisory. The next slice MAY ship a stub generator that drops a "shadow" composite recipe with the proposed I/O surface, populated by existing nodes underneath, so the user can preview the UX while the real implementation is pending. Not 7.5.
+- **No cross-project pattern detection** — current canvas only. M1 candidate.
+- **No "merge proposal into registry" workflow** — manual dev work for now.
+- **DFS-based detection won't catch shape isomorphisms with rearranged kinds** — `text → llm-text` and `llm-text → text` count as different patterns. Acceptable; chain order is meaningful in a node graph.
+
+### 5. Implementação resumida
+
+- `src/lib/assistant/tools/capability/propose-node-schema.ts` — Zod-validated args, registry-collision check, structured proposal return.
+- `src/lib/assistant/tools/capability/detect-recipe-pattern.ts` — canvas walker, kind-sequence aggregation, `minOccurrences` filter.
+- `src/lib/assistant/tools/index.ts` — both tools registered.
+- `tests/unit/assistant/capability-tools.test.ts` (new, 6) — every tool's happy + sad path.
+
+### 6. Cross-references
+
+- ADR-0042 (reasoner) — capability tools live in the same registry; behaviour identical to construct/recipe/run/eval tools.
+- ADR-0039 (composite recipes) — `detect_recipe_pattern` outputs feed directly into `select_nodes` + `save_selection_as_recipe`.
