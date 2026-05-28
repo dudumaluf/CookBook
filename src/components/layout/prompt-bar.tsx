@@ -13,6 +13,7 @@ import {
 import { ChatSheet } from "./chat-sheet";
 import { useSession } from "@/lib/auth/use-session";
 import { planFromAssistant } from "@/lib/assistant/run";
+import { persistMessage } from "@/lib/sync/chat-sync";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
@@ -38,7 +39,15 @@ export function PromptBar() {
     const text = value.trim();
     if (!text || isThinking || !user) return;
     setValue("");
-    appendMessage({ role: "user", content: text, timestamp: Date.now() });
+    const userMsg = {
+      role: "user" as const,
+      content: text,
+      timestamp: Date.now(),
+    };
+    appendMessage(userMsg);
+    // Slice 6.8 — fire-and-forget cloud persist so chat survives reload
+    // + cross-machine. Failure doesn't block the in-memory UX.
+    void persistMessage(userMsg);
     setChatSheetOpen(true);
     setThinking(true);
     const controller = new AbortController();
@@ -49,23 +58,27 @@ export function PromptBar() {
         signal: controller.signal,
         ownerId: user.id,
       });
-      appendMessage({
-        role: "assistant",
+      const assistantMsg = {
+        role: "assistant" as const,
         content: result.rawText,
         plan: result.plan,
         error: result.error,
         costUsd: result.costUsd,
         timestamp: Date.now(),
-      });
+      };
+      appendMessage(assistantMsg);
+      void persistMessage(assistantMsg);
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return;
       const msg = err instanceof Error ? err.message : String(err);
-      appendMessage({
-        role: "assistant",
+      const errorMsg = {
+        role: "assistant" as const,
         content: "",
         error: msg,
         timestamp: Date.now(),
-      });
+      };
+      appendMessage(errorMsg);
+      void persistMessage(errorMsg);
       toast.error(`Assistant failed: ${msg}`);
     } finally {
       setThinking(false);

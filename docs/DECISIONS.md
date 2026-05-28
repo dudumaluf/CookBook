@@ -1408,6 +1408,62 @@ Composite `settings` slot: button "Unpack into subgraph" → [`unpackComposite`]
 - ADR-0028 — composite tem `size` schema (defaultWidth 240, resizable horizontal); herda BaseNode chrome standard.
 - Polish backlog → "Image Describer recipe → first-class node": agora viável; será seedado em Slice 6.7 como system recipe.
 
+## ADR-0040 — Persistent assistant chat (M0a Slice 6.8)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 6.8.
+- **Context**: o `useAssistantStore` era in-memory. Reload limpava todo o histórico, plan cards ficavam inacessíveis, o user perdia contexto da sessão anterior. Pra um app tier-premium isso é fricção. Slice 6.8 adiciona persistência cloud-canonical pro chat — sobrevive reload + cross-machine.
+
+### 1. Tabela `cookbook_assistant_messages`
+
+| Coluna | Tipo | Notas |
+|---|---|---|
+| `id` | uuid pk | Message id. |
+| `project_id` | uuid → `cookbook_projects` | Cascade delete. Chat é per-project. |
+| `owner_id` | uuid → `auth.users` | RLS. |
+| `role` | text + check (`'user' | 'assistant' | 'system'`) | text+check em vez de enum: adicionar nova role é one-line ALTER TABLE. |
+| `content` | text | LLM raw response (assistant) ou texto digitado (user). |
+| `plan` | jsonb null | Só assistant messages com plan parseado válido. |
+| `error` | text null | Quando assistant call falhou (parse / LLM error / abort). |
+| `cost_usd` | numeric(10,6) null | Cost do LLM call (assistant messages only). |
+| `created_at` | timestamptz | Index pra chronological scan. |
+
+RLS: `"owner can crud own assistant messages"` única política `auth.uid() = owner_id`. Index `(project_id, created_at)` cobre o query típico ("load all messages for project, oldest-first").
+
+### 2. Append-only, no live sync
+
+Imperative path em vez de subscription:
+
+- **`hydrateChatForProject(projectId)`** — chamado no shell uma vez após bootstrap. Carrega tudo, replace in-memory `useAssistantStore.messages` com a versão cloud (cloud é canônico).
+- **`persistMessage(message)`** — chamado pelo prompt-bar imediatamente após `appendMessage`. Fire-and-forget INSERT. Falhas log-only (UI continua funcional via in-memory).
+- **`clearChatForProject()`** — wipe cloud + in-memory; chamado pelo botão Clear no ChatSheet.
+
+Sem subscription / debounced auto-save porque:
+
+1. Mensagens são imutáveis once committed — uma subscription teria de filtrar mudanças irrelevantes (isThinking toggles, etc.).
+2. Imperative com timing exato evita race conditions ("assistant ainda pensando" ↔ "store mudou").
+
+### 3. Mapping record ↔ message
+
+- `record.cost_usd` (numeric, vem como string em alguns drivers) → `message.costUsd` (number coerced).
+- `record.created_at` (timestamptz ISO) → `message.timestamp` (number ms-epoch).
+- `record.plan` (jsonb) → `message.plan` (typed AssistantPlan via direct assignment).
+
+`AssistantMessage` shape inalterado — só o caminho de hydration que muda.
+
+### 4. Trade-offs aceitos
+
+- **Per-project chat**: trocar de projeto (M0d feature) NÃO arrasta chat. Cada projeto tem sua conversa. Acceptable — chat é sobre o projeto.
+- **No edit / no delete-individual**: mensagens são append-only. Pra "deletar uma resposta ruim", user pode usar Clear (wipe entire). Per-message delete fica polish backlog.
+- **Limite default 200 messages** — `listForProject(limit=200)`. Long chats truncam; pra cobrir isso futuramente, paginação infinite-scroll.
+- **Sem tokenização / RAG** — chat é o último-N raw, não há sumarização entre sessões. M0c+.
+
+### 5. Cross-references
+
+- ADR-0034 — owner_id refs `auth.users`, RLS shape mirrors `cookbook_projects`.
+- ADR-0037 — chat é o transport do assistant DSL; ADR-0040 só persiste a transport, não muda o protocolo.
+- ADR-0035 — generations já cloud-canonical; chat segue o mesmo arquétipo de "imutable durable record per project".
+
 ## ADR-0036 — Reactive engine: schema flag becomes meaningful + live preview UX (M0a Slice 6.3)
 
 - **Date**: 2026-05-26

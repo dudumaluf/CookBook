@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { executePlan } from "@/lib/assistant/run";
+import { clearChatForProject } from "@/lib/sync/chat-sync";
 import type { AssistantMessage } from "@/lib/assistant/types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
@@ -20,7 +21,7 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
  */
 export function ChatSheet() {
   const { chatSheetOpen, setChatSheetOpen } = useLayoutStore();
-  const { messages, isThinking, clear } = useAssistantStore();
+  const { messages, isThinking } = useAssistantStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +59,7 @@ export function ChatSheet() {
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-[11px] text-muted-foreground"
-            onClick={() => clear()}
+            onClick={() => void clearChatForProject()}
           >
             Clear
           </Button>

@@ -27,6 +27,7 @@ import {
   startAutoSave,
 } from "@/lib/sync/project-sync";
 import { startAutoPersistGenerations } from "@/lib/sync/generation-sync";
+import { hydrateChatForProject } from "@/lib/sync/chat-sync";
 import { startReactiveRunner } from "@/lib/engine/reactive-runner";
 
 /**
@@ -109,6 +110,11 @@ export function AppShell() {
         // Array / List / Number / Iterators update live as the user
         // tweaks config / edges, without re-running the expensive nodes.
         unsubscribeReactive = startReactiveRunner();
+        // Slice 6.8 — pull the project's persisted chat so the
+        // ChatSheet rehydrates with the user's prior conversation.
+        // Fire-and-forget; chat hydration failures don't block the
+        // shell from rendering.
+        void hydrateChatForProject(result.project.id);
         setSyncStatus("ready");
       } catch (err) {
         if (cancelled) return;

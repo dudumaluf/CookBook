@@ -75,7 +75,10 @@ describe("autoDetectExposedIO", () => {
   it("an output that crosses the selection boundary is exposed", () => {
     const text = n("a", "text", { text: "" });
     const llm = n("b", "llm-text", {});
-    const downstream = n("c", "text", { text: "" }); // outside selection
+    // Note: downstream node `c` is referenced ONLY by the boundary-
+    // crossing edge below; we don't include it in the selection so
+    // its existence is purely an edge-source target the auto-detect
+    // walker sees as "outside".
     const edges = [
       e("a", "out", "b", "user"),
       e("b", "out", "c", "text"), // LLM.out -> Text.text (outside)
