@@ -8,6 +8,7 @@ This folder is the **single source of truth** for the project. Every architectur
 
 1. **[VISION.md](./VISION.md)** — why this exists, who it's for, what it is and isn't.
 1b. **[POTENTIAL.md](./POTENTIAL.md)** — companion to VISION: what Cookbook does today, what's already possible by combining nodes, and the growth frontiers (nodes / workflows / code / concept). Working map of capability + the hook for the node + recipe plan.
+1c. **[FAL-CATALOG.md](./FAL-CATALOG.md)** — working reference mapping Fal.ai models (Seedance 2.0, Flux 2, Nano Banana 2, Seedream, etc.) → candidate Cookbook nodes → use cases. Feeds the formal node + recipe plan.
 2. **[ROADMAP.md](./ROADMAP.md)** — what we're building, in what order, with crisp acceptance criteria.
 3. **[GLOSSARY.md](./GLOSSARY.md)** — definitions of recurring terms (node, recipe, Soul ID, asset, etc.).
 4. **[CONVENTIONS.md](./CONVENTIONS.md)** — coding standards, naming, folder structure, error handling.
