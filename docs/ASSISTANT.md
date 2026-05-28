@@ -9,7 +9,7 @@ This doc evolves slice by slice. Each section is tagged with status:
 - **maturing** — wired but rough; expected to improve next slice.
 - **planned** — designed but not implemented yet (cite the slice that will ship it).
 
-> **Last updated:** Slice 7.6 ship — RAG foundation (pgvector + tsvector) + cross-project search + user preferences.
+> **Last updated:** Slice 7.6 ship + §5 "How the assistant evolves with the app" (auto-updating vs manual-touch knowledge contract).
 
 ---
 
@@ -62,7 +62,7 @@ Bus entry point: [`src/lib/assistant/knowledge/index.ts`](../src/lib/assistant/k
 
 ## 4. Tool surface
 
-The full list of functions the assistant can call. Auto-generated from [`src/lib/assistant/tools/index.ts`](../src/lib/assistant/tools/index.ts) at runtime; this doc lists them grouped by category. Empty until Slice 7.2.
+The full list of functions the assistant can call. Auto-generated from [`src/lib/assistant/tools/index.ts`](../src/lib/assistant/tools/index.ts) at runtime; this doc lists them grouped by category. **25 tools across 8 categories** as of Slice 7.6.
 
 ### Read tools (shipped, Slice 7.2)
 - `read_canvas` — full graph + spatial layout + per-node status.
@@ -107,48 +107,55 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 - `read_user_preferences()` — read the user's saved preferences blob (cross-session, cross-project).
 - `update_user_preferences({ patch })` — shallow-merge a patch into the preferences blob.
 
-### Construct tools (planned, Slice 7.3)
-- `add_node({ kind, position, config })` — spawn a new node.
-- `add_edge({ source, sourceHandle, target, targetHandle })`.
-- `remove_node(id)` / `remove_edge(id)`.
-- `update_node_config(id, configPatch)`.
-- `move_node(id, position)` — spatial reorganization.
-- `select_nodes(ids)`.
+## 5. How the assistant evolves with the app
 
-### Recipe tools (planned, Slice 7.3)
-- `instantiate_recipe(recipeId, position)`.
-- `save_selection_as_recipe({ selectedNodeIds, name, description, exposedInputs?, exposedOutputs? })`.
-- `unpack_composite(nodeId)`.
+> **The core promise:** as Cookbook grows new nodes, recipes, and assets, the assistant's knowledge grows **automatically** for everything that is "data", and needs a **small manual touch** only for genuinely new concepts or new kinds of action. This section is the contract for *who maintains what*.
 
-### Run tools (planned, Slice 7.3)
-- `run_workflow()` — full run.
-- `run_from(nodeId)` — Run-here equivalent.
-- `cancel_run()`.
+### 🟢 Auto-updating (zero assistant code changes)
 
-### Reasoning helpers (planned, Slice 7.3)
-- `narrate(message)` — emit a non-actionable progress message visible in ChatSheet.
-- `ask_user(question, options?)` — surface a clarifying question and pause loop until user picks.
+These dimensions read live sources at request time. Add the thing → the assistant knows it on the very next message.
 
-### Eval tools (planned, Slice 7.4)
-- `evaluate_result(generationId, criteria?)` — vision-call to judge an output.
-- `compare_results(idA, idB)` — diff two generations.
-- `regenerate(generationId, { promptDelta?, configDelta? })`.
+| You add… | How the assistant learns | Mechanism |
+|---|---|---|
+| A new **node** (registered in the registry) | Appears in the node catalog with title, description, category, I/O | `node-catalog.ts` reads `nodeRegistry.list()` at runtime |
+| A new **recipe** (saved or seeded) | Appears in the recipe catalog with exposed I/O | `recipes.ts` queries `cookbook_recipes` |
+| A new **asset / Soul ID / group** | Appears in the library summary | `library.ts` reads `useAssetStore` |
+| A new **generation** | Searchable in gallery + RAG | `gallery.ts` + `find_similar_generations` |
+| Anything on the **canvas** | Always the live state | `canvas.ts` reads `useWorkflowStore` |
+| **Conversation + preferences** | Accumulate across sessions | `conversation.ts` + `cookbook_user_preferences` |
 
-### Capability-gap tools (planned, Slice 7.5)
-- `propose_node_schema({ kind, description, inputs, outputs, executeOutline })` — emit a draft schema for a missing node, surfaces "Open in editor" rather than auto-creating.
+**The one free thing you must do well:** write a clear `description` on every new node schema. The assistant reads that description verbatim — a lazy `"does stuff"` makes it guess; a precise one-liner makes it choose the node correctly. Costs nothing, pays off every time.
 
-### RAG tools (planned, Slice 7.6)
-- `find_similar_generations(prompt, limit)` — semantic retrieval over `cookbook_generations.prompt_embedding`.
+### 🟡 Manual touch required (small, but real)
 
-## 5. Runtime contract (maturing)
+| New thing | What's needed | Who | Effort |
+|---|---|---|---|
+| A new **concept / domain term** (e.g. "timelines", "audio tracks") | Add 1–2 lines to `knowledge/vocabulary.ts` so the assistant speaks the user's language about it | dev | minutes |
+| A new **kind of action** the assistant should *perform* (e.g. "train a Soul ID", "export to format X") | Write a new tool file under `tools/<category>/` + register it in `tools/index.ts` | dev | a tool = ~1 file |
+| A new **knowledge source** entirely (e.g. external API health, model pricing table) | New module under `knowledge/` + a line in `index.ts` | dev | 1 file |
 
-The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/reasoner.ts) (lands in Slice 7.3).
+### Why this split is deliberate
 
-**Slice 7.3 contract** (current):
+We could have hardcoded the node list into the prompt — and then every new node would silently desync the assistant. Instead, the "what exists" half is derived from the live system, so it can **never** drift. The "what it means / what new actions exist" half genuinely requires human judgment (a good definition, a correct tool implementation), so it stays in code where it's reviewed + tested.
+
+### The assistant is part of its own evolution loop
+
+`propose_node_schema` (Slice 7.5) closes the gap from the other side: when the user asks for a capability that doesn't exist, the assistant doesn't fake it — it **drafts the NodeSchema spec** and surfaces it for a developer to implement. So the assistant actively tells us what's missing, turning user requests into a backlog of concrete node specs.
+
+### Maintenance rule (for any future agent or dev)
+
+> When you add a node: write a good `description`, and you're done — the assistant already knows.
+> When you add a *concept* or a *new action*: also touch `vocabulary.ts` and/or add a tool. Update the Tool surface table (§4) + the slice trail (§9) in the same commit (per the AGENTS.md maintenance contract).
+
+## 6. Runtime contract (maturing)
+
+The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/reasoner.ts).
+
+**Current contract** (Slice 7.6):
 - **Bounded tool-call loop** via `runReasoner`. Each user submit triggers up to 20 turns or $0.50 cumulative cost.
 - Multi-turn ON: last 20 chat messages threaded into `messages[]` + tool messages append per call.
 - Knowledge bundle (8 dimensions) + reasoner OPERATING INSTRUCTIONS go in the system prompt.
-- 17 tools live (5 read + 7 construct + 3 recipe + 3 run + 2 reasoning helpers). Tool dispatch happens client-side; results round-trip into the LLM's next turn.
+- **25 tools live** (5 read + 7 construct + 3 recipe + 3 run + 2 reasoning helpers + 3 eval + 2 capability + 3 RAG). Tool dispatch happens client-side; results round-trip into the LLM's next turn.
 - `narrate` surfaces italic progress notes inline; `ask_user` pauses the loop until the next user submit.
 - ChatSheet renders LIVE trace (tool calls + spinners + ✓/⚠ icons + narrations) AS the loop runs; final natural-language summary persists in `cookbook_assistant_messages`.
 
@@ -159,7 +166,7 @@ The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/
 - Abort: user-controlled `cancel_run` tool always available; aborts in-flight upstream calls.
 - Persistence: every tool call + result archived in `cookbook_assistant_messages` with role discrimination.
 
-## 6. Provider strategy (shipped)
+## 7. Provider strategy (shipped)
 
 [`src/lib/llm/provider.ts`](../src/lib/llm/provider.ts) — abstraction over LLM endpoints.
 
@@ -176,7 +183,7 @@ The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/
 
 Pick override: `LLM_PROVIDER` env var. Falls back to default.
 
-## 7. Failure modes
+## 8. Failure modes
 
 | Failure | Behavior |
 |---|---|
@@ -188,7 +195,7 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 | LLM emits malformed plan (pre-7.3) | Parse error returned to user as a friendly message; no auto-retry until 7.3. |
 | Multi-turn refused (small model can't follow long context) | 7.6 RAG kicks in; we paginate context. |
 
-## 8. Out of scope (parked)
+## 9. Out of scope (parked)
 
 - **Self-edit**: assistant cannot rewrite its own system prompt or tool registry. Schema changes go through code.
 - **Cross-user sharing**: assistant operates strictly on the authenticated user's project. No "show me what jane@example.com is doing".
@@ -196,7 +203,7 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 - **Auto-deploy**: assistant doesn't push to git or trigger Vercel deploys. Code changes are user-side.
 - **Persistent agent state outside chat**: anything the assistant "remembers" across sessions lives in `cookbook_assistant_messages`, `cookbook_user_preferences` (7.6), or persists via tool calls. No hidden assistant memory.
 
-## 9. Slice trail
+## 10. Slice trail
 
 | Slice | ADR | Status | Title |
 |---|---|---|---|
