@@ -54,7 +54,7 @@ describe("callOpenRouter", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/fal/openrouter");
+    expect(url).toBe("/api/llm/chat-completions");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/json" });
     // signal forwarded so React's StrictMode / engine cancellation works.

@@ -1464,6 +1464,61 @@ Sem subscription / debounced auto-save porque:
 - ADR-0037 — chat é o transport do assistant DSL; ADR-0040 só persiste a transport, não muda o protocolo.
 - ADR-0035 — generations já cloud-canonical; chat segue o mesmo arquétipo de "imutable durable record per project".
 
+## ADR-0041 — Reasoner architecture: provider abstraction + knowledge bus + tool registry foundation (M0a Slice 7.1)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 7.1 (foundation only — full reasoner + tool loop ships in Slice 7.3 via ADR-0042).
+- **Context**: o assistant até ADR-0040 era one-shot JSON-in-text via `/api/fal/openrouter` (Fal's simplified router). Não suporta `tools[]` nativos, não suporta streaming, não aceita `messages[]` (multi-turn impossível). Pra evoluir pro agente autônomo descrito em [`docs/ASSISTANT.md`](./ASSISTANT.md), precisamos migrar a stack inteira pro shape OpenAI Chat Completions. Slice 7.1 é a fundação: provider abstraction + knowledge bus shell + tool registry shell + types extendidos. Comportamento user-facing idêntico — invisível à interface, mas todo o backbone foi trocado.
+
+### 1. Decisão: Fal `openrouter/router/openai/v1/chat/completions` é o default provider
+
+Investigação (Slice 7.1):
+
+- **Fal expõe DOIS endpoints LLM** sob a mesma `FAL_KEY`:
+  - `openrouter/router` + `openrouter/router/vision` — wrapper opinativo, aceita só `{ prompt, system_prompt, model, temperature, max_tokens, reasoning, image_urls }`. Não suporta tools, streaming, ou multi-turn. **Era o que usávamos.**
+  - `openrouter/router/openai/v1/chat/completions` — drop-in OpenAI Chat Completions API, mesmo `FAL_KEY`. Aceita `messages[]`, `tools[]`, `tool_choice`, `parallel_tool_calls`, `stream: true`, vision via content blocks, todos os modelos (Claude Sonnet 4.5, GPT-5, Gemini 2.5 Pro, Grok 4, etc.). **É o que vamos usar daqui pra frente.**
+
+Trade-off considerado: ir direto pra OpenRouter ou Anthropic SDK exigiria 3ª billing surface. Fal openai-compat dá tudo que precisamos sem trocar de fornecedor — billing surfaces continuam 2 (Fal + Higgsfield), exatamente como antes.
+
+Provider abstraction ([`src/lib/llm/provider.ts`](../src/lib/llm/provider.ts)) registra três providers possíveis:
+- `fal-openai-compat` (default).
+- `openrouter` (configurado mas inativo — fallback se Fal degradar).
+- `openai` (reservado).
+
+`LLM_PROVIDER` env var seleciona.
+
+### 2. Code changes
+
+**Removido**:
+- [`src/lib/llm/fal-openrouter.ts`](../src/lib/llm/fal-openrouter.ts) — wrapper antigo.
+- [`src/app/api/fal/openrouter/route.ts`](../src/app/api/fal/openrouter/route.ts) — rota antiga.
+- [`tests/unit/llm/fal-openrouter.test.ts`](../tests/unit/llm/fal-openrouter.test.ts).
+
+**Adicionado**:
+- [`src/lib/llm/types.ts`](../src/lib/llm/types.ts) — extendido com `chatMessageSchema` (system / user / assistant / tool roles), `chatContentBlockSchema` (text + image_url), `chatToolCallSchema`, `toolDefinitionSchema`, `toolChoiceSchema`. `llmRequestSchema` agora aceita ambos shapes (legacy `user/system/images` OU novo `messages[]`); refine garante presença de pelo menos um.
+- [`src/lib/llm/provider.ts`](../src/lib/llm/provider.ts) — abstraction.
+- [`src/lib/llm/chat-completions.ts`](../src/lib/llm/chat-completions.ts) — server wrapper. Native fetch (não mais Fal SDK), traduz request body, parsa response. Streaming reservado pra 7.3 (passa flag `stream: true` adiante mas hoje retorna single response).
+- [`src/app/api/llm/chat-completions/route.ts`](../src/app/api/llm/chat-completions/route.ts) — nova rota.
+- [`src/lib/assistant/knowledge/identity.ts`](../src/lib/assistant/knowledge/identity.ts) + [`src/lib/assistant/knowledge/index.ts`](../src/lib/assistant/knowledge/index.ts) — knowledge bus shell.
+- [`src/lib/assistant/tools/index.ts`](../src/lib/assistant/tools/index.ts) — tool registry shell. Vazio em 7.1; preenchido por slices 7.2-7.6.
+
+**Modificado**:
+- [`src/lib/llm/call-openrouter.ts`](../src/lib/llm/call-openrouter.ts) — client wrapper agora chama `/api/llm/chat-completions` em vez de `/api/fal/openrouter`. API externa (CallOpenRouterArgs → LlmSuccessResponse) inalterada — `node-llm-text` e `assistant/run` não precisam mudar. Slice 7.2 expõe `messages[]` diretamente pros callers que querem multi-turn.
+
+### 3. Trade-offs aceitos
+
+- **Streaming não-ativo em 7.1**. O schema/route aceitam `stream: true` mas o wrapper retorna single JSON. Slice 7.3 wira streaming SSE.
+- **Tools não-ativos em 7.1**. Mesmo passthrough — schema aceita, route forwarda, wrapper retorna toolCalls quando provider devolve. Mas o reasoner (que executa o loop) só existe em 7.3.
+- **Multi-turn NÃO threaded em 7.1**. ADR-0040 persiste o chat na UI mas `planFromAssistant` ainda passa só `user/system`. Slice 7.2 monta `messages[]` da conversa.
+- **Knowledge bus single-dimension em 7.1**. Só `identity`. Slice 7.2 ativa as outras 8.
+
+### 4. Cross-references
+
+- ADR-0024 (Fal OpenRouter route pattern) — substituído por esta ADR. Old wrapper aposentado.
+- ADR-0037 (assistant DSL) — base sobre a qual ADR-0041 se ergue. Reasoner runtime + tool loop ainda usam o mesmo executePlan path; só vai migrar pra tool calls em 7.3.
+- ADR-0040 (persistent chat) — chat persistente fica útil de verdade quando 7.2 wirar memory threading.
+- [`docs/ASSISTANT.md`](./ASSISTANT.md) — north star doc; estrutura espelhada por esta ADR.
+
 ## ADR-0036 — Reactive engine: schema flag becomes meaningful + live preview UX (M0a Slice 6.3)
 
 - **Date**: 2026-05-26

@@ -14,7 +14,8 @@ This folder is the **single source of truth** for the project. Every architectur
 6. **[TESTING.md](./TESTING.md)** — what we test, how, with which tools, and the test-as-you-go rhythm.
 7. **[PRISM-REUSE-LOG.md](./PRISM-REUSE-LOG.md)** — every file/pattern copied from the previous `prism/` project, with adaptation notes.
 8. **[CHANGELOG.md](./CHANGELOG.md)** — date-keyed log of what shipped each day.
-9. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
+9. **[ASSISTANT.md](./ASSISTANT.md)** — north-star doc for the LLM assistant: identity, knowledge dimensions, tool surface, runtime contract, provider strategy, failure modes. Lands in Slice 7.1.
+10. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
 
 ## Milestone snapshots
 
@@ -40,6 +41,7 @@ Whenever any of the following happen, the corresponding doc **must** be updated 
 | New node added                      | NODES.md (auto-generated, M0a+)    |
 | File/pattern copied from Prism      | PRISM-REUSE-LOG.md                 |
 | Test strategy evolves               | TESTING.md                         |
+| Assistant capability changes        | ASSISTANT.md                        |
 | Day's work shipped (commits pushed) | CHANGELOG.md                       |
 
 > The `scripts/docs-check.ts` script (run by `npm run docs:check`) verifies every doc listed in this INDEX exists.

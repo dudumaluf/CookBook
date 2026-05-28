@@ -5,19 +5,24 @@ import type {
 } from "./types";
 
 /**
- * Client-side wrapper around `POST /api/fal/openrouter`.
+ * Client-side wrapper around `POST /api/llm/chat-completions`.
  *
- * The route + this wrapper are intentionally a thin pair: the route
- * holds the secret and validates input; this wrapper handles fetch
- * mechanics + error normalisation so callers (`LLMText.execute()`,
- * future `LLM Vision` nodes) only deal with `{ text, costUsd? }` or
- * a `LlmCallError`.
+ * Slice 7.1 (ADR-0041) migrated the underlying endpoint from
+ * `/api/fal/openrouter` (Fal's simplified router, no tool calling,
+ * no streaming, no multi-turn) to `/api/llm/chat-completions`
+ * (OpenAI Chat Completions shape over Fal's openai-compat endpoint).
+ * The external API of this function is unchanged — `LLMText.execute()`
+ * and the assistant keep calling it with the same args. New callers
+ * that want multi-turn or tools pass `messages[]` / `tools[]` directly
+ * via the extended `LlmRequest` shape.
  *
  * Cancellation: pass the runner's `AbortSignal`. Fetch will throw a
  * DOMException with `.name === "AbortError"` which we re-throw with
  * the same name preserved so the execution engine can treat it as
  * cancellation rather than a "real" error.
  */
+
+const CHAT_COMPLETIONS_ROUTE = "/api/llm/chat-completions";
 
 export interface CallOpenRouterArgs extends LlmRequest {
   signal: AbortSignal;
@@ -42,7 +47,7 @@ export async function callOpenRouter(
 
   let res: Response;
   try {
-    res = await fetch("/api/fal/openrouter", {
+    res = await fetch(CHAT_COMPLETIONS_ROUTE, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
