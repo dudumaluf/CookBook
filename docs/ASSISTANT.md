@@ -9,7 +9,7 @@ This doc evolves slice by slice. Each section is tagged with status:
 - **maturing** — wired but rough; expected to improve next slice.
 - **planned** — designed but not implemented yet (cite the slice that will ship it).
 
-> **Last updated:** Slice 7.2 ship — knowledge bus + multi-turn memory + read tools.
+> **Last updated:** Slice 7.3 ship — native tool-call loop + reasoner + 12 new tools + live trace UI.
 
 ---
 
@@ -71,6 +71,28 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 - `read_gallery({ nodeId?, nodeKind?, outputType?, pinnedOnly?, promptContains?, limit? })` — generation rows.
 - `read_recipe(recipeId)` — full recipe details (subgraph + exposed I/O).
 
+### Construct tools (shipped, Slice 7.3)
+- `add_node({ kind, position, config? })` — spawn a node; returns its id.
+- `add_edge({ source, sourceHandle, target, targetHandle })` — connect two handles.
+- `remove_node(nodeId)` / `remove_edge(edgeId)` — cascade-aware deletion.
+- `update_node_config(nodeId, configPatch)` — shallow-merge patch.
+- `move_node(nodeId, position)` — relayout.
+- `select_nodes(nodeIds)` — replace canvas selection.
+
+### Recipe tools (shipped, Slice 7.3)
+- `instantiate_recipe(recipeId, { position?, mode? })` — drop a recipe (composite or expanded).
+- `save_selection_as_recipe({ name, description?, ... })` — persist current selection + collapse to composite.
+- `unpack_composite(compositeNodeId)` — explode a composite into raw nodes.
+
+### Run tools (shipped, Slice 7.3)
+- `run_workflow()` — full engine run.
+- `run_from(nodeId)` — partial run targeting node + ancestors.
+- `cancel_run()` — abort in-flight.
+
+### Reasoning helpers (shipped, Slice 7.3)
+- `narrate({ message })` — surface progress text in chat.
+- `ask_user({ question, options? })` — pause loop, await human reply.
+
 ### Construct tools (planned, Slice 7.3)
 - `add_node({ kind, position, config })` — spawn a new node.
 - `add_edge({ source, sourceHandle, target, targetHandle })`.
@@ -108,11 +130,13 @@ The full list of functions the assistant can call. Auto-generated from [`src/lib
 
 The reasoner runtime — [`src/lib/assistant/reasoner.ts`](../src/lib/assistant/reasoner.ts) (lands in Slice 7.3).
 
-**Slice 7.2 contract** (current):
-- One LLM call per user submit.
-- Multi-turn ON: last 20 chat messages threaded into `messages[]`. The LLM sees prior turns; "now do X" follow-ups work.
-- Knowledge bundle (8 dimensions) + plan instructions go in the system prompt.
-- Read tools registered + described in the prompt, but tool DISPATCH still uses JSON-in-text plan (no native tool-call loop yet — Slice 7.3 enables).
+**Slice 7.3 contract** (current):
+- **Bounded tool-call loop** via `runReasoner`. Each user submit triggers up to 20 turns or $0.50 cumulative cost.
+- Multi-turn ON: last 20 chat messages threaded into `messages[]` + tool messages append per call.
+- Knowledge bundle (8 dimensions) + reasoner OPERATING INSTRUCTIONS go in the system prompt.
+- 17 tools live (5 read + 7 construct + 3 recipe + 3 run + 2 reasoning helpers). Tool dispatch happens client-side; results round-trip into the LLM's next turn.
+- `narrate` surfaces italic progress notes inline; `ask_user` pauses the loop until the next user submit.
+- ChatSheet renders LIVE trace (tool calls + spinners + ✓/⚠ icons + narrations) AS the loop runs; final natural-language summary persists in `cookbook_assistant_messages`.
 
 **Slice 7.3+ target contract**:
 - Tool-call loop. LLM emits `tool_use`; we execute; we send `tool_result`; loop until `finish_reason: "stop"` or cap.
@@ -164,7 +188,7 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 |---|---|---|---|
 | 7.1 | ADR-0041 | **shipped** | Provider migration + foundation |
 | 7.2 | ADR-0041 | **shipped** | Knowledge bus + memory + read tools |
-| 7.3 | ADR-0042 | planned | Native tool calling + streaming + construct tools |
+| 7.3 | ADR-0042 | **shipped** | Native tool calling + reasoner + construct/recipe/run/reasoning tools + live trace UI |
 | 7.4 | ADR-0043 | planned | Vision evaluation + result reasoning |
 | 7.5 | ADR-0044 | planned | Capability gaps + recipe pattern detection |
 | 7.6 | ADR-0045 | planned | RAG + cross-project + preferences |

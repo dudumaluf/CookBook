@@ -12,10 +12,11 @@ import {
 } from "@/components/ui/tooltip";
 import { ChatSheet } from "./chat-sheet";
 import { useSession } from "@/lib/auth/use-session";
-import { planFromAssistant } from "@/lib/assistant/run";
+import { runReasoner } from "@/lib/assistant/reasoner";
 import { persistMessage } from "@/lib/sync/chat-sync";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
+import { useProjectStore } from "@/lib/stores/project-store";
 
 /**
  * PromptBar
@@ -32,12 +33,24 @@ export function PromptBar() {
   const { chatSheetOpen, toggleChatSheet, setChatSheetOpen, libraryOpen, queueOpen } =
     useLayoutStore();
   const { user } = useSession();
-  const { isThinking, appendMessage, setThinking, setAbortController } =
-    useAssistantStore();
+  const {
+    isThinking,
+    appendMessage,
+    setThinking,
+    setAbortController,
+    appendLiveEvent,
+    resetLive,
+    setPendingQuestion,
+  } = useAssistantStore();
+  const projectId = useProjectStore((s) => s.id);
 
   async function handleSubmit() {
     const text = value.trim();
     if (!text || isThinking || !user) return;
+    if (!projectId) {
+      toast.error("No active project. Wait for cloud sync to load.");
+      return;
+    }
     setValue("");
     const userMsg = {
       role: "user" as const,
@@ -45,29 +58,52 @@ export function PromptBar() {
       timestamp: Date.now(),
     };
     appendMessage(userMsg);
-    // Slice 6.8 — fire-and-forget cloud persist so chat survives reload
-    // + cross-machine. Failure doesn't block the in-memory UX.
     void persistMessage(userMsg);
     setChatSheetOpen(true);
     setThinking(true);
+    resetLive();
     const controller = new AbortController();
     setAbortController(controller);
     try {
-      const result = await planFromAssistant({
+      // Slice 7.3 — runReasoner replaces the one-shot planFromAssistant.
+      // Tool calls dispatch live; we render the trace via onEvent and
+      // persist only the final assistant message.
+      const result = await runReasoner({
         userMessage: text,
-        signal: controller.signal,
         ownerId: user.id,
+        projectId,
+        signal: controller.signal,
+        onEvent: (e) => {
+          appendLiveEvent(e);
+          if (e.type === "ask_user") {
+            setPendingQuestion({
+              question: e.question,
+              ...(e.options ? { options: e.options } : {}),
+            });
+          }
+        },
       });
+      // Persist the final assistant message — short summary + cost.
+      const finalContent = result.finalText
+        ? result.finalText
+        : result.aborted
+          ? "(aborted)"
+          : result.cappedAt
+            ? `(stopped — ${result.cappedAt} cap reached)`
+            : "(no response)";
       const assistantMsg = {
         role: "assistant" as const,
-        content: result.rawText,
-        plan: result.plan,
-        error: result.error,
-        costUsd: result.costUsd,
+        content: finalContent,
+        ...(result.totalCostUsd > 0
+          ? { costUsd: result.totalCostUsd }
+          : {}),
         timestamp: Date.now(),
       };
       appendMessage(assistantMsg);
       void persistMessage(assistantMsg);
+      if (result.cappedAt === "cost") {
+        toast.warning("Cost cap reached. Run paused.");
+      }
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return;
       const msg = err instanceof Error ? err.message : String(err);

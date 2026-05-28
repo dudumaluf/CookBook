@@ -1794,3 +1794,108 @@ Slice 6.4 é o ponto de close de M0a.
 - ADR-0035 (durable generations) — Gallery (já wirada) recebe os outputs do plan automaticamente.
 - ADR-0036 (reactive engine) — quando o plan termina com `run`, full mode é usado; reactive não interfere.
 
+
+## ADR-0042 — Native tool-call loop + reasoner runtime + reasoning helpers (M0a Slice 7.3)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice 7.3.
+- **Context**: ADR-0041 swapped the LLM backbone to OpenAI Chat Completions. ADR-0041's Slice 7.2 amendment added the 8 knowledge dimensions + multi-turn `messages[]` history + 5 read tools registered in code. The remaining piece (and the reason 7.x exists at all) is the actual **agent loop**: the assistant must dispatch tools natively, see their results, and decide the next step until the user's intent is satisfied. ADR-0042 ratifies that loop and the 12 new tools that make it useful.
+
+### 1. Decisão: bounded tool-call loop with cost + turn caps
+
+`runReasoner({ userMessage, ownerId, projectId, signal, onEvent })` replaces the one-shot `planFromAssistant`. Each iteration:
+
+1. Build the system prompt + chat history once via `buildKnowledgeBundle` (Slice 7.2).
+2. POST to `/api/llm/chat-completions` with `tools[]` from the registry and `tool_choice: "auto"`.
+3. If the response carries `tool_calls`, dispatch each one against the registry, append both the assistant message AND a `tool` role message per call, loop.
+4. Stop when:
+   - Model emits a final text message with no tool calls (natural exit).
+   - Cumulative cost ≥ `$0.50` (cost cap).
+   - Loop has executed 20 turns (turn cap).
+   - A tool returns `__pause: true` (`ask_user` triggered a human handoff).
+   - User aborted via `signal`.
+
+**Caps are non-negotiable.** A user typing "make me a movie" cannot accidentally rack up unbounded LLM cost. When a cap fires, the loop emits a `cap_hit` event and the next user submit is required to continue. Same caps as ADR-0041's foundation discussion; concrete this slice.
+
+### 2. Decisão: events stream out via `onEvent`, full trace returned at end
+
+The reasoner does NOT return token deltas yet — it batches each turn's response and emits structured events:
+
+| Event type | Emitted when | Carries |
+|---|---|---|
+| `user` | At loop start | `content` |
+| `tool_call` | LLM emits a tool call | `toolName`, `arguments`, `callId` |
+| `tool_result` | After dispatching | `toolName`, `callId`, `result`, `durationMs` |
+| `narration` | Tool was `narrate` | `content` |
+| `ask_user` | Tool was `ask_user` | `question`, `options?` |
+| `assistant_text` | Final text, no more tool calls | `content`, `costUsd?`, `finishReason?` |
+| `error` | LLM call failed | `content` |
+| `cap_hit` | Cost or turn cap reached | `cap`, `message` |
+
+The ChatSheet UI subscribes via `appendLiveEvent` in the assistant store. Tool calls render with a spinner that flips to a check / warning icon based on the `tool_result.ok` flag. Narrations render inline as italic prose. Errors and cap hits get a distinct treatment (red / amber).
+
+Token-level streaming (server-sent events) is parked. Today's batched-per-turn model is fast enough at M0a scale (typical loops are 3-7 turns, each 1-3s); the latency win from token streaming would mostly affect the FINAL natural-language summary, where it doesn't change behavior. Slice 7.6+ may revisit if loops grow.
+
+### 3. Decisão: 12 new tools split across 4 buckets
+
+| Bucket | Tools | Purpose |
+|---|---|---|
+| Construct (7) | `add_node`, `add_edge`, `remove_node`, `remove_edge`, `update_node_config`, `move_node`, `select_nodes` | Mutate the workflow graph |
+| Recipe (3) | `instantiate_recipe`, `save_selection_as_recipe`, `unpack_composite` | Recipe lifecycle |
+| Run (3) | `run_workflow`, `run_from`, `cancel_run` | Engine control |
+| Reasoning (2) | `narrate`, `ask_user` | Pure UX — keep user informed / pause for clarification |
+
+Each tool has:
+
+- A Zod schema validating the args (errors surface back to the LLM as `tool_result.error`, allowing self-correction in the next turn).
+- A JSON Schema for the OpenAI tool definition format (matches the Zod shape).
+- An `execute(args, ctx)` function returning a serializable result.
+- An entry in `tools/index.ts`'s `tools[]` array — auto-included in `getToolDefinitions()` and `getTool(name)`.
+
+Tools run in the browser (assistant context). `ToolExecutionContext` carries `{ ownerId, projectId, signal }` for tools that need them (`save_selection_as_recipe` → ownerId, `read_gallery` → projectId, all → signal).
+
+### 4. Decisão: `narrate` and `ask_user` are reasoning helpers, not state mutators
+
+Two tools exist purely for UX:
+
+- `narrate({ message })` — fires a `narration` event. The user sees italic progress notes ("checking your gallery for noir prompts..."). Does NOT touch any store. The reasoner intercepts the call by name to surface the message.
+- `ask_user({ question, options? })` — pauses the loop. Returns `{ __pause: true }` sentinel that the reasoner detects, surfacing an `ask_user` event + a synthetic tool result, then exits with `paused: true`. The next user submit resumes the conversation with the answer threaded into context (since the tool message is already in `messages[]`, the LLM sees it on the next turn).
+
+These are AS IMPORTANT as the construct tools — without `narrate` the user has no idea what's happening during 5+ turn sequences; without `ask_user` the LLM either guesses (wasting money) or refuses to act.
+
+### 5. Decisão: live trace lives in `assistant-store`, only final text persists
+
+The store now carries:
+
+```
+liveEvents: ReasonerEvent[]   // resets on each submit
+pendingQuestion: { question, options? } | null   // last ask_user
+messages: AssistantMessage[]  // only user msgs + final assistant text
+```
+
+Trade-off: persisting tool sequences would balloon `cookbook_assistant_messages` (a single batch run can emit 30+ events). Today, the trace is ephemeral — visible during the run, available to scroll back through until the user submits again. Future slices may persist a SUMMARY (what was built, links to results) tagged onto the assistant message.
+
+The `executePlan` legacy path remains in `src/lib/assistant/run.ts` for any pre-existing persisted messages with `plan` field — old PlanCards still render their "Run plan" button. New messages don't ship a plan; they ship a final natural-language summary.
+
+### 6. Trade-offs aceitos
+
+- **No streaming token deltas** — batched per turn. Fast enough at M0a scale.
+- **Sequential tool calls** — `parallel_tool_calls: false`. Simpler reasoning; matches Anthropic's recommendation for Claude Sonnet/Haiku.
+- **Cost cap is a HARD stop** — `$0.50` per `runReasoner` call. User must re-submit to continue. Aggressive but the right default for a personal-use tool with real money on the line.
+- **Tools self-validate via Zod, errors round-trip to the LLM** — the LLM can self-correct, no human-in-the-loop required for arg shape mistakes. The flip side: the LLM can spam invalid calls. Mitigated by the turn cap.
+
+### 7. Implementação resumida
+
+- `src/lib/assistant/reasoner.ts` — the loop.
+- `src/lib/assistant/tools/{construct,recipe,run,reasoning}/*.ts` — 12 new tools + the existing 5 read tools.
+- `src/lib/stores/assistant-store.ts` — extended with `liveEvents`, `pendingQuestion`, `appendLiveEvent`, `resetLive`, `setPendingQuestion`.
+- `src/components/layout/prompt-bar.tsx` — calls `runReasoner` instead of `planFromAssistant`. Subscribes to `onEvent`.
+- `src/components/layout/chat-sheet.tsx` — renders `LiveTrace` + `PendingQuestionCard` + final assistant message.
+- `tests/unit/assistant/reasoner.test.ts` (new, 6) — tool dispatch, narration, ask_user pause, cost cap, abort.
+- `tests/unit/assistant/construct-tools.test.ts` (new, 9) — every construct tool's happy + sad path.
+
+### 8. Cross-references
+
+- ADR-0041 (provider abstraction) — Slice 7.1 set up the chat completions wrapper. 7.3 actually uses `tools[]` + `tool_choice` here.
+- ADR-0037 (assistant DSL) — superseded by 7.3's native tools. The JSON-in-text plan path remains for legacy persisted messages but new flows go through the reasoner.
+- ADR-0042's caps generalize ADR-0040's per-message persistence model — chat history threads naturally with multi-turn reasoning.

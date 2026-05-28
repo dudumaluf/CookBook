@@ -1,10 +1,19 @@
 "use client";
 
-import { Loader2, MessageSquare, Play, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  MessageSquare,
+  Play,
+  Wrench,
+  X,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import type { ReasonerEvent } from "@/lib/assistant/reasoner";
 import { executePlan } from "@/lib/assistant/run";
 import { clearChatForProject } from "@/lib/sync/chat-sync";
 import type { AssistantMessage } from "@/lib/assistant/types";
@@ -12,16 +21,20 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
- * ChatSheet (Slice 6.4b — wired).
+ * ChatSheet — Slice 7.3 (ADR-0042).
  *
- * Slide-up overlay anchored above the prompt bar. Renders the assistant
- * chat history from the in-memory `useAssistantStore`. Each assistant
- * message that produced a valid plan shows a "Run plan" button so the
- * user can confirm + execute. Errors render inline.
+ * Slide-up overlay anchored above the prompt bar. Renders:
+ *   1. Persisted assistant chat (`messages`).
+ *   2. The current run's live trace (`liveEvents`) — tool calls and
+ *      narrations as they fire from the reasoner. After the run,
+ *      the trace remains so the user can scroll it back; the next
+ *      submit resets it via `resetLive()`.
+ *   3. The pending ask_user question, if any (paused state).
  */
 export function ChatSheet() {
   const { chatSheetOpen, setChatSheetOpen } = useLayoutStore();
-  const { messages, isThinking } = useAssistantStore();
+  const { messages, isThinking, liveEvents, pendingQuestion } =
+    useAssistantStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -36,7 +49,7 @@ export function ChatSheet() {
       block: "end",
       behavior: "smooth",
     });
-  }, [chatSheetOpen, messages.length, isThinking]);
+  }, [chatSheetOpen, messages.length, liveEvents.length, isThinking]);
 
   if (!chatSheetOpen) return null;
 
@@ -87,7 +100,7 @@ export function ChatSheet() {
         className="nowheel flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4"
         onWheelCapture={(e) => e.stopPropagation()}
       >
-        {messages.length === 0 ? (
+        {messages.length === 0 && liveEvents.length === 0 ? (
           <div className="flex flex-col items-start gap-2 px-1 py-2">
             <p className="text-sm text-foreground/80">
               Hi — what would you like to make?
@@ -97,13 +110,22 @@ export function ChatSheet() {
               <span className="text-foreground/80">
                 &quot;give me 4 photos of me as a 90s movie character&quot;
               </span>
-              . I&apos;ll pick the right recipe + Soul ID, show you a plan,
-              and you confirm before I run.
+              . I&apos;ll pick the right recipe + Soul ID, run the engine,
+              and surface results in your gallery.
             </p>
           </div>
         ) : (
           messages.map((m, i) => <Message key={i} message={m} />)
         )}
+        {liveEvents.length > 0 ? (
+          <LiveTrace events={liveEvents} />
+        ) : null}
+        {pendingQuestion ? (
+          <PendingQuestionCard
+            question={pendingQuestion.question}
+            options={pendingQuestion.options}
+          />
+        ) : null}
         {isThinking ? (
           <div
             data-testid="assistant-thinking"
@@ -113,10 +135,139 @@ export function ChatSheet() {
             Thinking…
           </div>
         ) : null}
-        {/* Sentinel — scrollIntoView target. Sits at the very bottom of
-         *  the flow, after the last message + the thinking row. */}
         <div ref={bottomRef} aria-hidden />
       </div>
+    </div>
+  );
+}
+
+function LiveTrace({ events }: { events: ReasonerEvent[] }) {
+  // Pair tool_call events with their tool_result events for compact
+  // rendering. Narration / ask_user / errors render in line.
+  const resultsById = new Map<string, ReasonerEvent>();
+  for (const e of events) {
+    if (e.type === "tool_result") resultsById.set(e.callId, e);
+  }
+  return (
+    <div
+      data-testid="assistant-live-trace"
+      className="flex flex-col gap-2 rounded-xl border border-border/40 bg-foreground/[0.02] px-3 py-2"
+    >
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+        Trace
+      </p>
+      {events.map((e, i) => {
+        if (e.type === "tool_call") {
+          const result = resultsById.get(e.callId);
+          return (
+            <ToolCallRow
+              key={`call-${e.callId}`}
+              call={e}
+              result={result}
+            />
+          );
+        }
+        if (e.type === "tool_result") return null;
+        if (e.type === "narration") {
+          return (
+            <p
+              key={`narration-${i}`}
+              className="text-xs italic text-foreground/80"
+            >
+              {e.content}
+            </p>
+          );
+        }
+        if (e.type === "ask_user") {
+          return null;
+        }
+        if (e.type === "error") {
+          return (
+            <p
+              key={`err-${i}`}
+              className="flex items-center gap-1.5 text-xs text-destructive/90"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              {e.content}
+            </p>
+          );
+        }
+        if (e.type === "cap_hit") {
+          return (
+            <p
+              key={`cap-${i}`}
+              className="flex items-center gap-1.5 text-xs text-amber-500"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              {e.message}
+            </p>
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
+function ToolCallRow({
+  call,
+  result,
+}: {
+  call: Extract<ReasonerEvent, { type: "tool_call" }>;
+  result: ReasonerEvent | undefined;
+}) {
+  const ok =
+    result?.type === "tool_result" &&
+    typeof result.result === "object" &&
+    result.result !== null &&
+    (result.result as { ok?: boolean }).ok !== false;
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      {result === undefined ? (
+        <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+      ) : ok ? (
+        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
+      ) : (
+        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
+      )}
+      <Wrench className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+      <code className="rounded bg-foreground/5 px-1.5 py-0.5 text-[11px] text-foreground/80">
+        {call.toolName}
+      </code>
+      {result?.type === "tool_result" ? (
+        <span className="text-[10px] text-muted-foreground/70">
+          {result.durationMs}ms
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function PendingQuestionCard({
+  question,
+  options,
+}: {
+  question: string;
+  options?: string[];
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-border/60 bg-popover/80 px-3 py-2 text-sm shadow-sm">
+      <p className="font-medium text-foreground/90">{question}</p>
+      {options && options.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((opt) => (
+            <span
+              key={opt}
+              className="rounded-md border border-border/60 bg-foreground/5 px-2 py-0.5 text-[11px] text-foreground/70"
+            >
+              {opt}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <p className="text-[10.5px] text-muted-foreground">
+        Reply in the prompt bar to continue.
+      </p>
     </div>
   );
 }

@@ -1,10 +1,25 @@
 import type { ToolDefinition } from "@/lib/llm/types";
 
+import { addEdgeTool } from "./construct/add-edge";
+import { addNodeTool } from "./construct/add-node";
+import { moveNodeTool } from "./construct/move-node";
+import { removeEdgeTool } from "./construct/remove-edge";
+import { removeNodeTool } from "./construct/remove-node";
+import { selectNodesTool } from "./construct/select-nodes";
+import { updateNodeConfigTool } from "./construct/update-node-config";
 import { readCanvasTool } from "./read/read-canvas";
 import { readGalleryTool } from "./read/read-gallery";
 import { readLibraryTool } from "./read/read-library";
 import { readNodeStateTool } from "./read/read-node-state";
 import { readRecipeTool } from "./read/read-recipe";
+import { askUserTool } from "./reasoning/ask-user";
+import { narrateTool } from "./reasoning/narrate";
+import { instantiateRecipeTool } from "./recipe/instantiate-recipe";
+import { saveSelectionAsRecipeTool } from "./recipe/save-selection-as-recipe";
+import { unpackCompositeTool } from "./recipe/unpack-composite";
+import { cancelRunTool } from "./run/cancel-run";
+import { runFromTool } from "./run/run-from";
+import { runWorkflowTool } from "./run/run-workflow";
 
 /**
  * Tool registry — Slice 7.1 (ADR-0041) shell.
@@ -61,14 +76,31 @@ export interface ToolExecutionContext {
 }
 
 const tools: AssistantTool[] = [
-  // Slice 7.2 — read tools. Sync access to the assistant's
-  // observability surface (canvas, library, gallery, recipes).
+  // Slice 7.2 — read tools. Observability surface.
   readCanvasTool,
   readNodeStateTool,
   readLibraryTool,
   readGalleryTool,
   readRecipeTool,
-  // Slice 7.3 will add construct / recipe / run / reasoning tools.
+  // Slice 7.3 — construct tools. Mutate the workflow graph.
+  addNodeTool,
+  addEdgeTool,
+  removeNodeTool,
+  removeEdgeTool,
+  updateNodeConfigTool,
+  moveNodeTool,
+  selectNodesTool,
+  // Slice 7.3 — recipe tools.
+  instantiateRecipeTool,
+  saveSelectionAsRecipeTool,
+  unpackCompositeTool,
+  // Slice 7.3 — run tools.
+  runWorkflowTool,
+  runFromTool,
+  cancelRunTool,
+  // Slice 7.3 — reasoning helpers.
+  narrateTool,
+  askUserTool,
   // Slice 7.4 adds eval tools.
   // Slice 7.5 adds capability-gap tools.
   // Slice 7.6 adds RAG tools.

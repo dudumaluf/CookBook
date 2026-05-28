@@ -273,11 +273,13 @@ describe("buildKnowledgeBundle", () => {
       projectId: "p1",
       skip: { nodeCatalog: true, library: true, gallery: true, recipes: true },
     });
-    expect(bundle.system).not.toContain("NODE CATALOG");
-    expect(bundle.system).not.toContain("LIBRARY");
-    expect(bundle.system).not.toContain("GALLERY");
-    expect(bundle.system).not.toContain("RECIPES");
-    // Identity + vocabulary still present.
+    // Match the section HEADERS rather than the literal strings —
+    // tool descriptions in the TOOLS section may reference these
+    // sections by name (e.g. `add_node` saying "see NODE CATALOG").
+    expect(bundle.system).not.toContain("## NODE CATALOG");
+    expect(bundle.system).not.toContain("## LIBRARY");
+    expect(bundle.system).not.toContain("## GALLERY");
+    expect(bundle.system).not.toContain("## RECIPES");
     expect(bundle.system).toContain("COOKBOOK");
     expect(bundle.system).toContain("VOCABULARY");
   });
