@@ -100,6 +100,14 @@ async function downloadOutput(
     await downloadFromUrl(out.value.url, `${safe}.png`);
     return;
   }
+  if (out.type === "video" && out.value?.url) {
+    await downloadFromUrl(out.value.url, `${safe}.mp4`);
+    return;
+  }
+  if (out.type === "audio" && out.value?.url) {
+    await downloadFromUrl(out.value.url, `${safe}.wav`);
+    return;
+  }
   if (out.type === "text" && typeof out.value === "string") {
     downloadText(out.value, `${safe}.txt`);
     return;
@@ -373,6 +381,19 @@ export function GalleryLightbox({
               className="max-h-[85vh] max-w-[90vw] object-contain"
               draggable={false}
             />
+          ) : out?.type === "video" && out.value?.url ? (
+            <video
+              src={out.value.url}
+              controls
+              autoPlay
+              loop
+              playsInline
+              className="max-h-[85vh] max-w-[90vw] object-contain"
+            />
+          ) : out?.type === "audio" && out.value?.url ? (
+            <div className="w-full max-w-xl rounded-xl border border-border/40 bg-popover/50 p-6">
+              <audio src={out.value.url} controls autoPlay className="w-full" />
+            </div>
           ) : out?.type === "text" ? (
             <div className="nowheel max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border/40 bg-popover/50 p-6">
               <p className="select-text whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">

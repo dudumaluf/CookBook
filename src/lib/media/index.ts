@@ -13,20 +13,18 @@
  *   - `probeMedia` (probe.ts) — metadata read (duration, dimensions, tracks)
  *     via mediabunny demuxing (no WebCodecs decode).
  *
- * What lands in Slice D (the WebCodecs-heavy ops, alongside the nodes that
- * consume them, browser-smoke-tested):
- *   - `extractFrame(src, { atMs | "first" | "last" }) => Promise<Blob>` —
- *     VideoSampleSink + VideoSample.toCanvas; the frame-chain continuity
- *     strategy depends on this.
- *   - `sliceAudio(src, windows) => Promise<Blob[]>` — Conversion API with
- *     per-window trim; feeds per-chunk @Audio1 to Seedance.
+ * What ships in Slice C (the WebCodecs ops, browser-smoke-tested):
+ *   - `extractFrame(src, "first" | "last" | { atMs })` => PNG Blob —
+ *     VideoSampleSink + canvas; the frame-chain continuity strategy.
+ *   - `sliceAudio(src, windows)` => WAV Blob[] — Conversion API trim;
+ *     feeds per-chunk @Audio1 to Seedance.
+ *
+ * What lands in Slice D (consumed by the Continuity Builder, verified with
+ * the loop):
  *   - `concatVideos(clips) => Promise<Blob>` — Output + multiple sources;
  *     stitches the chunk array into one continuous video.
  *   - `normalizeMedia(src, target) => Promise<Blob>` — Conversion API
  *     transcode/resize to fit Seedance's resolution/size/format limits.
- *
- * These are declared here as the contract so Slice D fills in the bodies
- * without re-deciding the surface.
  */
 
 export {
@@ -46,3 +44,7 @@ export {
 } from "./constraints";
 
 export { probeMedia, type MediaProbeResult } from "./probe";
+
+export { extractFrame, type FramePosition } from "./extract-frame";
+
+export { sliceAudio } from "./slice-audio";

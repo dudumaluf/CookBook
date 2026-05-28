@@ -239,6 +239,10 @@ export function GalleryDrawer() {
       try {
         if (out.type === "image" && out.value?.url) {
           await downloadFromUrl(out.value.url, `${safe}.png`);
+        } else if (out.type === "video" && out.value?.url) {
+          await downloadFromUrl(out.value.url, `${safe}.mp4`);
+        } else if (out.type === "audio" && out.value?.url) {
+          await downloadFromUrl(out.value.url, `${safe}.wav`);
         } else if (out.type === "text" && typeof out.value === "string") {
           downloadText(out.value, `${safe}.txt`);
         }
@@ -679,6 +683,37 @@ function CardThumb({ output }: { output: StandardizedOutput | null }) {
           (e.target as HTMLImageElement).style.opacity = "0";
         }}
       />
+    );
+  }
+  if (output.type === "video" && output.value.url) {
+    return (
+      <video
+        src={output.value.url}
+        className="h-full w-full object-cover"
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onMouseEnter={(e) => void (e.currentTarget as HTMLVideoElement).play()}
+        onMouseLeave={(e) => {
+          const v = e.currentTarget as HTMLVideoElement;
+          v.pause();
+          v.currentTime = 0;
+        }}
+      />
+    );
+  }
+  if (output.type === "audio" && output.value.url) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-foreground/[0.03] p-2">
+        <audio
+          src={output.value.url}
+          controls
+          preload="metadata"
+          className="w-full"
+          onPointerDown={(e) => e.stopPropagation()}
+        />
+      </div>
     );
   }
   if (output.type === "text") {
