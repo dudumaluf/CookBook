@@ -630,6 +630,26 @@ function GenerationCard({
     >
       <div className="relative flex-1 overflow-hidden bg-foreground/5">
         <CardThumb output={single} />
+        {/* Delete (trash) — left of the pin, hover-revealed. Removes the
+            generation row (useful for clearing duplicates). */}
+        <button
+          type="button"
+          aria-label="Delete from gallery"
+          data-testid="gallery-card-delete"
+          onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              await getGenerationRepository().remove(row.id);
+              onChanged();
+            } catch (err) {
+              console.warn("[gallery] delete failed:", err);
+              toast.error("Could not delete");
+            }
+          }}
+          className="absolute right-9 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-background/70 text-muted-foreground opacity-0 backdrop-blur transition-colors hover:bg-destructive/20 hover:text-destructive group-hover:opacity-100"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
         <button
           type="button"
           aria-label={row.pinned ? "Unpin" : "Pin"}
