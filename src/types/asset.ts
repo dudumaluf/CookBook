@@ -173,6 +173,23 @@ export interface SoulIdAsset extends AssetCommon {
  * group deletion (they're the durable thing); the group is just one
  * way to organise them.
  */
+/**
+ * Soul ID training binding on a group (M0b). When present, the group "is"
+ * a Soul ID: its images are the training set (enter to view/edit), the
+ * thumbnail shows training progress, and once `status === "ready"` the
+ * group can spawn a Soul ID node on the canvas. Re-training overwrites
+ * this; deleting the Soul ID clears it (the group + images survive).
+ */
+export interface GroupSoulTraining {
+  /** Higgsfield custom_reference_id once training kicks off. */
+  customReferenceId: string;
+  variant: "v1" | "v2" | "cinema";
+  status: "training" | "ready" | "failed";
+  thumbnailUrl: string | null;
+  /** Last error message when status === "failed". */
+  error?: string;
+}
+
 export interface AssetGroupAsset extends AssetCommon {
   kind: "asset-group";
   /** Ordered `image` asset ids the group references. */
@@ -184,6 +201,11 @@ export interface AssetGroupAsset extends AssetCommon {
    * Renaming the group flips this to `false` permanently.
    */
   isUntitled: boolean;
+  /**
+   * Soul ID training binding (M0b). Absent on plain groups; set when the
+   * user trains the group as a Soul ID. See `GroupSoulTraining`.
+   */
+  soulTraining?: GroupSoulTraining;
 }
 
 /**

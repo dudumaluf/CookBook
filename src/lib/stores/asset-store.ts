@@ -193,6 +193,14 @@ export interface AssetState {
    * the cleanup rule no longer applies.
    */
   renameGroup: (groupId: string, name: string) => void;
+  /**
+   * Set / patch / clear the Soul ID training binding on a group (M0b).
+   * Pass `null` to clear (e.g. delete the Soul ID — group + images survive).
+   */
+  setGroupSoulTraining: (
+    groupId: string,
+    soulTraining: import("@/types/asset").GroupSoulTraining | null,
+  ) => void;
 
   /**
    * Drop a group from the library. Does NOT delete the underlying
@@ -547,6 +555,21 @@ export const useAssetStore = create<AssetState>()(
               isUntitled: false,
               updatedAt: Date.now(),
             };
+          }),
+        }));
+      },
+
+      setGroupSoulTraining: (groupId, soulTraining) => {
+        set((state) => ({
+          assets: state.assets.map((a) => {
+            if (a.id !== groupId || a.kind !== "asset-group") return a;
+            const next = { ...a, updatedAt: Date.now() };
+            if (soulTraining === null) {
+              delete (next as { soulTraining?: unknown }).soulTraining;
+            } else {
+              next.soulTraining = soulTraining;
+            }
+            return next;
           }),
         }));
       },

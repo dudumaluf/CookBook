@@ -85,11 +85,13 @@ describe("<AssetContextMenu />", () => {
       useAssetStore.setState({ assets: [imageAsset] });
     });
 
-    it("shows Rename + Add to group + Train Soul ID (disabled) + Delete", async () => {
+    it("shows Rename + Delete, but NO Train Soul ID (that moved to groups in M0b)", async () => {
       renderMenu(imageAsset);
       await openMenu();
       expect(screen.getByTestId("asset-context-menu-rename")).toBeTruthy();
-      expect(screen.getByTestId("asset-context-menu-train-soul-id")).toBeTruthy();
+      expect(
+        screen.queryByTestId("asset-context-menu-train-soul-id"),
+      ).toBeNull();
       expect(screen.getByTestId("asset-context-menu-delete")).toBeTruthy();
     });
 
@@ -118,17 +120,17 @@ describe("<AssetContextMenu />", () => {
       });
     });
 
-    it("shows Rename + Duplicate group + Delete (NO Train Soul ID for group)", async () => {
+    it("shows Rename + Duplicate group + Train as Soul ID + Delete", async () => {
       renderMenu(groupAsset);
       await openMenu();
       expect(screen.getByTestId("asset-context-menu-rename")).toBeTruthy();
       expect(
         screen.getByTestId("asset-context-menu-duplicate-group"),
       ).toBeTruthy();
-      expect(screen.getByTestId("asset-context-menu-delete")).toBeTruthy();
       expect(
-        screen.queryByTestId("asset-context-menu-train-soul-id"),
-      ).toBeNull();
+        screen.getByTestId("asset-context-menu-train-soul-id"),
+      ).toBeTruthy();
+      expect(screen.getByTestId("asset-context-menu-delete")).toBeTruthy();
     });
 
     it("Duplicate group creates a new group with the same assetIds and a (copy) suffix", async () => {

@@ -1,6 +1,12 @@
 "use client";
 
-import { Image as ImageIcon, Trash2, User } from "lucide-react";
+import {
+  BadgeCheck,
+  Image as ImageIcon,
+  Loader2,
+  Trash2,
+  User,
+} from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -365,6 +371,35 @@ function GroupMosaic({ group }: { group: AssetGroupAsset }) {
           className="absolute right-1 top-1 rounded-md bg-background/80 px-1 py-px text-[9.5px] font-medium text-foreground/85 backdrop-blur"
         >
           {total}
+        </span>
+      ) : null}
+
+      {/* Soul ID training overlay (M0b). Training -> spinner; ready ->
+          a "Soul ID" badge; failed -> a small error mark. */}
+      {group.soulTraining?.status === "training" ? (
+        <div
+          data-testid="asset-group-soul-training"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/70 backdrop-blur-sm"
+        >
+          <Loader2 className="h-4 w-4 animate-spin text-accent" />
+          <span className="text-[9.5px] font-medium text-foreground/85">
+            Training Soul ID…
+          </span>
+        </div>
+      ) : group.soulTraining?.status === "ready" ? (
+        <span
+          data-testid="asset-group-soul-ready"
+          className="absolute left-1 top-1 flex items-center gap-0.5 rounded-md bg-accent/90 px-1 py-px text-[9px] font-semibold text-accent-foreground"
+        >
+          <BadgeCheck className="h-2.5 w-2.5" />
+          Soul ID
+        </span>
+      ) : group.soulTraining?.status === "failed" ? (
+        <span
+          data-testid="asset-group-soul-failed"
+          className="absolute left-1 top-1 rounded-md bg-destructive/90 px-1 py-px text-[9px] font-semibold text-destructive-foreground"
+        >
+          Train failed
         </span>
       ) : null}
     </div>

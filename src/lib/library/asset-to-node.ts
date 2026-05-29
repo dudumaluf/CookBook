@@ -45,14 +45,33 @@ const SPAWN: { [K in AssetKind]: SpawnFn<Extract<Asset, { kind: K }>> } = {
   // Asset group (Slice 5.6, ADR-0032). Drag of a group spawns an
   // `image-iterator` linked to it via `groupId`. The iterator becomes a
   // *view* of the group; library edits propagate naturally.
-  "asset-group": (asset) => ({
-    kind: "image-iterator",
-    initialConfig: {
-      groupId: asset.id,
-      cursor: 0,
-      selectionMode: "all",
-    },
-  }),
+  //
+  // M0b: a group trained as a Soul ID (soulTraining.status === "ready")
+  // spawns a `soul-id` node instead — the group "is" a Soul ID now, so
+  // dropping it gives you the character reference, not an image set.
+  "asset-group": (asset) => {
+    const st = asset.soulTraining;
+    if (st && st.status === "ready" && st.customReferenceId) {
+      return {
+        kind: "soul-id",
+        initialConfig: {
+          assetId: asset.id,
+          customReferenceId: st.customReferenceId,
+          variant: st.variant,
+          name: asset.name,
+          thumbnailUrl: st.thumbnailUrl,
+        },
+      };
+    }
+    return {
+      kind: "image-iterator",
+      initialConfig: {
+        groupId: asset.id,
+        cursor: 0,
+        selectionMode: "all",
+      },
+    };
+  },
   // Video / audio assets (Slice A — multimodal media arc). The `video` and
   // `audio` input nodes land in Slices B/C; the spawn mapping is registered
   // now so the AssetKind union stays exhaustive. No video/audio assets can

@@ -3,11 +3,17 @@
 import {
   Copy,
   FolderInput,
+  Loader2,
   Pencil,
+  RefreshCw,
   Trash2,
   UserPlus,
 } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
+import { toast } from "sonner";
+
+import { deleteSoulIdRemote } from "@/lib/higgsfield/call-soul-id-train";
+import { trainGroupAsSoulId } from "@/lib/library/train-soul-id";
 
 import {
   ContextMenu,
@@ -79,7 +85,6 @@ export function AssetContextMenu({
   const isInSelection = selectedAssetIds.includes(asset.id);
   const isMulti = isInSelection && selectedAssetIds.length > 1;
   const isGroup = asset.kind === "asset-group";
-  const isImage = asset.kind === "image";
   const isSoulId = asset.kind === "soul-id";
 
   // Active operand set: when the right-click target is part of the
@@ -139,6 +144,47 @@ export function AssetContextMenu({
       isUntitled: true,
     });
     useAssetStore.getState().clearAssetSelection();
+  }
+
+  const soulTraining = isGroup
+    ? (asset as AssetGroupAsset).soulTraining
+    : undefined;
+  const isTraining = soulTraining?.status === "training";
+  const isTrainedReady = soulTraining?.status === "ready";
+
+  function handleTrainSoulId() {
+    if (!isGroup) return;
+    const controller = new AbortController();
+    toast.info(`Training "${asset.name}" as a Soul ID — this takes a few minutes.`);
+    void trainGroupAsSoulId({ groupId: asset.id, signal: controller.signal })
+      .then((result) => {
+        if (result.status === "ready") {
+          toast.success(`Soul ID "${asset.name}" is ready.`);
+        } else if (result.status === "failed") {
+          toast.error(`Soul ID training failed: ${result.error ?? "unknown"}`);
+        }
+      })
+      .catch((err) => {
+        if ((err as Error)?.name === "AbortError") return;
+        toast.error(
+          `Soul ID training failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
+  function handleDeleteSoulId() {
+    if (!isGroup || !soulTraining) return;
+    const refId = soulTraining.customReferenceId;
+    // Clear the binding locally first (group + images survive).
+    useAssetStore.getState().setGroupSoulTraining(asset.id, null);
+    if (refId) {
+      void deleteSoulIdRemote(refId, new AbortController().signal).catch(
+        () => {
+          // Best-effort remote cleanup; local binding already cleared.
+        },
+      );
+    }
+    toast.success("Soul ID removed (group + images kept).");
   }
 
   return (
@@ -208,17 +254,44 @@ export function AssetContextMenu({
           </ContextMenuItem>
         ) : null}
 
-        {/* Train Soul ID — parked for M0b. Visible-but-disabled keeps
-            the affordance discoverable. */}
-        {isImage && !isMulti ? (
-          <ContextMenuItem
-            data-testid="asset-context-menu-train-soul-id"
-            disabled
-            title="Coming in M0b"
-          >
-            <UserPlus />
-            Train Soul ID
-          </ContextMenuItem>
+        {/* Train as Soul ID (M0b) — group-level. A plain group can train;
+            a trained group offers re-train + delete; a training group
+            shows a disabled progress item. */}
+        {isGroup && !isMulti ? (
+          isTraining ? (
+            <ContextMenuItem
+              data-testid="asset-context-menu-soul-training"
+              disabled
+            >
+              <Loader2 className="animate-spin" />
+              Training Soul ID…
+            </ContextMenuItem>
+          ) : isTrainedReady ? (
+            <>
+              <ContextMenuItem
+                data-testid="asset-context-menu-retrain-soul-id"
+                onClick={handleTrainSoulId}
+              >
+                <RefreshCw />
+                Re-train Soul ID
+              </ContextMenuItem>
+              <ContextMenuItem
+                data-testid="asset-context-menu-delete-soul-id"
+                onClick={handleDeleteSoulId}
+              >
+                <Trash2 />
+                Remove Soul ID
+              </ContextMenuItem>
+            </>
+          ) : (
+            <ContextMenuItem
+              data-testid="asset-context-menu-train-soul-id"
+              onClick={handleTrainSoulId}
+            >
+              <UserPlus />
+              Train as Soul ID
+            </ContextMenuItem>
+          )
         ) : null}
 
         <ContextMenuSeparator />
