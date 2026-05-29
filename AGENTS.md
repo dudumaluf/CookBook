@@ -14,7 +14,8 @@ This file is the **single starting point** for any new agent / chat session. If 
 
 ## Where we are right now
 
-- **Milestone**: M0a — *Soul Image Burst* recipe + **assistant agent autônomo** (greenfield rewrite of an earlier Prism prototype, see `docs/PRISM-REUSE-LOG.md`). **CLOSED** with Slice 7 (assistant agent arc).
+- **Milestone**: M0a (*Soul Image Burst* + assistant agent) **CLOSED**; M1 multimodal media arc shipped; **M1 projects arc** shipped (current). Greenfield rewrite of an earlier Prism prototype — see `docs/PRISM-REUSE-LOG.md`.
+- **Last shipped**: **M1 projects arc** (2026-05-29) — surgical "run only this node", project-as-document (per-node results/history persist + rehydrate on reload), multi-project with per-project URLs (`/projetos/[id]`) + race-guarded ProjectSession, and file portability (`.cookbook` JSON + self-contained `.zip`). ADR-0049 + ADR-0050. Snapshot: [`docs/STATE-AFTER-M1-projects-arc.md`](./docs/STATE-AFTER-M1-projects-arc.md). Tests at 947.
 - **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Postgres + pgvector + Higgsfield Cloud + Fal OpenRouter (OpenAI Chat Completions shape). See **ADR-0033** (production-first development) for the deployment convention.
 - **Last shipped slice**: **package M0a Slice 7 — assistant agent autônomo** (2026-05-28). Six sub-slices ship together as the assistant arc:
   - **7.1** — Provider abstraction + `POST /api/llm/chat-completions` (OpenAI shape) + `messages[]` / `tools[]` / `tool_choice` / `stream` types + knowledge bus + tool registry shells. `docs/ASSISTANT.md` v1. ADR-0041.

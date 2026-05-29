@@ -2,6 +2,17 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — M1 projects arc — surgical runs + persistent results + multi-project + file portability (Phases 1-4)
+
+Turns Cookbook into a real document-based app: each project owns its URL and its results survive reload; you can save/open a project as a file. Four commits on `main`, each build-verified. **Tests 930 → 947 (+17 here; +5 in the earlier feedback batch).** ADR-0049 (surgical run) + ADR-0050 (project document arc).
+
+- **Phase 1 — surgical "run only this node"** (`8dcbe0b`, ADR-0049): `runWorkflow` gains `seedOutputs` (reuse ancestors' recorded outputs by node-id; only the target + empty ancestors execute); `execution-store.startRunNode`; BaseNode Run = surgical, shift-click = include upstream. Fixes the upstream chain re-generating when you run one node.
+- **Phase 2 — project as a document** (`5ffeb68`, ADR-0050): `src/lib/project/document.ts` — one canonical serialize/deserialize/migrate for cloud + file, carrying `executionState` (per-node output + history). Reloading rehydrates records as `cached` (so generation-sync never re-inserts). `ProjectState` v2; autosave observes the execution-store. Fixes losing node history on reload.
+- **Phase 3 — multi-project + per-project URLs** (`e5bf098`, ADR-0050): routes `/projetos` (dashboard: new/open/rename/duplicate/delete) + `/projetos/[id]` (editor, `await params`); `/` redirects. `src/lib/project/session.ts` — race-guarded open/close lifecycle owner. Repo `getById` + `duplicate`. Execution cache namespaced per project. Save-status indicator. Cloud-canonical per project (no localStorage rehydrate → no cross-project flash).
+- **Phase 4 — file portability** (`d85ea06`, ADR-0050): `src/lib/project/file.ts` — `.cookbook` (JSON) + `.cookbook.zip` (self-contained bundle via `fflate`, media bytes embedded + URLs rewritten). Open file → new cloud project (`importProjectToCloud`, re-hosts bundle media). ProjectMenu + dashboard wiring.
+
+All four green: `npm test` (947), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
+
 ## 2026-05-28 — M1 multimodal media arc — video + audio + continuity (Slices A-F)
 
 Builds the media layer + the performance-video pipeline. Ten commits on `main`, each build-verified. **Tests 841 → 905 (+64).** The "singer show" use case is buildable end-to-end on the canvas; the AI-agency use case is served by the new image nodes + existing Soul ID. Soul ID *training* (Slice G) deferred as a dedicated M0b spike.

@@ -2257,3 +2257,55 @@ A true per-chunk approval gate needs mid-execute pausing (await user input insid
 - ADR-0030 (parallel fan-out) — this is the sequential complement.
 - ADR-0046 (media layer) — provides sliceAudio / extractFrame / concatVideos.
 - ADR-0047 (Seedance) — the per-chunk video generator.
+
+## ADR-0049 — Surgical "run only this node" (M1 projects arc, Phase 1)
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: clicking a node's Run button called `startRunFrom` (run-here = node + ALL ancestors), relying on the hash cache to skip unchanged upstreams. But cursor-advancing nodes (List/Number/iterator in increment/random) mutate their config every run, which busts the content hash of everything downstream and re-fires the expensive LLM / gen node above. Users perceived "I clicked Run on one node and the whole chain re-generated".
+
+### 1. Decisão: seed ancestor outputs by node-id, not by content hash
+
+`runWorkflow` gains `seedOutputs?: ReadonlyMap<nodeId, ExecutionCacheEntry>`. In a node-only run, any ancestor present in the map is emitted as `cached` (its recorded output reused verbatim) and skipped; only the target (`endAtNodeId`, excluded from the map by the caller) and ancestors *missing* an output actually execute. Keying by node-id — "this ancestor already has a result, reuse it" — sidesteps the hash entirely, so cursor churn upstream no longer re-runs anything. An empty upstream the target depends on (no recorded output → absent from the map) still runs on demand.
+
+### 2. Decisão: per-node Run = surgical; shift-click = include upstream
+
+`execution-store.startRunNode(nodeId)` builds `seedOutputs` from the current records (excluding the target so it always re-runs, honoring its own `isCacheBusting` like seed=-1). BaseNode's Run button calls `startRunNode` by default; shift-click keeps the old `startRunFrom` ("Run including upstream") for when the user deliberately wants the chain refreshed. The global Run button stays a full run.
+
+### 3. Trade-off aceito
+
+If you change an upstream input and then surgically run a downstream node, the downstream reuses the upstream's prior output (stale) — by design ("don't touch upstream"). Cheap reactive nodes are kept fresh by the reactive-runner anyway; expensive nodes are refreshed by explicitly running them (or shift-click).
+
+## ADR-0050 — Project as a versioned document: persistent results, multi-project URLs, file portability (M1 projects arc, Phases 2-4)
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: (a) per-node execution records (output + history) were in-memory only, so a reload wiped the canvas results even though the graph was restored from the cloud; (b) the app had a single active project on a single route (`/`) with no way to create/choose/manage multiple projects; (c) everything lived in Supabase with no way to save/open a project as a file.
+
+### 1. Decisão: one canonical ProjectDocument for cloud AND file
+
+`src/lib/project/document.ts` owns a single versioned (de)serialization (`serializeProject` / `applyProjectDocument` / `migrateProjectDocument`). The document is self-contained: graph + assets + layout + **`executionState`** (each node's last output + history, capped at `HISTORY_CAP`, URLs/text only — no bytes). The same document is stored as `cookbook_projects.state` (cloud) and exported as a file. Restoring on load rehydrates records as `"cached"` (a replay, not a fresh generation) so `generation-sync` skips them automatically — no duplicate Gallery rows, no separate dedup bookkeeping. `cookbook_generations` stays the curated, searchable Gallery corpus, separate from the canvas truth. `ProjectState` bumped to v2 (additive). Autosave now also observes the execution-store so a finished run persists its outputs.
+
+### 2. Decisão: multi-project with per-project URLs + a race-guarded ProjectSession
+
+Routes: `/projetos` (dashboard: list / new / open / rename / duplicate / delete) and `/projetos/[id]` (editor; Next 16 `await params`). `/` redirects to `/projetos`. `src/lib/project/session.ts` is the single owner of the open-project lifecycle: teardown → reset stores → set execution cache namespace → load document → rehydrate records → start subscriptions (autosave, generation persist, reactive runner, chat). A monotonic token guards races: a fast project switch supersedes the older `openProject`, which bails before applying. The output cache is namespaced per project (`setActiveProject`) so one project never serves another's cached outputs.
+
+### 3. Decisão: cloud-canonical per project (deviation from "disable persist")
+
+The plan considered removing the workflow/asset `persist` middleware. We instead keep it but **stop the shell from rehydrating localStorage** and rely on the cloud document + a load spinner. The global localStorage key becomes a harmless write-only artifact (never read), so there's no cross-project flash and no risky migration extraction. The legacy one-shot localStorage→cloud migration in `bootstrapForUser` is left intact but no longer the entry path.
+
+### 4. Decisão: file portability — JSON + self-contained .zip
+
+`src/lib/project/file.ts`: `.cookbook` (JSON, media as URLs — light) and `.cookbook.zip` (via `fflate`: `project.json` + a `media/` folder of actual bytes, URLs rewritten to relative paths — opens anywhere). The pure core (`collectMediaUrls`, `rewriteUrls`, `buildProjectBundle`, `readProjectBundle`) takes its IO (fetch + upload) as parameters so it's testable without a network or bucket. Opening a file creates a NEW cloud project from the document (`importProjectToCloud`); bundle media is re-hosted to the user's bucket for durable URLs.
+
+### 5. Trade-offs aceitos
+
+- **executionState in JSONB** — bounded (history capped, URLs/text only); the project state grows but stays small.
+- **Autosave observes execution-store** — a fan-out's many `done` emits are coalesced by the existing 1s debounce.
+- **.zip with large video** — an explicit "export with media" action; memory cost is the user's deliberate choice.
+
+### 6. Cross-references
+
+- ADR-0034 (cloud-canonical project) — extended here to multi-project + document.
+- ADR-0035 (Gallery corpus) — stays separate from the canvas document.
+- ADR-0049 (surgical run) — pairs with rehydration: after reload, restored records feed surgical reruns.
