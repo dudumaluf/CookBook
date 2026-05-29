@@ -120,7 +120,7 @@ function makeAbort(): Error {
 /* ------------------------------- Fetch helper ------------------------------- */
 
 interface FetchJsonOptions {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   body?: string;
   signal?: AbortSignal;
   /**
@@ -292,6 +292,116 @@ export async function listSoulIds(
     if (!res.total_pages || page >= res.total_pages) break;
   }
   return all;
+}
+
+/* --------------------------- Soul ID training ----------------------------- */
+/*
+ * Train a new Soul ID character (M0b spike). API contract recovered from the
+ * Prism implementation (reverse-engineered there) + our existing
+ * custom-references auth:
+ *
+ *   POST /v1/custom-references
+ *     body { name, model_version, input_images: [{ type: "image_url",
+ *            image_url }] }
+ *     -> { id, name, model_version, status, thumbnail_url, ... }
+ *   GET  /v1/custom-references/{id}   -> poll until status === "completed"
+ *   DELETE /v1/custom-references/{id} -> remove (4xx while still training)
+ *
+ * Our library images are already public Supabase URLs, so we pass them
+ * directly as `image_url` — no need for Higgsfield's presigned upload step
+ * (which Prism needed because it had local file bytes). If Higgsfield ever
+ * rejects external URLs, add a re-upload via /files/generate-upload-url.
+ */
+
+export interface HiggsfieldSoulIdRecord {
+  id: string;
+  name: string;
+  modelVersion: "v1" | "v2" | "cinema";
+  status: "not_ready" | "queued" | "in_progress" | "completed" | "failed";
+  thumbnailUrl: string | null;
+  createdAt: string;
+}
+
+function normalizeSoulIdRecord(
+  raw: RawCustomReferenceListItem,
+): HiggsfieldSoulIdRecord {
+  return {
+    id: raw.id,
+    name: raw.name,
+    modelVersion: raw.model_version,
+    status: raw.status as HiggsfieldSoulIdRecord["status"],
+    thumbnailUrl:
+      raw.thumbnail_url ?? raw.reference_media?.[0]?.media_url ?? null,
+    createdAt: raw.created_at,
+  };
+}
+
+/**
+ * Kick off Soul ID training from a set of public image URLs. Returns
+ * immediately with a not_ready/queued record; poll `getSoulId` until
+ * `status === "completed"`. Higgsfield caps at 4 concurrent trainings.
+ */
+export async function createSoulId(
+  params: {
+    name: string;
+    variant: "v1" | "v2" | "cinema";
+    imageUrls: string[];
+  },
+  signal: AbortSignal,
+): Promise<HiggsfieldSoulIdRecord> {
+  const creds = loadCredentials();
+  const name = params.name.trim();
+  if (!name) {
+    const err = new Error("Soul ID name is required.");
+    annotate(err, "invalid_request");
+    throw err;
+  }
+  if (params.imageUrls.length === 0) {
+    const err = new Error("At least one training image is required.");
+    annotate(err, "invalid_request");
+    throw err;
+  }
+  const body = JSON.stringify({
+    name,
+    model_version: params.variant,
+    input_images: params.imageUrls.map((url) => ({
+      type: "image_url" as const,
+      image_url: url,
+    })),
+  });
+  const raw = await fetchJson<RawCustomReferenceListItem>(
+    `${API_BASE}/v1/custom-references`,
+    creds,
+    { method: "POST", body, signal },
+  );
+  return normalizeSoulIdRecord(raw);
+}
+
+/** Fetch a single Soul ID character (used to poll training status). */
+export async function getSoulId(
+  id: string,
+  signal: AbortSignal,
+): Promise<HiggsfieldSoulIdRecord> {
+  const creds = loadCredentials();
+  const raw = await fetchJson<RawCustomReferenceListItem>(
+    `${API_BASE}/v1/custom-references/${encodeURIComponent(id)}`,
+    creds,
+    { method: "GET", signal },
+  );
+  return normalizeSoulIdRecord(raw);
+}
+
+/** Delete a trained Soul ID. Higgsfield 4xx's while it's still training. */
+export async function deleteSoulId(
+  id: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const creds = loadCredentials();
+  await fetchJson<unknown>(
+    `${API_BASE}/v1/custom-references/${encodeURIComponent(id)}`,
+    creds,
+    { method: "DELETE", signal },
+  );
 }
 
 /* ------------------------------- Soul Styles ------------------------------- */
