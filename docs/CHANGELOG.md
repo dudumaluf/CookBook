@@ -2,6 +2,17 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Chat attachments + @-mentions in the prompt bar (ADR-0053)
+
+The assistant can now be pointed at specific files/results. **Tests 972 → 980 (+6 here; +2 from the #185 hotfix).**
+
+- **Attach files** (drop / paste / paperclip) in the prompt bar → uploaded to the Library (real asset) → shown as a chip with thumbnail + editable name + remove.
+- **`@` picker**: the @ button (or typing `@`) opens a searchable popover over **Library + Gallery**, with inline rename (renames the asset name / generation title so it's findable). Selecting inserts a reference chip.
+- **Wired to the assistant**: `runReasoner` gains `references` and appends a "use these items (id + url)" note to the user turn, so the assistant uses the exact assets/results when building/running the workflow (chat still shows the clean text).
+- New: `src/lib/assistant/prompt-references.ts`, `src/lib/library/attach-file.ts`, `src/components/layout/prompt-reference-picker.tsx`; prompt-bar rewired. Inline-in-text chips deferred (chips sit above the input for now).
+
+All green: `npm test` (980), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
+
 ## 2026-05-29 — Recipes as configurable nodes + moved out of the Library (ADR-0052)
 
 Recipes stop being confusing "assets" and become real, tweakable blocks. **Tests 968 → 972 (+4).**

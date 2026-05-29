@@ -2364,3 +2364,27 @@ The save dialog gains a "Controls" editor: every primitive inner config field is
 - **Generic value-type inference** for controls now (vs schema-declared param metadata) — ships the capability for every node without a cross-node schema refactor; enum dropdowns are set via comma-options at save time.
 - **A full dedicated Recipes browse drawer** was not built; the Add Node "Recipes" group serves invoke + basic manage. A richer browse surface can follow if needed.
 - **Composites stay frozen for structure** — exposed params tweak *values*; changing the *graph* still needs Unpack.
+
+## ADR-0053 — Chat attachments + @-mentions: referencing assets/results in the prompt
+
+- **Date**: 2026-05-29
+- **Status**: implemented (phase 1 — chips above the input + `@` picker; inline-in-text chips deferred).
+- **Context**: building a big pipeline (e.g. the "singer performance") means pointing the assistant at specific files. The chat was text-only — the user couldn't drop a file or reference a Library/Gallery item; the assistant only saw the generic library listing in the knowledge bundle.
+
+### 1. Decisão: a tiny `PromptReference` carried from the prompt bar to the reasoner
+
+`src/lib/assistant/prompt-references.ts` defines `PromptReference` (`kind: asset | generation`, `refId`, `label`, `mediaType`, `url?`). `runReasoner` gains an optional `references` and appends a `buildReferencesNote(...)` block to the user turn ("use these items directly", with id + url) — the chat UI still shows the clean user text. The assistant can then wire the exact assets/results into nodes (it already has the construct tools).
+
+### 2. Decisão: attach = upload to the Library (real, durable, wireable asset)
+
+Dropping / pasting / picking a file in the prompt bar uploads it to the Library via the existing asset-store (`createImageAssetFromFile` / `createMediaAssetFromFile`) and adds a chip. So an "attachment" is a first-class asset the assistant can wire and that survives — not a transient chat blob (`src/lib/library/attach-file.ts`).
+
+### 3. Decisão: chips above the input + a searchable `@` picker (inline-in-text deferred)
+
+Per the user's pick, phase 1 renders attachment/mention chips in a row ABOVE the textarea (robust, premium, no contenteditable risk); `@` (or the @ button) opens `PromptReferencePicker` — a popover searching Library + Gallery, with inline rename (renames the underlying asset name / generation title so items stay findable). True inline-in-text chips (rich contenteditable) are a deferred refinement.
+
+### 4. Trade-offs aceitos
+
+- **No rich contenteditable yet** — chips live above the input, not in the text flow. Lower risk; revisit if the visual isn't enough.
+- **Attachments always hit the Library** — no "ephemeral, chat-only" file. Simpler + makes them wireable; the user can delete from the Library if unwanted.
+- **References are a context note, not structured tool args** — the assistant reads ids/urls from the note. A typed "referenced_assets" tool input could come later if it needs stricter wiring.

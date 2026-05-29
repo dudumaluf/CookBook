@@ -8,6 +8,10 @@ import type {
 } from "@/lib/llm/types";
 
 import { buildKnowledgeBundle } from "./knowledge";
+import {
+  buildReferencesNote,
+  type PromptReference,
+} from "./prompt-references";
 import { getTool, getToolDefinitions } from "./tools";
 import type { AssistantTool, ToolExecutionContext } from "./tools";
 
@@ -101,6 +105,12 @@ export type ReasonerEvent =
 export interface ReasonerOptions {
   /** The user's new message text. */
   userMessage: string;
+  /**
+   * Files/assets the user attached or @-mentioned in the prompt bar. Threaded
+   * into the user turn so the assistant uses these specific items (by id/url)
+   * rather than guessing from the generic library listing.
+   */
+  references?: readonly PromptReference[];
   ownerId: string;
   projectId: string;
   signal: AbortSignal;
@@ -142,6 +152,7 @@ export async function runReasoner(
 ): Promise<ReasonerResult> {
   const {
     userMessage,
+    references,
     ownerId,
     projectId,
     signal,
@@ -162,9 +173,13 @@ export async function runReasoner(
   // Initial system prompt + history.
   const bundle = await buildKnowledgeBundle({ ownerId, projectId });
   const systemContent = bundle.system + "\n\n" + REASONER_INSTRUCTIONS;
+  // Append the referenced-items note to the user turn (the chat UI still
+  // shows the clean userMessage via the `user` event above).
+  const refsNote = references ? buildReferencesNote(references) : "";
+  const userContent = refsNote ? `${userMessage}\n\n${refsNote}` : userMessage;
   const messages: ChatMessage[] = [
     ...bundle.messages,
-    { role: "user", content: userMessage },
+    { role: "user", content: userContent },
   ];
   const toolDefs = getToolDefinitions();
 

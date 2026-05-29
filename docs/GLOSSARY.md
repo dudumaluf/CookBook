@@ -210,6 +210,13 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 - **Recipes home = Add Node** — recipes are nodes, so they live in the Add Node popover's "Recipes" group (click instantiates a composite; non-system recipes have inline delete), NOT in the Library (which is assets-only now). The dead Library `recipe-card` was removed.
 - **Exposed-params editor** — `src/components/library/save-recipe-dialog.tsx`'s "Controls" section: check inner primitive config fields to expose, edit the label, pick the control type, and turn a text field into a dropdown via comma-separated options.
 
+## Chat attachments + @-mentions (ADR-0053)
+
+- **PromptReference** — `src/lib/assistant/prompt-references.ts`. A tiny descriptor (`kind: asset | generation`, `refId`, `label`, `mediaType`, `url?`) for a file the user attached or @-mentioned. `buildReferencesNote(refs)` renders them into the user turn so the assistant uses the exact items (by id/url).
+- **Attach-file** — `src/lib/library/attach-file.ts`. `attachFileAsReference(file)` uploads a dropped/pasted/picked file to the Library (real asset) and returns its chip; `assetToReference` / `assetMedia` / `assetUrl` map an existing asset to a reference.
+- **PromptReferencePicker** — `src/components/layout/prompt-reference-picker.tsx`. The `@`-menu: a searchable popover over Library + Gallery with inline rename (renames the underlying asset/generation title). Selecting inserts a reference chip.
+- **Reference chips** — rendered above the prompt textarea (phase 1); click the name to rename, X to remove. `runReasoner({ references })` threads them to the assistant. Inline-in-text chips are a deferred refinement.
+
 ## Process
 
 - **Test-as-you-go** — every shipped feature lands with at least one automated test + a manual smoke test from the user before the next feature starts.
