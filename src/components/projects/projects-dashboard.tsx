@@ -3,6 +3,7 @@
 import {
   Copy,
   FilePlus,
+  FolderInput,
   FolderOpen,
   Loader2,
   LogOut,
@@ -12,7 +13,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/auth/use-session";
 import { emptyProjectDocument } from "@/lib/project/document";
+import { importProjectToCloud } from "@/lib/project/file";
 import type {
   ProjectRecord,
   ProjectState,
@@ -48,6 +50,22 @@ export function ProjectsDashboard() {
   const [busy, setBusy] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !user) return;
+    const toastId = toast.loading("Opening project file…");
+    try {
+      const id = await importProjectToCloud(file, user.id);
+      toast.success("Project imported", { id: toastId });
+      router.push(`/projetos/${id}`);
+    } catch (err) {
+      console.error("[projects] import failed:", err);
+      toast.error("Could not open that file", { id: toastId });
+    }
+  }
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -130,6 +148,22 @@ export function ProjectsDashboard() {
           <h1 className="text-sm font-semibold tracking-tight">Projects</h1>
         </div>
         <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".cookbook,.json,.zip,application/json,application/zip"
+            className="hidden"
+            onChange={(e) => void onPickFile(e)}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            className="gap-1.5"
+          >
+            <FolderInput className="h-3.5 w-3.5" />
+            Open file
+          </Button>
           <Button
             size="sm"
             onClick={() => void createProject()}

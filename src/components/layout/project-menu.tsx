@@ -4,8 +4,11 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ChevronDown,
+  Download,
   FilePlus,
   FolderOpen,
+  FolderInput,
+  Package,
   Settings,
   Keyboard,
   ScrollText,
@@ -14,6 +17,7 @@ import {
   ShieldCheck,
   LogOut,
 } from "lucide-react";
+import { useRef } from "react";
 import { toast } from "sonner";
 
 import {
@@ -28,7 +32,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/auth/use-session";
-import { emptyProjectDocument } from "@/lib/project/document";
+import { emptyProjectDocument, serializeProject } from "@/lib/project/document";
+import {
+  exportProjectBundle,
+  exportProjectJson,
+  importProjectToCloud,
+} from "@/lib/project/file";
 import type { ProjectState } from "@/lib/repositories/project-repository";
 import { getProjectRepository } from "@/lib/repositories/supabase-project-repository";
 import { useLayoutStore } from "@/lib/stores/layout-store";
@@ -58,6 +67,22 @@ export function ProjectMenu() {
   } = useLayoutStore();
   const { user, signOut } = useSession();
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file || !user) return;
+    const toastId = toast.loading("Opening project file…");
+    try {
+      const id = await importProjectToCloud(file, user.id);
+      toast.success("Project imported", { id: toastId });
+      router.push(`/projetos/${id}`);
+    } catch (err) {
+      console.error("[project-menu] import failed:", err);
+      toast.error("Could not open that file", { id: toastId });
+    }
+  }
 
   async function createProject() {
     if (!user) return;
@@ -77,7 +102,15 @@ export function ProjectMenu() {
   }
 
   return (
-    <DropdownMenu>
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".cookbook,.json,.zip,application/json,application/zip"
+        className="hidden"
+        onChange={(e) => void onPickFile(e)}
+      />
+      <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Project menu"
         className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-popover/95 p-1 pl-1 pr-2 shadow-lg shadow-black/30 backdrop-blur-md transition-colors hover:bg-popover focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
@@ -105,6 +138,28 @@ export function ProjectMenu() {
           <DropdownMenuItem onClick={() => router.push("/projetos")}>
             <FolderOpen className="h-3.5 w-3.5" />
             All projects…
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+            <FolderInput className="h-3.5 w-3.5" />
+            Open file…
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => exportProjectJson(serializeProject())}>
+            <Download className="h-3.5 w-3.5" />
+            Export (.cookbook)
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              const id = toast.loading("Bundling project + media…");
+              void exportProjectBundle(serializeProject())
+                .then(() => toast.success("Exported with media", { id }))
+                .catch((err) => {
+                  console.error("[project-menu] bundle export failed:", err);
+                  toast.error("Export failed", { id });
+                });
+            }}
+          >
+            <Package className="h-3.5 w-3.5" />
+            Export with media (.zip)
           </DropdownMenuItem>
         </DropdownMenuGroup>
 
@@ -169,6 +224,7 @@ export function ProjectMenu() {
           About Cookbook
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenu>
+      </DropdownMenu>
+    </>
   );
 }

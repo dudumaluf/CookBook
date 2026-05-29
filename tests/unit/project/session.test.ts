@@ -5,33 +5,39 @@ import type { StandardizedOutput } from "@/types/node";
 
 /* Mocks — keep the session logic isolated from real cloud / subscriptions. */
 
-const repo = { getById: vi.fn() };
+const {
+  repo,
+  unsubSave,
+  unsubGen,
+  unsubReactive,
+  startAutoSave,
+  startAutoPersistGenerations,
+  startReactiveRunner,
+  hydrateChatForProject,
+} = vi.hoisted(() => {
+  const unsubSave = vi.fn();
+  const unsubGen = vi.fn();
+  const unsubReactive = vi.fn();
+  return {
+    repo: { getById: vi.fn() },
+    unsubSave,
+    unsubGen,
+    unsubReactive,
+    startAutoSave: vi.fn(() => unsubSave),
+    startAutoPersistGenerations: vi.fn(() => unsubGen),
+    startReactiveRunner: vi.fn(() => unsubReactive),
+    hydrateChatForProject: vi.fn(() => Promise.resolve()),
+  };
+});
+
 vi.mock("@/lib/repositories/supabase-project-repository", () => ({
   getProjectRepository: () => repo,
   SupabaseProjectRepository: class {},
 }));
-
-const unsubSave = vi.fn();
-const unsubGen = vi.fn();
-const unsubReactive = vi.fn();
-const startAutoSave = vi.fn(() => unsubSave);
-const startAutoPersistGenerations = vi.fn(() => unsubGen);
-const startReactiveRunner = vi.fn(() => unsubReactive);
-const hydrateChatForProject = vi.fn(() => Promise.resolve());
-
-vi.mock("@/lib/sync/project-sync", () => ({
-  startAutoSave: (...args: unknown[]) => startAutoSave(...args),
-}));
-vi.mock("@/lib/sync/generation-sync", () => ({
-  startAutoPersistGenerations: (...args: unknown[]) =>
-    startAutoPersistGenerations(...args),
-}));
-vi.mock("@/lib/engine/reactive-runner", () => ({
-  startReactiveRunner: (...args: unknown[]) => startReactiveRunner(...args),
-}));
-vi.mock("@/lib/sync/chat-sync", () => ({
-  hydrateChatForProject: (...args: unknown[]) => hydrateChatForProject(...args),
-}));
+vi.mock("@/lib/sync/project-sync", () => ({ startAutoSave }));
+vi.mock("@/lib/sync/generation-sync", () => ({ startAutoPersistGenerations }));
+vi.mock("@/lib/engine/reactive-runner", () => ({ startReactiveRunner }));
+vi.mock("@/lib/sync/chat-sync", () => ({ hydrateChatForProject }));
 
 const {
   _resetSessionForTests,
