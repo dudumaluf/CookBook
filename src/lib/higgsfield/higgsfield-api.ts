@@ -324,11 +324,15 @@ export interface HiggsfieldSoulIdRecord {
 
 function normalizeSoulIdRecord(
   raw: RawCustomReferenceListItem,
+  fallbackVariant: "v1" | "v2" | "cinema" = "v2",
 ): HiggsfieldSoulIdRecord {
   return {
     id: raw.id,
     name: raw.name,
-    modelVersion: raw.model_version,
+    // The official create/list/get responses don't always return
+    // `model_version` (confirmed against cloud.higgsfield.ai docs,
+    // 2026-05-28) — fall back to the variant we trained with.
+    modelVersion: raw.model_version ?? fallbackVariant,
     status: raw.status as HiggsfieldSoulIdRecord["status"],
     thumbnailUrl:
       raw.thumbnail_url ?? raw.reference_media?.[0]?.media_url ?? null,
@@ -374,7 +378,7 @@ export async function createSoulId(
     creds,
     { method: "POST", body, signal },
   );
-  return normalizeSoulIdRecord(raw);
+  return normalizeSoulIdRecord(raw, params.variant);
 }
 
 /** Fetch a single Soul ID character (used to poll training status). */
