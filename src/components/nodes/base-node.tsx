@@ -515,19 +515,27 @@ function NodeSettingsTrigger({ settings }: { settings: BaseNodeSettings }) {
 }
 
 /**
- * Run-here button (Slice 5.8). Renders a small play icon next to the
- * status chip in the BaseNode header for any node whose schema has an
- * `execute()` function. Click triggers
- * `useExecutionStore.startRunFrom(nodeId)` which runs the node and all
- * its upstream ancestors, leaving unrelated graph branches untouched.
+ * Per-node Run button. Renders a small play icon next to the status chip
+ * in the BaseNode header for any node whose schema has an `execute()`.
+ *
+ * Default click = surgical "run only this node"
+ * (`startRunNode(nodeId)`): the target re-executes but upstream ancestors
+ * are reused from their current recorded outputs (only empty ancestors the
+ * target depends on run on demand). This is what users expect from
+ * "regenerate this one node" — it never silently re-runs the LLM / prompt
+ * chain above it.
+ *
+ * Shift-click = "Run including upstream" (`startRunFrom(nodeId)`): the
+ * classic run-here that re-executes the node and all ancestors, for when
+ * the user deliberately wants upstream refreshed.
  *
  * Disabled while a run is in-flight so a click can't kick off a new
- * subgraph mid-execution. `onPointerDown stopPropagation` keeps the
- * click from initiating a node drag (header is the drag handle —
- * ADR-0031).
+ * subgraph mid-execution. `onPointerDown stopPropagation` keeps the click
+ * from initiating a node drag (header is the drag handle — ADR-0031).
  */
 function RunHereButton({ nodeId }: { nodeId: string }) {
   const isRunning = useExecutionStore((s) => s.isRunning);
+  const startRunNode = useExecutionStore((s) => s.startRunNode);
   const startRunFrom = useExecutionStore((s) => s.startRunFrom);
   return (
     <Tooltip>
@@ -536,15 +544,21 @@ function RunHereButton({ nodeId }: { nodeId: string }) {
           type="button"
           data-testid="node-run-here"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => void startRunFrom(nodeId)}
+          onClick={(e) =>
+            e.shiftKey
+              ? void startRunFrom(nodeId)
+              : void startRunNode(nodeId)
+          }
           disabled={isRunning}
-          aria-label="Run from here"
+          aria-label="Run this node"
           className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Play className="h-3 w-3 fill-current" />
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">Run from here</TooltipContent>
+      <TooltipContent side="bottom">
+        Run this node · shift-click to include upstream
+      </TooltipContent>
     </Tooltip>
   );
 }

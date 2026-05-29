@@ -104,6 +104,26 @@ export interface RunWorkflowOptions {
    * scratch and don't need the bridge.
    */
   prevOutputs?: ReadonlyMap<string, StandardizedOutput | StandardizedOutput[]>;
+
+  /**
+   * Surgical "run only this node" (ADR — node-only run). When set (paired
+   * with `endAtNodeId`), every ancestor present in this map is served from
+   * its provided output and SKIPPED — only the target (`endAtNodeId`) and
+   * ancestors *missing* from the map actually execute.
+   *
+   * Why by node-id (not by content hash like `cache`): an upstream List /
+   * Number / iterator that advances its cursor each run mutates its config,
+   * which busts the hash of everything downstream and re-fires the
+   * expensive LLM / gen node below. Seeding by node-id sidesteps the hash
+   * entirely — "this ancestor already has a result, reuse it verbatim" —
+   * so clicking Run on one node never silently re-runs the rest. An empty
+   * ancestor (no recorded output, so absent here) still runs on demand,
+   * which covers the "empty LLM that the image node depends on" case.
+   *
+   * The target is intentionally excluded by the caller so it always
+   * re-executes (honouring its own `isCacheBusting`, e.g. seed === -1).
+   */
+  seedOutputs?: ReadonlyMap<string, ExecutionCacheEntry>;
 }
 
 export interface RunWorkflowResult {
@@ -295,6 +315,7 @@ export async function runWorkflow(
     endAtNodeId,
     mode = "full",
     prevOutputs,
+    seedOutputs,
   } = opts;
   const isReactiveOnly = mode === "reactive-only";
 
@@ -452,6 +473,26 @@ export async function runWorkflow(
 
     const nodeHash = computeNodeHash(node, upstreamHashesByTargetHandle);
     hashes.set(node.id, nodeHash);
+
+    // Surgical node-only run: an ancestor with a seeded output is reused
+    // verbatim and never re-executes. The target (endAtNodeId) is excluded
+    // from the seed map by the caller, so it always runs. Ancestors absent
+    // from the map (e.g. an empty upstream LLM) fall through and execute.
+    if (
+      seedOutputs !== undefined &&
+      node.id !== endAtNodeId &&
+      seedOutputs.has(node.id)
+    ) {
+      const seeded = seedOutputs.get(node.id)!;
+      outputs.set(node.id, seeded.output);
+      emit(node.id, {
+        status: "cached",
+        output: seeded.output,
+        hash: nodeHash,
+        ...(seeded.usage ? { usage: seeded.usage } : {}),
+      });
+      continue;
+    }
 
     // Cache-busting nodes (e.g. an image/video gen with seed === -1 ==
     // "random each run") opt out of the hash cache so pressing Run again

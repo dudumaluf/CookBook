@@ -1490,3 +1490,127 @@ describe("reportProgress (Slice D)", () => {
     expect(Array.isArray(runningRecords[2]?.output)).toBe(true);
   });
 });
+
+/* seedOutputs — surgical node-only run (Phase 1) -------------------------- */
+
+describe("runWorkflow seedOutputs", () => {
+  /** Registry where every kind counts its executions for assertions. */
+  function countingRegistry() {
+    const calls: Record<string, number> = {};
+    const reg = new NodeRegistry();
+    reg.register(
+      defineNode<{ text: string }>({
+        kind: "text",
+        category: "input",
+        title: "Text",
+        description: "",
+        icon: Type,
+        inputs: [],
+        outputs: [{ id: "out", label: "out", dataType: "text" }],
+        defaultConfig: { text: "" },
+        reactive: true,
+        execute: async ({ config }) => {
+          calls.text = (calls.text ?? 0) + 1;
+          return { type: "text", value: config.text };
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    reg.register(
+      defineNode<{ tag: string }>({
+        kind: "gen",
+        category: "ai-text",
+        title: "Gen",
+        description: "",
+        icon: Sparkles,
+        inputs: [{ id: "in", label: "in", dataType: "text" }],
+        outputs: [{ id: "out", label: "out", dataType: "text" }],
+        defaultConfig: { tag: "" },
+        reactive: false,
+        execute: async ({ config, inputs }) => {
+          calls.gen = (calls.gen ?? 0) + 1;
+          const up = inputs.in as StandardizedOutput | undefined;
+          const t = up?.type === "text" ? up.value : "";
+          return { type: "text", value: `${config.tag}:${t}` };
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    return { reg, calls };
+  }
+
+  it("reuses a seeded ancestor verbatim (never re-executes it)", async () => {
+    const { reg, calls } = countingRegistry();
+    const nodes = [
+      node("a", "text", { text: "hi" }),
+      node("b", "gen", { tag: "B" }),
+    ];
+    const edges = [edge("a", "b")];
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry: reg,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      endAtNodeId: "b",
+      seedOutputs: new Map([
+        ["a", { output: { type: "text", value: "hi" } as StandardizedOutput }],
+      ]),
+    });
+    // 'a' is seeded -> emitted as cached, never executed; 'b' (target) runs.
+    expect(records.get("a")?.status).toBe("cached");
+    expect(calls.text ?? 0).toBe(0);
+    expect(calls.gen).toBe(1);
+    // Target consumed the seeded upstream output.
+    expect((records.get("b")?.output as StandardizedOutput).value).toBe("B:hi");
+  });
+
+  it("executes an ancestor that is missing from the seed (empty upstream)", async () => {
+    const { reg, calls } = countingRegistry();
+    const nodes = [
+      node("a", "text", { text: "fresh" }),
+      node("b", "gen", { tag: "B" }),
+    ];
+    const edges = [edge("a", "b")];
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry: reg,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      endAtNodeId: "b",
+      // 'a' NOT seeded -> must run on demand so 'b' has its input.
+      seedOutputs: new Map(),
+    });
+    expect(calls.text).toBe(1);
+    expect(calls.gen).toBe(1);
+    expect((records.get("b")?.output as StandardizedOutput).value).toBe(
+      "B:fresh",
+    );
+  });
+
+  it("always re-executes the target even when present in the seed", async () => {
+    const { reg, calls } = countingRegistry();
+    const nodes = [node("b", "gen", { tag: "B" })];
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges: [],
+      registry: reg,
+      cache: newCache(),
+      signal: new AbortController().signal,
+      onProgress: (id, r) => records.set(id, r),
+      endAtNodeId: "b",
+      // Even if a stale output is seeded for the target, it must run.
+      seedOutputs: new Map([
+        ["b", { output: { type: "text", value: "stale" } as StandardizedOutput }],
+      ]),
+    });
+    expect(calls.gen).toBe(1);
+    expect(records.get("b")?.status).toBe("done");
+  });
+});

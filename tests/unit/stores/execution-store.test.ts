@@ -154,6 +154,66 @@ describe("execution-store", () => {
     });
   });
 
+  /* ─── Phase 1 — startRunNode (surgical "run only this node") ─── */
+
+  describe("startRunNode", () => {
+    it("reuses upstream's recorded output and does NOT re-run it", async () => {
+      // text(A) → list(B). After a full run, A.output = "hi". Mutate A's
+      // config; running ONLY B must reuse A's recorded "hi" (A not
+      // re-executed) so B still sees "hi", not the mutated value.
+      const a = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "hi" });
+      const b = useWorkflowStore.getState().addNode("list", { x: 0, y: 0 });
+      useWorkflowStore.getState().addEdge({
+        source: a,
+        sourceHandle: "out",
+        target: b,
+        targetHandle: "items",
+      });
+
+      await useExecutionStore.getState().startRun();
+      expect(useExecutionStore.getState().getRecord(a)?.status).toBe("done");
+
+      // Mutate the upstream — if A re-ran, B would see "changed".
+      useWorkflowStore.getState().updateNodeConfig(a, { text: "changed" });
+
+      await useExecutionStore.getState().startRunNode(b);
+
+      const recA = useExecutionStore.getState().getRecord(a);
+      const recB = useExecutionStore.getState().getRecord(b);
+      // A reused verbatim (cached), still "hi" — never re-executed.
+      expect(recA?.status).toBe("cached");
+      expect((recA?.output as StandardizedOutput).value).toBe("hi");
+      // B re-ran and consumed the reused upstream output.
+      expect(recB?.status).toBe("done");
+      expect((recB?.output as StandardizedOutput).value).toBe("hi");
+    });
+
+    it("runs an empty upstream on demand (dependency the target needs)", async () => {
+      // text(A) → list(B) but NOTHING has run yet, so A has no recorded
+      // output. startRunNode(B) must run A on demand so B has its input.
+      const a = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "fresh" });
+      const b = useWorkflowStore.getState().addNode("list", { x: 0, y: 0 });
+      useWorkflowStore.getState().addEdge({
+        source: a,
+        sourceHandle: "out",
+        target: b,
+        targetHandle: "items",
+      });
+
+      await useExecutionStore.getState().startRunNode(b);
+
+      expect(useExecutionStore.getState().getRecord(a)?.status).toBe("done");
+      expect(
+        (useExecutionStore.getState().getRecord(b)?.output as StandardizedOutput)
+          .value,
+      ).toBe("fresh");
+    });
+  });
+
   describe("history ring buffer (Slice 5.8)", () => {
     it("appends a history entry on every `done` record (cap = 10)", async () => {
       const textId = useWorkflowStore

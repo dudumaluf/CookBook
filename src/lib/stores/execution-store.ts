@@ -77,6 +77,17 @@ export interface ExecutionState {
    */
   startRunFrom: (endNodeId: string) => Promise<void>;
 
+  /**
+   * Surgical "run only this node" (default for the per-node Run button).
+   * Runs `nodeId` reusing the CURRENT recorded outputs of its upstream
+   * ancestors — those ancestors are not re-executed. Only the target and
+   * ancestors that have no recorded output yet (e.g. an empty upstream
+   * LLM the target depends on) actually run. This is what users expect
+   * from "regenerate this one node": clicking Run on an image node never
+   * silently re-runs the LLM / prompt chain above it.
+   */
+  startRunNode: (nodeId: string) => Promise<void>;
+
   /** Abort the in-flight run. No-op if nothing is running. */
   cancelRun: () => void;
 
@@ -159,6 +170,7 @@ async function launchRun({
   get,
   set,
   endAtNodeId,
+  seedOutputs,
 }: {
   get: () => ExecutionState;
   set: (
@@ -167,6 +179,7 @@ async function launchRun({
       | ((state: ExecutionState) => Partial<ExecutionState>),
   ) => void;
   endAtNodeId: string | undefined;
+  seedOutputs?: ReadonlyMap<string, ExecutionCacheEntry>;
 }): Promise<void> {
   if (currentController) {
     currentController.abort();
@@ -197,6 +210,7 @@ async function launchRun({
       cache: sessionCache,
       signal: controller.signal,
       ...(endAtNodeId !== undefined ? { endAtNodeId } : {}),
+      ...(seedOutputs !== undefined ? { seedOutputs } : {}),
       onProgress: (nodeId, record) => {
         if (get().runId !== runId) return;
         const prev = get().records.get(nodeId);
@@ -247,6 +261,23 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
 
   startRunFrom: async (endNodeId: string) => {
     await launchRun({ get, set, endAtNodeId: endNodeId });
+  },
+
+  startRunNode: async (nodeId: string) => {
+    // Seed every ancestor's current output by node-id so they're reused
+    // verbatim (no re-execution). Exclude the target so it always runs.
+    // Ancestors with no recorded output are absent here → they execute on
+    // demand (covers an empty upstream the target depends on).
+    const seedOutputs = new Map<string, ExecutionCacheEntry>();
+    for (const [id, rec] of get().records) {
+      if (id === nodeId) continue;
+      if (rec.output === undefined) continue;
+      seedOutputs.set(id, {
+        output: rec.output,
+        ...(rec.usage ? { usage: rec.usage } : {}),
+      });
+    }
+    await launchRun({ get, set, endAtNodeId: nodeId, seedOutputs });
   },
 
   cancelRun: () => {
