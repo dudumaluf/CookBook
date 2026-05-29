@@ -397,6 +397,7 @@ function GroupMosaic({ group }: { group: AssetGroupAsset }) {
       ) : group.soulTraining?.status === "failed" ? (
         <span
           data-testid="asset-group-soul-failed"
+          title={group.soulTraining.error ?? "Training failed"}
           className="absolute left-1 top-1 rounded-md bg-destructive/90 px-1 py-px text-[9px] font-semibold text-destructive-foreground"
         >
           Train failed
