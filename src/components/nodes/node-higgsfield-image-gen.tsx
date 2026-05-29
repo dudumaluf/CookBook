@@ -28,6 +28,7 @@ import {
   type SoulResolution,
 } from "@/lib/higgsfield/types";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { isRandomSeed, RANDOM_SEED, resolveSeed } from "@/lib/utils/seed";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { parseAspectRatio } from "@/lib/utils/aspect-ratio";
 import type {
@@ -344,24 +345,28 @@ function HiggsfieldImageGenSettingsContent({
         <label htmlFor={seedId} className="font-medium text-foreground/90">
           Seed
           <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-            (1–1,000,000)
+            (-1 = random each run)
           </span>
         </label>
         <input
           id={seedId}
           type="number"
-          min={1}
+          min={-1}
           max={1_000_000}
           step={1}
-          placeholder="Random"
-          value={config.seed ?? ""}
+          placeholder="-1"
+          value={config.seed ?? RANDOM_SEED}
           onChange={(e) => {
             const raw = e.target.value;
             if (raw === "") {
-              updateConfig({ seed: undefined });
+              updateConfig({ seed: RANDOM_SEED });
               return;
             }
             const parsed = Number(raw);
+            if (parsed === RANDOM_SEED) {
+              updateConfig({ seed: RANDOM_SEED });
+              return;
+            }
             if (
               Number.isInteger(parsed) &&
               parsed >= 1 &&
@@ -419,7 +424,7 @@ export function hasHiggsfieldImageGenOverrides(
     config.aspectRatio !== undefined ||
     config.resolution !== undefined ||
     config.batchSize !== undefined ||
-    config.seed !== undefined ||
+    !isRandomSeed(config.seed) ||
     config.negativePrompt !== undefined ||
     config.styleId !== undefined
   );
@@ -611,8 +616,11 @@ export const higgsfieldImageGenNodeSchema =
     outputs: [
       { id: "out", label: "out", dataType: "image", multiple: true },
     ],
-    defaultConfig: {},
+    defaultConfig: { seed: RANDOM_SEED },
     reactive: false,
+    // seed === -1 (or unset) -> random each run -> bust the cache so pressing
+    // Run again yields a fresh image without changing config.
+    isCacheBusting: (config) => isRandomSeed(config.seed),
     execute: async ({ config, inputs, signal }) => {
       const prompt = (
         extractInputByType(inputs, "prompt", "text") ?? ""
@@ -651,7 +659,8 @@ export const higgsfieldImageGenNodeSchema =
         aspectRatio: config.aspectRatio,
         resolution: config.resolution,
         batchSize: config.batchSize,
-        seed: config.seed,
+        // Resolve -1 / unset to a concrete random seed (1..1,000,000).
+        seed: resolveSeed(config.seed, 1_000_000),
         negativePrompt: config.negativePrompt,
         signal,
       });
