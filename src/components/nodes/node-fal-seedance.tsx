@@ -10,6 +10,9 @@ import {
   SEEDANCE_ASPECT_RATIOS,
   SEEDANCE_RESOLUTIONS,
   type SeedanceVideoRequest,
+  isRandomSeed,
+  RANDOM_SEED,
+  resolveSeed,
 } from "@/lib/fal/types";
 import { validateSeedanceRequest } from "@/lib/media/constraints";
 import { useExecutionStore } from "@/lib/stores/execution-store";
@@ -63,7 +66,7 @@ function hasSeedanceOverrides(config: SeedanceVideoNodeConfig): boolean {
     (config.resolution !== undefined &&
       config.resolution !== DEFAULT_RESOLUTION) ||
     config.generateAudio === false ||
-    config.seed !== undefined ||
+    !isRandomSeed(config.seed) ||
     config.fast === true
   );
 }
@@ -294,17 +297,20 @@ function SeedanceVideoSettingsContent({
       <div className="flex flex-col gap-1.5">
         <label htmlFor={seedId} className="font-medium text-foreground/90">
           Seed
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+            (-1 = random each run)
+          </span>
         </label>
         <input
           id={seedId}
           type="number"
           step={1}
-          placeholder="Random"
-          value={config.seed ?? ""}
+          placeholder="-1"
+          value={config.seed ?? RANDOM_SEED}
           onChange={(e) => {
             const raw = e.target.value;
             updateConfig({
-              seed: raw === "" ? undefined : Number(raw),
+              seed: raw === "" ? RANDOM_SEED : Number(raw),
             });
           }}
           className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
@@ -332,8 +338,14 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     { id: "audio", label: "audio", dataType: "audio", multiple: true },
   ],
   outputs: [{ id: "out", label: "out", dataType: "video" }],
-  defaultConfig: { generateAudio: true, resolution: DEFAULT_RESOLUTION },
+  defaultConfig: {
+    generateAudio: true,
+    resolution: DEFAULT_RESOLUTION,
+    seed: RANDOM_SEED,
+  },
   reactive: false,
+  // seed === -1 (or unset) -> random each run -> bust the cache.
+  isCacheBusting: (config) => isRandomSeed(config.seed),
   execute: async ({ config, inputs, signal }) => {
     const prompt = (
       extractInputByType(inputs, "prompt", "text") ?? ""
@@ -380,7 +392,8 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
       ...(config.generateAudio !== undefined
         ? { generateAudio: config.generateAudio }
         : {}),
-      ...(config.seed !== undefined ? { seed: config.seed } : {}),
+      // Resolve -1 / unset to a concrete random seed each run.
+      seed: resolveSeed(config.seed),
       ...(config.fast ? { fast: true } : {}),
     };
 

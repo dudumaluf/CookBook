@@ -174,6 +174,14 @@ export interface NodeSchema<TConfig = unknown> {
    */
   iterator?: boolean;
   /**
+   * Opt this node out of the engine's hash cache for the given config
+   * (multimodal arc). Returns `true` to force a fresh execute() every run
+   * even when nothing changed — used by generation nodes when `seed === -1`
+   * ("random each run"), so the user can press Run repeatedly for variations
+   * without editing config. Default (absent): cacheable.
+   */
+  isCacheBusting?: (config: TConfig) => boolean;
+  /**
    * Execution function. Optional in Slice 1 because Text/Image are reactive
    * and the run engine (Slice 3) is not built yet. Becomes required once the
    * engine ships.

@@ -1360,6 +1360,84 @@ describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
   });
 });
 
+/* isCacheBusting (multimodal arc) ----------------------------------------- */
+
+describe("isCacheBusting", () => {
+  it("re-executes a cache-busting node on every run (no cache replay)", async () => {
+    let calls = 0;
+    const registry = new NodeRegistry();
+    registry.register(
+      defineNode<{ seed: number }>({
+        kind: "gen",
+        category: "ai-image",
+        title: "Gen",
+        description: "",
+        icon: Sparkles,
+        inputs: [],
+        outputs: [{ id: "out", label: "out", dataType: "image" }],
+        defaultConfig: { seed: -1 },
+        reactive: false,
+        isCacheBusting: (config) => config.seed === -1,
+        execute: async () => {
+          calls += 1;
+          return { type: "image", value: { url: `gen-${calls}.png` } };
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    const cache: ExecutionCache = new Map();
+    const opts = {
+      nodes: [node("a", "gen", { seed: -1 })],
+      edges: [],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    };
+    await runWorkflow(opts);
+    await runWorkflow(opts);
+    // Two runs -> two executes (cache never replayed because seed === -1).
+    expect(calls).toBe(2);
+  });
+
+  it("replays the cache for a fixed seed (not cache-busting)", async () => {
+    let calls = 0;
+    const registry = new NodeRegistry();
+    registry.register(
+      defineNode<{ seed: number }>({
+        kind: "gen",
+        category: "ai-image",
+        title: "Gen",
+        description: "",
+        icon: Sparkles,
+        inputs: [],
+        outputs: [{ id: "out", label: "out", dataType: "image" }],
+        defaultConfig: { seed: 42 },
+        reactive: false,
+        isCacheBusting: (config) => config.seed === -1,
+        execute: async () => {
+          calls += 1;
+          return { type: "image", value: { url: `gen-${calls}.png` } };
+        },
+        Body: EmptyBody as never,
+      }),
+    );
+    const cache: ExecutionCache = new Map();
+    const opts = {
+      nodes: [node("a", "gen", { seed: 42 })],
+      edges: [],
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    };
+    await runWorkflow(opts);
+    await runWorkflow(opts);
+    // Second run hits the cache (fixed seed) -> only one execute.
+    expect(calls).toBe(1);
+  });
+});
+
 /* reportProgress wiring (Slice D) ----------------------------------------- */
 
 describe("reportProgress (Slice D)", () => {

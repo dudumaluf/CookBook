@@ -1,6 +1,26 @@
 import { z } from "zod";
 
 /**
+ * Sentinel seed meaning "random each run" (ComfyUI convention). Nodes that
+ * expose a seed default to this + declare `isCacheBusting` on it, so the
+ * engine re-executes every Run (fresh variation) instead of replaying the
+ * hash cache. `resolveSeed` turns it (or an absent seed) into a concrete
+ * random integer at execute time.
+ */
+export const RANDOM_SEED = -1;
+
+export function resolveSeed(seed: number | undefined): number {
+  if (seed === undefined || seed === RANDOM_SEED) {
+    return Math.floor(Math.random() * 1_000_000_000);
+  }
+  return seed;
+}
+
+export function isRandomSeed(seed: number | undefined): boolean {
+  return seed === undefined || seed === RANDOM_SEED;
+}
+
+/**
  * Fal media types — Slice B (multimodal media arc).
  *
  * Request/response contract for the Seedance video endpoint, mirroring the

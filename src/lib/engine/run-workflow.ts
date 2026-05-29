@@ -453,9 +453,15 @@ export async function runWorkflow(
     const nodeHash = computeNodeHash(node, upstreamHashesByTargetHandle);
     hashes.set(node.id, nodeHash);
 
+    // Cache-busting nodes (e.g. an image/video gen with seed === -1 ==
+    // "random each run") opt out of the hash cache so pressing Run again
+    // produces a fresh result without changing any config. The schema
+    // declares this per-config via `isCacheBusting`. Default: cacheable.
+    const cacheBust = schema.isCacheBusting?.(node.config) === true;
+
     // Cache hit? Same key for both single and fan-out modes — the cache
     // stores the final aggregated output either way.
-    const cached = cache.get(nodeHash);
+    const cached = cacheBust ? undefined : cache.get(nodeHash);
     if (cached !== undefined) {
       outputs.set(node.id, cached.output);
       emit(node.id, {

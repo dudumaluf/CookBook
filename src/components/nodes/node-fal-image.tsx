@@ -13,6 +13,9 @@ import {
   FAL_IMAGE_MODEL_LABELS,
   FAL_IMAGE_MODELS,
   type FalImageModel,
+  isRandomSeed,
+  RANDOM_SEED,
+  resolveSeed,
 } from "@/lib/fal/types";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type {
@@ -42,7 +45,7 @@ function hasOverrides(config: FalImageNodeConfig): boolean {
   return (
     (config.model !== undefined && config.model !== DEFAULT_MODEL) ||
     (config.numImages !== undefined && config.numImages !== 1) ||
-    config.seed !== undefined
+    !isRandomSeed(config.seed)
   );
 }
 
@@ -194,16 +197,21 @@ function FalImageSettings({
       <div className="flex flex-col gap-1.5">
         <label htmlFor={seedId} className="font-medium text-foreground/90">
           Seed
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+            (-1 = random each run)
+          </span>
         </label>
         <input
           id={seedId}
           type="number"
           step={1}
-          placeholder="Random"
-          value={config.seed ?? ""}
+          placeholder="-1"
+          value={config.seed ?? RANDOM_SEED}
           onChange={(e) => {
             const raw = e.target.value;
-            updateConfig({ seed: raw === "" ? undefined : Number(raw) });
+            updateConfig({
+              seed: raw === "" ? RANDOM_SEED : Number(raw),
+            });
           }}
           className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
         />
@@ -224,8 +232,11 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
     { id: "image", label: "image", dataType: "image", multiple: true },
   ],
   outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],
-  defaultConfig: { model: DEFAULT_MODEL },
+  defaultConfig: { model: DEFAULT_MODEL, seed: RANDOM_SEED },
   reactive: false,
+  // seed === -1 (or unset) -> random each run -> bust the cache so pressing
+  // Run again yields a fresh image without changing config.
+  isCacheBusting: (config) => isRandomSeed(config.seed),
   execute: async ({ config, inputs, signal }) => {
     const prompt = (extractInputByType(inputs, "prompt", "text") ?? "").trim();
     if (prompt.length === 0) {
@@ -242,7 +253,8 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
       prompt,
       ...(imageUrls.length ? { imageUrls } : {}),
       ...(config.numImages !== undefined ? { numImages: config.numImages } : {}),
-      ...(config.seed !== undefined ? { seed: config.seed } : {}),
+      // Resolve -1 / unset to a concrete random seed each run.
+      seed: resolveSeed(config.seed),
       signal,
     });
 
