@@ -103,9 +103,13 @@ describe("<LibraryContent /> — Slice 5.6b Groups section + subview", () => {
       ],
     });
     renderLibrary();
-    expect(screen.getByText("Soul IDs")).toBeInTheDocument();
-    expect(screen.getByText("Groups")).toBeInTheDocument();
-    expect(screen.getByText("Images")).toBeInTheDocument();
+    // Target the section headings specifically — the filter chips now
+    // share these labels, so a bare getByText would be ambiguous.
+    expect(
+      screen.getByRole("heading", { name: "Soul IDs" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Groups" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Images" })).toBeInTheDocument();
   });
 
   /* ───────── Slice 5.6.1: hide grouped images from "Images" ───────── */

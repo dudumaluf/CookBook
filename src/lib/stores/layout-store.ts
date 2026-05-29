@@ -18,6 +18,11 @@ import { persist, createJSONStorage } from "zustand/middleware";
  * - approvalGateOn: persistent user preference.
  */
 
+/** Library view mode (revamp): grid of thumbnails vs dense list rows. */
+export type LibraryView = "grid" | "list";
+/** Library grid thumbnail size (revamp): small / medium / large. */
+export type LibraryThumb = "s" | "m" | "l";
+
 interface LayoutState {
   libraryOpen: boolean;
   queueOpen: boolean;
@@ -25,10 +30,19 @@ interface LayoutState {
   commandPaletteOpen: boolean;
   logsPanelOpen: boolean;
   galleryOpen: boolean;
+  /** Full-width Library drawer (revamp) — gallery-style management surface. */
+  libraryDrawerOpen: boolean;
   addNodePopoverOpen: boolean;
   approvalGateOn: boolean;
+  /** Persisted UI prefs for how the Library renders assets. */
+  libraryView: LibraryView;
+  libraryThumb: LibraryThumb;
 
   toggleLibrary: () => void;
+  toggleLibraryDrawer: () => void;
+  setLibraryDrawerOpen: (open: boolean) => void;
+  setLibraryView: (view: LibraryView) => void;
+  setLibraryThumb: (thumb: LibraryThumb) => void;
   toggleQueue: () => void;
   toggleChatSheet: () => void;
   setChatSheetOpen: (open: boolean) => void;
@@ -55,10 +69,18 @@ export const useLayoutStore = create<LayoutState>()(
       commandPaletteOpen: false,
       logsPanelOpen: false,
       galleryOpen: false,
+      libraryDrawerOpen: false,
       addNodePopoverOpen: false,
       approvalGateOn: true,
+      libraryView: "grid",
+      libraryThumb: "m",
 
       toggleLibrary: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
+      toggleLibraryDrawer: () =>
+        set((s) => ({ libraryDrawerOpen: !s.libraryDrawerOpen })),
+      setLibraryDrawerOpen: (open) => set({ libraryDrawerOpen: open }),
+      setLibraryView: (view) => set({ libraryView: view }),
+      setLibraryThumb: (thumb) => set({ libraryThumb: thumb }),
       toggleQueue: () => set((s) => ({ queueOpen: !s.queueOpen })),
       toggleChatSheet: () => set((s) => ({ chatSheetOpen: !s.chatSheetOpen })),
       setChatSheetOpen: (open) => set({ chatSheetOpen: open }),
@@ -81,6 +103,7 @@ export const useLayoutStore = create<LayoutState>()(
           s.commandPaletteOpen ||
           s.logsPanelOpen ||
           s.galleryOpen ||
+          s.libraryDrawerOpen ||
           s.addNodePopoverOpen;
         if (!anyOpen) return false;
         set({
@@ -88,6 +111,7 @@ export const useLayoutStore = create<LayoutState>()(
           commandPaletteOpen: false,
           logsPanelOpen: false,
           galleryOpen: false,
+          libraryDrawerOpen: false,
           addNodePopoverOpen: false,
         });
         return true;
@@ -96,7 +120,9 @@ export const useLayoutStore = create<LayoutState>()(
     {
       name: "cookbook.layout",
       storage: createJSONStorage(() => localStorage),
-      version: 3,
+      // v4: adds persisted Library view prefs (libraryView / libraryThumb).
+      // Additive — absent fields fall back to store defaults on rehydrate.
+      version: 4,
       // SSR-safe: don't auto-rehydrate on first render. Instead the shell
       // triggers .persist.rehydrate() inside a useEffect. This guarantees the
       // server-rendered HTML matches the client's initial render (= defaults).
@@ -106,6 +132,8 @@ export const useLayoutStore = create<LayoutState>()(
         queueOpen: state.queueOpen,
         chatSheetOpen: state.chatSheetOpen,
         approvalGateOn: state.approvalGateOn,
+        libraryView: state.libraryView,
+        libraryThumb: state.libraryThumb,
       }),
       migrate: (persisted, version) => {
         // v1: leftPanelTab/rightPanelTab/bottomDrawer fields

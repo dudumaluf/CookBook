@@ -2,6 +2,17 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Library revamp — scroll + search/filter + views + management drawer (ADR-0051)
+
+Makes the assets area premium: it scrolls, filters, and gains a full management surface. **Tests 947 → 968 (+21).**
+
+- **Scroll fix**: the Library panel's `ScrollArea` got `min-h-0` so overflow actually scrolls inside the frame (was clipping unreachable items).
+- **Search + type filter + views**: shared `LibraryToolbar` (search, type chips with counts, grid/list toggle, S/M/L thumb size, expand) above a sticky header; `filterAssets` helper; `AssetView`/`AssetGrid`/`AssetList` + a new `AssetRow` (list) sharing a `useAssetInteractions` hook with `AssetCard`. `video`/`audio` kinds now show. View + size persist (layout-store v4).
+- **Library drawer**: a bottom drawer (~72vh, ⌘⇧A or the panel's expand button) mirroring the Gallery — same toolbar + views, asset-store multi-select, a bulk action bar (Group / Download / Delete), and drag-to-canvas via the pointer-events-none-while-dragging trick.
+- New deps: none. New files: `filter-assets`, `library-toolbar`, `asset-view`, `asset-row`, `use-asset-interactions`, `library-drawer`. Tests for all + the filter helper.
+
+All green: `npm test` (968), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
+
 ## 2026-05-29 — M1 projects arc — surgical runs + persistent results + multi-project + file portability (Phases 1-4)
 
 Turns Cookbook into a real document-based app: each project owns its URL and its results survive reload; you can save/open a project as a file. Four commits on `main`, each build-verified. **Tests 930 → 947 (+17 here; +5 in the earlier feedback batch).** ADR-0049 (surgical run) + ADR-0050 (project document arc).

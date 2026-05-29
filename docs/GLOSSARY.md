@@ -193,6 +193,16 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 - **`.cookbook` file / bundle** — `src/lib/project/file.ts`. `.cookbook` = JSON document (media as URLs); `.cookbook.zip` = self-contained bundle (`project.json` + a `media/` folder of bytes via `fflate`, URLs rewritten to relative paths). `importProjectFile` reads either; `importProjectToCloud` opens one into a NEW cloud project (re-hosting bundle media to the user's bucket).
 - **Projects dashboard** — `/projetos` (`src/components/projects/projects-dashboard.tsx`): list / new / open / rename / duplicate / delete + Open file. The editor lives at `/projetos/[id]`; `/` redirects to the dashboard.
 
+## Library views (Library revamp, ADR-0051)
+
+- **`filterAssets(assets, { query, kind })`** — `src/lib/library/filter-assets.ts`. Pure search (case-insensitive over `name` + `tags`) + kind filter, shared by the panel and drawer. `countAssetsByKind` feeds the filter-chip badges.
+- **LibraryToolbar** — `src/components/library/library-toolbar.tsx`. The shared, controlled search + type-chip + grid/list toggle + thumbnail-size (S/M/L) + expand control. Dumb: the parent owns state + builds the chips.
+- **AssetView / AssetGrid / AssetList** — `src/components/library/asset-view.tsx`. Render a set of assets as a responsive grid (thumbnail size → `auto-fill minmax`, adapts to container width) or a dense list.
+- **AssetRow** — `src/components/library/asset-row.tsx`. List-view counterpart of `AssetCard` (small thumb + name + kind + hover delete). Shares all interactions via `useAssetInteractions`.
+- **`useAssetInteractions(asset, onOpen)`** — `src/components/library/use-asset-interactions.ts`. The single source of truth for an asset card/row's multi-select, drag, group-drop, delete, and inline-rename behaviour — so the two views never drift.
+- **Library drawer** — `src/components/layout/library-drawer.tsx`. A bottom drawer (~72vh, `libraryDrawerOpen`, ⌘⇧A) mirroring the Gallery: shared toolbar + views, asset-store multi-select, a bulk action bar (Group / Download / Delete), drag-to-canvas via the pointer-events-none-while-dragging trick. The side panel's expand button opens it.
+- **`libraryView` / `libraryThumb` (layout-store v4)** — persisted UI prefs: `"grid" | "list"` and `"s" | "m" | "l"`. Shared by panel + drawer.
+
 ## Process
 
 - **Test-as-you-go** — every shipped feature lands with at least one automated test + a manual smoke test from the user before the next feature starts.

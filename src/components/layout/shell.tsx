@@ -15,6 +15,7 @@ import { RunButton } from "./run-button";
 import { CommandPalette } from "./command-palette";
 import { LogsPanel } from "./logs-panel";
 import { GalleryDrawer } from "./gallery-drawer";
+import { LibraryDrawer } from "./library-drawer";
 import { ProjectMenu } from "./project-menu";
 import { EditableTitle } from "./editable-title";
 import { SaveIndicator } from "./save-indicator";
@@ -137,6 +138,7 @@ export function AppShell({ projectId }: { projectId: string }) {
       {/* Edge / modal overlays */}
       <LogsPanel />
       <GalleryDrawer />
+      <LibraryDrawer />
       <CommandPalette />
     </div>
   );

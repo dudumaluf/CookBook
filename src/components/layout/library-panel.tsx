@@ -78,7 +78,11 @@ export function LibraryPanel() {
         </div>
       </header>
 
-      <ScrollArea className="flex-1">
+      {/* `min-h-0` lets this flex child shrink below its content height so
+          the ScrollArea viewport actually bounds + scrolls the overflow
+          (without it, the flex item grows to content and the panel frame
+          clips unreachable items). */}
+      <ScrollArea className="min-h-0 flex-1">
         <LibraryContent />
       </ScrollArea>
     </aside>

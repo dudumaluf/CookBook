@@ -15,6 +15,7 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
  * - ⌘.   open Add Node popover (also via right-click on canvas). We avoid
  *        ⌘N because macOS / Chrome intercept it as "new window".
  * - ⌘⇧L  toggle logs panel
+ * - ⌘⇧A  toggle Library drawer (full asset management)
  * - Esc  close any open overlay (chat / palette / logs / gallery / add-node)
  *
  * `/` is handled in PromptBar to focus the textarea.
@@ -27,6 +28,7 @@ export function useLayoutShortcuts() {
     toggleChatSheet,
     toggleCommandPalette,
     toggleLogsPanel,
+    toggleLibraryDrawer,
     toggleAddNodePopover,
     closeAllOverlays,
   } = useLayoutStore();
@@ -48,6 +50,13 @@ export function useLayoutShortcuts() {
       if (e.shiftKey && key === "l") {
         e.preventDefault();
         toggleLogsPanel();
+        return;
+      }
+
+      // ⌘⇧A for the full Library drawer.
+      if (e.shiftKey && key === "a") {
+        e.preventDefault();
+        toggleLibraryDrawer();
         return;
       }
 
@@ -90,6 +99,7 @@ export function useLayoutShortcuts() {
     toggleChatSheet,
     toggleCommandPalette,
     toggleLogsPanel,
+    toggleLibraryDrawer,
     toggleAddNodePopover,
     closeAllOverlays,
   ]);

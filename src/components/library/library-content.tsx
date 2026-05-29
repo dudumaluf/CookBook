@@ -1,12 +1,18 @@
 "use client";
 
 import { ArrowLeft } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { filterAssets } from "@/lib/library/filter-assets";
 import { importImageFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import {
+  useLayoutStore,
+  type LibraryThumb,
+  type LibraryView,
+} from "@/lib/stores/layout-store";
 import type {
   Asset,
   AssetGroupAsset,
@@ -17,8 +23,10 @@ import type {
 import { useRecipes } from "@/lib/hooks/use-recipes";
 
 import { AssetCard } from "./asset-card";
+import { AssetView } from "./asset-view";
 import { ImportAsGroupDialog } from "./import-as-group-dialog";
 import { InlineRename } from "./inline-rename";
+import { LibraryToolbar, type LibraryChip } from "./library-toolbar";
 import { RecipeCard } from "./recipe-card";
 
 /**
@@ -47,6 +55,15 @@ export function LibraryContent() {
   /** "Import as group?" dialog state — see Slice 5.6c. */
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Library revamp — search + type filter (local) + view prefs (persisted).
+  const [query, setQuery] = useState("");
+  const [activeChip, setActiveChip] = useState("all");
+  const libraryView = useLayoutStore((s) => s.libraryView);
+  const libraryThumb = useLayoutStore((s) => s.libraryThumb);
+  const setLibraryView = useLayoutStore((s) => s.setLibraryView);
+  const setLibraryThumb = useLayoutStore((s) => s.setLibraryThumb);
+  const toggleLibraryDrawer = useLayoutStore((s) => s.toggleLibraryDrawer);
 
   // Slice 5.6f — multi-delete via Backspace / Delete.
   //
@@ -126,6 +143,58 @@ export function LibraryContent() {
     setPendingFiles(list);
   }
 
+  const { data: recipes, refresh: refreshRecipes } = useRecipes();
+
+  // Per-kind base lists (unfiltered counts drive the chips) + query-filtered
+  // lists (drive what renders). Grouped images are hidden from "Images"
+  // (they live inside their group's subview — Finder's one-place model).
+  const base = useMemo(() => {
+    const images = assets.filter((a): a is ImageAsset => a.kind === "image");
+    const groups = assets.filter(
+      (a): a is AssetGroupAsset => a.kind === "asset-group",
+    );
+    const groupedIds = new Set(groups.flatMap((g) => g.assetIds));
+    return {
+      image: images.filter((a) => !groupedIds.has(a.id)),
+      "asset-group": groups,
+      "soul-id": assets.filter((a): a is SoulIdAsset => a.kind === "soul-id"),
+      video: assets.filter((a) => a.kind === "video"),
+      audio: assets.filter((a) => a.kind === "audio"),
+    };
+  }, [assets]);
+
+  const filtered = useMemo(
+    () => ({
+      image: filterAssets(base.image, { query }),
+      "asset-group": filterAssets(base["asset-group"], { query }),
+      "soul-id": filterAssets(base["soul-id"], { query }),
+      video: filterAssets(base.video, { query }),
+      audio: filterAssets(base.audio, { query }),
+    }),
+    [base, query],
+  );
+
+  const filteredRecipes = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q
+      ? recipes.filter((r) => r.name.toLowerCase().includes(q))
+      : recipes;
+  }, [recipes, query]);
+
+  const chips = useMemo<LibraryChip[]>(() => {
+    const defs: Array<{ id: string; label: string; count: number }> = [
+      { id: "image", label: "Images", count: base.image.length },
+      { id: "asset-group", label: "Groups", count: base["asset-group"].length },
+      { id: "soul-id", label: "Soul IDs", count: base["soul-id"].length },
+      { id: "video", label: "Videos", count: base.video.length },
+      { id: "audio", label: "Audio", count: base.audio.length },
+      { id: "recipe", label: "Recipes", count: recipes.length },
+    ];
+    const present = defs.filter((d) => d.count > 0);
+    const total = present.reduce((n, d) => n + d.count, 0);
+    return [{ id: "all", label: "All", count: total }, ...present];
+  }, [base, recipes.length]);
+
   return (
     <div
       ref={containerRef}
@@ -161,10 +230,32 @@ export function LibraryContent() {
           onBack={() => setActiveGroupId(null)}
         />
       ) : (
-        <TopLevelView
-          assets={assets}
-          onAssetOpen={handleAssetOpen}
-        />
+        <>
+          <div className="sticky top-0 z-10 -mx-3 -mt-3 border-b border-border/40 bg-popover/95 px-3 pb-2 pt-3 backdrop-blur">
+            <LibraryToolbar
+              query={query}
+              onQueryChange={setQuery}
+              chips={chips}
+              activeChip={activeChip}
+              onChipChange={setActiveChip}
+              view={libraryView}
+              onViewChange={setLibraryView}
+              thumb={libraryThumb}
+              onThumbChange={setLibraryThumb}
+              onExpand={toggleLibraryDrawer}
+            />
+          </div>
+          <TopLevelView
+            filtered={filtered}
+            recipes={filteredRecipes}
+            activeChip={activeChip}
+            view={libraryView}
+            thumb={libraryThumb}
+            query={query}
+            onAssetOpen={handleAssetOpen}
+            refreshRecipes={() => void refreshRecipes()}
+          />
+        </>
       )}
       <ImportAsGroupDialog
         files={pendingFiles}
@@ -178,47 +269,60 @@ export function LibraryContent() {
 /* Top-level view: Soul IDs + Groups + Images                              */
 /* ────────────────────────────────────────────────────────────────────── */
 
+type FilteredAssets = {
+  image: Asset[];
+  "asset-group": Asset[];
+  "soul-id": Asset[];
+  video: Asset[];
+  audio: Asset[];
+};
+
 function TopLevelView({
-  assets,
+  filtered,
+  recipes,
+  activeChip,
+  view,
+  thumb,
+  query,
   onAssetOpen,
+  refreshRecipes,
 }: {
-  assets: Asset[];
+  filtered: FilteredAssets;
+  recipes: ReturnType<typeof useRecipes>["data"];
+  activeChip: string;
+  view: LibraryView;
+  thumb: LibraryThumb;
+  query: string;
   onAssetOpen: (asset: Asset) => void;
+  refreshRecipes: () => void;
 }) {
-  const imageAssets = assets.filter(
-    (a): a is ImageAsset => a.kind === "image",
-  );
-  const soulIdAssets = assets.filter(
-    (a): a is SoulIdAsset => a.kind === "soul-id",
-  );
-  const groupAssets = assets.filter(
-    (a): a is AssetGroupAsset => a.kind === "asset-group",
-  );
-  // Slice 6.6 — recipes saved by the user (and seeded system recipes)
-  // live in cookbook_recipes; the hook merges own + system. Drag onto
-  // canvas spawns a composite node.
-  const { data: recipes, refresh: refreshRecipes } = useRecipes();
+  const show = (id: string) => activeChip === "all" || activeChip === id;
 
-  // Slice 5.6.1 — images that are members of any group hide from the
-  // top-level "Images" section. The user enters the group via the
-  // subview to see them. removeFromGroup / removeGroup brings them
-  // back to Images naturally because the filter re-evaluates. Matches
-  // Finder's folder model: a file lives in one place at a time.
-  const groupedImageIds = new Set(
-    groupAssets.flatMap((g) => g.assetIds),
+  const sections: Array<{ id: string; title: string; testId?: string; items: Asset[] }> = [
+    { id: "soul-id", title: "Soul IDs", items: filtered["soul-id"] },
+    {
+      id: "asset-group",
+      title: "Groups",
+      testId: "library-section-groups",
+      items: filtered["asset-group"],
+    },
+    { id: "image", title: "Images", items: filtered.image },
+    { id: "video", title: "Videos", items: filtered.video },
+    { id: "audio", title: "Audio", items: filtered.audio },
+  ];
+  const visibleSections = sections.filter(
+    (s) => show(s.id) && s.items.length > 0,
   );
-  const bareImageAssets = imageAssets.filter(
-    (a) => !groupedImageIds.has(a.id),
-  );
+  const showRecipes = show("recipe") && recipes.length > 0;
 
-  if (
-    bareImageAssets.length === 0 &&
-    soulIdAssets.length === 0 &&
-    groupAssets.length === 0 &&
-    recipes.length === 0
-  ) {
-    return (
-      <div className="flex flex-col items-start gap-1.5">
+  if (visibleSections.length === 0 && !showRecipes) {
+    const filtering = query.trim() !== "" || activeChip !== "all";
+    return filtering ? (
+      <p className="px-0.5 py-6 text-center text-xs text-muted-foreground">
+        No matching assets.
+      </p>
+    ) : (
+      <div className="flex flex-col items-start gap-1.5 py-1">
         <p className="text-sm text-foreground/80">No assets yet</p>
         <p className="text-xs leading-relaxed text-muted-foreground">
           Click <span className="font-medium text-foreground/80">+</span> to
@@ -230,39 +334,23 @@ function TopLevelView({
   }
 
   return (
-    <>
-      {soulIdAssets.length > 0 ? (
-        <Section title="Soul IDs" count={soulIdAssets.length}>
-          <div className="grid grid-cols-2 gap-1.5">
-            {soulIdAssets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onOpen={onAssetOpen} />
-            ))}
-          </div>
-        </Section>
-      ) : null}
-      {groupAssets.length > 0 ? (
+    <div className="flex flex-col gap-3">
+      {visibleSections.map((s) => (
         <Section
-          title="Groups"
-          count={groupAssets.length}
-          dataTestId="library-section-groups"
+          key={s.id}
+          title={s.title}
+          count={s.items.length}
+          dataTestId={s.testId}
         >
-          <div className="grid grid-cols-2 gap-1.5">
-            {groupAssets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onOpen={onAssetOpen} />
-            ))}
-          </div>
+          <AssetView
+            assets={s.items}
+            view={view}
+            size={thumb}
+            onOpen={onAssetOpen}
+          />
         </Section>
-      ) : null}
-      {bareImageAssets.length > 0 ? (
-        <Section title="Images" count={bareImageAssets.length}>
-          <div className="grid grid-cols-2 gap-1.5">
-            {bareImageAssets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onOpen={onAssetOpen} />
-            ))}
-          </div>
-        </Section>
-      ) : null}
-      {recipes.length > 0 ? (
+      ))}
+      {showRecipes ? (
         <Section
           title="Recipes"
           count={recipes.length}
@@ -273,13 +361,13 @@ function TopLevelView({
               <RecipeCard
                 key={recipe.id}
                 recipe={recipe}
-                onChanged={() => void refreshRecipes()}
+                onChanged={refreshRecipes}
               />
             ))}
           </div>
         </Section>
       ) : null}
-    </>
+    </div>
   );
 }
 

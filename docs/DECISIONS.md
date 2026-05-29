@@ -2309,3 +2309,30 @@ The plan considered removing the workflow/asset `persist` middleware. We instead
 - ADR-0034 (cloud-canonical project) — extended here to multi-project + document.
 - ADR-0035 (Gallery corpus) — stays separate from the canvas document.
 - ADR-0049 (surgical run) — pairs with rehydration: after reload, restored records feed surgical reruns.
+
+## ADR-0051 — Library revamp: search/filter/views + Library drawer (gallery-parity)
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: the Library panel had a broken scroll (overflow clipped, unreachable items), no search or type filter (Soul IDs / Groups / Images / Recipes stacked, `video`/`audio` not shown at all), and no way to reduce visual clutter. The user wanted gallery-style management + different views, and the ability to expand into a fuller surface.
+
+### 1. Decisão: fix scroll via `min-h-0` (flexbox shrink)
+
+The panel's `<ScrollArea className="flex-1">` grew to content height because a flex child defaults to `min-height: auto`. Adding `min-h-0` lets it shrink so the viewport bounds + scrolls the overflow. One-line root-cause fix.
+
+### 2. Decisão: shared, controlled building blocks (panel + drawer share)
+
+`filterAssets` (pure search + kind filter), `LibraryToolbar` (search + type chips with counts + grid/list toggle + S/M/L thumb size + expand), `AssetView`/`AssetGrid`/`AssetList`, and a `useAssetInteractions` hook (the single source of truth for multi-select / drag / group-drop / delete / inline-rename, consumed by both `AssetCard` and the new `AssetRow`). The toolbar is dumb/controlled so each surface owns its state and builds its own chips (the panel mixes in the separate Recipes source; the drawer is assets-only).
+
+### 3. Decisão: two views — grid (size control) + list
+
+Per the user's pick: a responsive grid whose thumbnail size (S/M/L → `auto-fill minmax`) adapts to the container (narrow panel = fewer columns, wide drawer = many), plus a dense list (`AssetRow`). View + size persist in the layout-store (`libraryView` / `libraryThumb`, v4). On "All" the panel keeps premium sections; a chip or query narrows to a single filtered view. `video`/`audio` kinds are now surfaced.
+
+### 4. Decisão: Library drawer mirrors the Gallery drawer
+
+A bottom drawer (~72vh, `libraryDrawerOpen`, ⌘⇧A + the panel's expand button) reusing the toolbar + views. Selection lives in the asset-store (same as the panel), so a bulk action bar (Group / Download / Delete) appears when items are selected. Drag-to-canvas uses the Gallery's `pointer-events-none`-while-dragging trick so a drop reaches the canvas without unmounting the drawer.
+
+### 5. Trade-offs aceitos
+
+- **Asset pin/favorite not added** — the Gallery's Pin lives on `cookbook_generations`; assets have no `pinned` field. Deferred to avoid a data-model change; delivered search/filter/views/select/delete/rename/group/download instead.
+- **Recipes stay panel-only** in the management drawer (they aren't multi-selectable assets).

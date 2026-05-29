@@ -7,7 +7,6 @@ import {
   Trash2,
   User,
 } from "lucide-react";
-import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,11 +14,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ASSET_DRAG_MIME,
-  parseAssetDrag,
-  serializeAssetDrag,
-} from "@/lib/library/asset-drag";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { cn } from "@/lib/utils";
 import type {
@@ -31,6 +25,7 @@ import type {
 
 import { AssetContextMenu } from "./asset-context-menu";
 import { InlineRename } from "./inline-rename";
+import { useAssetInteractions } from "./use-asset-interactions";
 
 interface AssetCardProps {
   asset: Asset;
@@ -74,116 +69,24 @@ interface AssetCardProps {
  * `image-iterator` linked via `groupId`.
  */
 export function AssetCard({ asset, onOpen }: AssetCardProps) {
-  const removeAsset = useAssetStore((s) => s.removeAsset);
-  const removeGroup = useAssetStore((s) => s.removeGroup);
-  const renameGroup = useAssetStore((s) => s.renameGroup);
-  const updateAsset = useAssetStore((s) => s.updateAsset);
-  const addToGroup = useAssetStore((s) => s.addToGroup);
-  const selectedAssetIds = useAssetStore((s) => s.selectedAssetIds);
-  const selectAsset = useAssetStore((s) => s.selectAsset);
-  const toggleAssetSelection = useAssetStore((s) => s.toggleAssetSelection);
-  const selectAssetRange = useAssetStore((s) => s.selectAssetRange);
-
-  const isSelected = selectedAssetIds.includes(asset.id);
-  const isGroup = asset.kind === "asset-group";
-
-  // Imperative handle into <InlineRename> — lets the right-click context
-  // menu's Rename item open edit mode without lifting the editing state
-  // up into AssetCard.
-  const startInlineRenameRef = useRef<(() => void) | null>(null);
-  function handleRequestRename() {
-    startInlineRenameRef.current?.();
-  }
-
-  function handleRename(next: string) {
-    if (asset.kind === "asset-group") {
-      renameGroup(asset.id, next);
-    } else {
-      updateAsset(asset.id, { name: next });
-    }
-  }
-
-  // Slice 5.6.1b — group cards become drop targets for image drags
-  // INSIDE the library. Drop an image card on a group card and the
-  // group's `assetIds` grows. Mirrors Finder ("drag file into folder").
-  // Only image payloads accepted today; other kinds (group→group merge,
-  // soul-id) are ignored, leaving the surface free for Slice 5.6f's
-  // right-click menu to introduce them explicitly.
-  const [isDropTarget, setIsDropTarget] = useState(false);
-
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
-    if (!isGroup) return;
-    if (!event.dataTransfer.types.includes(ASSET_DRAG_MIME)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
-    setIsDropTarget(true);
-  }
-
-  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
-    if (!isGroup) return;
-    if (event.currentTarget === event.target) setIsDropTarget(false);
-  }
-
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    if (!isGroup) return;
-    setIsDropTarget(false);
-    const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
-    if (!raw) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const payload = parseAssetDrag(raw);
-    // Only image-kind payloads merge into groups (5.6.1b).
-    // group→group / soul-id silently ignored — those operations belong
-    // to the future right-click menu (Slice 5.6f).
-    if (!payload || payload.kind !== "image") return;
-    // Don't drag a card onto its own group (no-op even though
-    // addToGroup is de-duped — explicit guard avoids visual flicker).
-    if (payload.assetIds.length === 0) return;
-    addToGroup(asset.id, payload.assetIds);
-    // Clear library selection so the next click starts fresh
-    // (matches the canvas-flow drop behaviour).
-    useAssetStore.getState().clearAssetSelection();
-  }
-
-  function handleClick(event: React.MouseEvent<HTMLDivElement>) {
-    if (event.shiftKey) {
-      selectAssetRange(asset.id);
-    } else if (event.metaKey || event.ctrlKey) {
-      toggleAssetSelection(asset.id);
-    } else {
-      selectAsset(asset.id);
-    }
-  }
-
-  function handleDoubleClick() {
-    if (onOpen) onOpen(asset);
-  }
-
-  function handleDragStart(event: React.DragEvent<HTMLDivElement>) {
-    // If the dragged card is part of the current selection, drag the
-    // whole selection. Otherwise drag just this card AND reset the
-    // selection to it (matches Finder: dragging an unselected file
-    // first selects it, then drags it).
-    const dragIds = isSelected ? [...selectedAssetIds] : [asset.id];
-    if (!isSelected) selectAsset(asset.id);
-    event.dataTransfer.setData(
-      ASSET_DRAG_MIME,
-      serializeAssetDrag({ assetIds: dragIds, kind: asset.kind }),
-    );
-    event.dataTransfer.effectAllowed = "copy";
-  }
-
-  function handleDelete() {
-    if (isGroup) {
-      removeGroup(asset.id);
-    } else {
-      void removeAsset(asset.id);
-    }
-  }
+  const {
+    isSelected,
+    isGroup,
+    isDropTarget,
+    startInlineRenameRef,
+    requestRename,
+    handleRename,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+    handleClick,
+    handleDoubleClick,
+    handleDragStart,
+    handleDelete,
+  } = useAssetInteractions(asset, onOpen);
 
   return (
-    <AssetContextMenu asset={asset} onRequestRename={handleRequestRename}>
+    <AssetContextMenu asset={asset} onRequestRename={requestRename}>
       <div
         draggable
         onDragStart={handleDragStart}
@@ -274,7 +177,7 @@ export function AssetCard({ asset, onOpen }: AssetCardProps) {
 /* Thumbnail (per-kind branch)                                            */
 /* ────────────────────────────────────────────────────────────────────── */
 
-function CardThumbnail({ asset }: { asset: Asset }) {
+export function CardThumbnail({ asset }: { asset: Asset }) {
   if (asset.kind === "asset-group") {
     return <GroupMosaic group={asset} />;
   }
