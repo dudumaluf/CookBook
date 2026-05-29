@@ -11,7 +11,7 @@ Unblocks the "singer performance" pipeline end-to-end. **Tests 980 → 981 (+1).
 - **Respects Seedance's `video_urls` cap** (combined 2–15s): with a reference video, the ~15s slice takes the whole video budget, so continuity comes from the previous chunk's **last frame** fed as an image ref (not a second 15s clip). Identity stays the character image.
 - `SEEDANCE_ASPECT_RATIOS` completed with `4:3` / `3:4` (per the docs).
 - **Reference slices auto-downscale** to fit Seedance's ~720p reference cap — configurable per node (`refResolution`: 720p default / 480p), so any 1080p+ source works. `sliceVideo` takes a `maxHeight` (preserves aspect).
-- Wire it today: Video Input → Continuity Builder `video`. Recipe exposure + standalone slicer nodes are next. **Caveat for real-spend:** don't enable "fast" (no documented `/fast/` 2.0 endpoint). Still mock-tested only.
+- Wire it today: Video Input → Continuity Builder `video`. Recipe exposure + standalone slicer nodes are next. **Fast tier confirmed** (`bytedance/seedance-2.0/fast/reference-to-video`, ~20% cheaper) — our endpoint construction already matches; the fast tier caps output at 720p, so we clamp 1080p→720p when `fast` is on to avoid a mid-run 422. Still mock-tested only.
 
 All green: `npm test` (981), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
 

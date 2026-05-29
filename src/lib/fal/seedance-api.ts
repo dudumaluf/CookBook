@@ -79,7 +79,12 @@ function buildInput(req: SeedanceVideoRequest): Record<string, unknown> {
       typeof req.duration === "number" ? String(req.duration) : req.duration;
   }
   if (req.aspectRatio !== undefined) input.aspect_ratio = req.aspectRatio;
-  if (req.resolution !== undefined) input.resolution = req.resolution;
+  if (req.resolution !== undefined) {
+    // The fast tier caps output at 720p (no 1080p) — clamp so a fast run
+    // never 422s mid-pipeline on an unsupported resolution.
+    input.resolution =
+      req.fast && req.resolution === "1080p" ? "720p" : req.resolution;
+  }
   if (req.generateAudio !== undefined) input.generate_audio = req.generateAudio;
   if (req.seed !== undefined) input.seed = req.seed;
   return input;
