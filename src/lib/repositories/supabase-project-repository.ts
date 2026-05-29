@@ -86,6 +86,30 @@ export class SupabaseProjectRepository implements ProjectRepository {
     return rowToRecord(data as RawProjectRow);
   }
 
+  async getById(id: string): Promise<ProjectRecord | null> {
+    const { data, error } = await this.client
+      .from("cookbook_projects")
+      .select("*")
+      .eq("id", id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (error) throw mapError(error, "Failed to fetch project");
+    if (!data) return null;
+    return rowToRecord(data as RawProjectRow);
+  }
+
+  async duplicate(id: string, name?: string): Promise<ProjectRecord> {
+    const src = await this.getById(id);
+    if (!src) {
+      throw new ProjectRepositoryError("Project not found", "not_found");
+    }
+    return this.save({
+      ownerId: src.ownerId,
+      name: name ?? `${src.name} (copy)`,
+      state: src.state,
+    });
+  }
+
   async list(userId: string): Promise<ProjectRecord[]> {
     const { data, error } = await this.client
       .from("cookbook_projects")

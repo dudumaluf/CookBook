@@ -132,6 +132,8 @@ interface AutoSaveOptions {
   ownerId: string;
   /** Debounce window between local change and remote PATCH. */
   debounceMs?: number;
+  /** Fired when a PATCH is actually dispatched (drives the "Saving…" UI). */
+  onSaving?: () => void;
   /** Optional hook for tests / observability. */
   onSaved?: (project: ProjectRecord) => void;
   /** Optional hook for tests / observability. */
@@ -149,6 +151,7 @@ export function startAutoSave({
   projectId,
   ownerId,
   debounceMs = DEFAULT_DEBOUNCE,
+  onSaving,
   onSaved,
   onError,
 }: AutoSaveOptions): () => void {
@@ -173,6 +176,7 @@ export function startAutoSave({
       name: state.projectName,
       state,
     };
+    onSaving?.();
     inFlight = repo
       .save(payload)
       .then((saved) => {

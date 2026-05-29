@@ -71,6 +71,19 @@ export interface ProjectRepository {
   /** All non-deleted projects, newest-updated first. M0a usually returns one. */
   list(userId: string): Promise<ProjectRecord[]>;
 
+  /**
+   * Fetch a specific (non-deleted) project by id. RLS enforces ownership,
+   * so a project belonging to another user resolves `null`. Used by the
+   * per-project URL routes (`/projetos/[id]`).
+   */
+  getById(id: string): Promise<ProjectRecord | null>;
+
+  /**
+   * Deep-copy a project into a new row owned by the same user (Save a
+   * copy / Duplicate). Returns the new record.
+   */
+  duplicate(id: string, name?: string): Promise<ProjectRecord>;
+
   /** Insert or update a project record. Server bumps `updated_at` on update. */
   save(project: SaveProjectInput): Promise<ProjectRecord>;
 

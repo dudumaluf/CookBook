@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   ChevronDown,
   FilePlus,
@@ -13,6 +14,7 @@ import {
   ShieldCheck,
   LogOut,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   DropdownMenu,
@@ -26,6 +28,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/auth/use-session";
+import { emptyProjectDocument } from "@/lib/project/document";
+import type { ProjectState } from "@/lib/repositories/project-repository";
+import { getProjectRepository } from "@/lib/repositories/supabase-project-repository";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 
 /**
@@ -52,6 +57,24 @@ export function ProjectMenu() {
     setApprovalGate,
   } = useLayoutStore();
   const { user, signOut } = useSession();
+  const router = useRouter();
+
+  async function createProject() {
+    if (!user) return;
+    try {
+      const rec = await getProjectRepository().save({
+        ownerId: user.id,
+        name: "Untitled Project",
+        state: emptyProjectDocument(
+          "Untitled Project",
+        ) as unknown as ProjectState,
+      });
+      router.push(`/projetos/${rec.id}`);
+    } catch (err) {
+      console.error("[project-menu] create failed:", err);
+      toast.error("Failed to create project");
+    }
+  }
 
   return (
     <DropdownMenu>
@@ -75,13 +98,13 @@ export function ProjectMenu() {
       <DropdownMenuContent align="start" sideOffset={8} className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Project</DropdownMenuLabel>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onClick={() => void createProject()}>
             <FilePlus className="h-3.5 w-3.5" />
             New project
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onClick={() => router.push("/projetos")}>
             <FolderOpen className="h-3.5 w-3.5" />
-            Open recent…
+            All projects…
           </DropdownMenuItem>
         </DropdownMenuGroup>
 

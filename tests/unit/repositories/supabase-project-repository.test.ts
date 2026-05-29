@@ -130,6 +130,52 @@ describe("SupabaseProjectRepository.getCurrent", () => {
   });
 });
 
+describe("SupabaseProjectRepository.getById", () => {
+  it("returns the project for a given id", async () => {
+    const client = makeMockClient((state) => {
+      // Filters by id + deleted_at is null.
+      expect(state.filters.some((f) => f.col === "id")).toBe(true);
+      return { data: FAKE_ROW, error: null };
+    });
+    const repo = new SupabaseProjectRepository(client as never);
+    const result = await repo.getById(FAKE_ROW.id);
+    expect(result?.id).toBe(FAKE_ROW.id);
+  });
+
+  it("returns null when the id is absent or RLS-hidden", async () => {
+    const client = makeMockClient(() => ({ data: null, error: null }));
+    const repo = new SupabaseProjectRepository(client as never);
+    expect(await repo.getById("missing")).toBeNull();
+  });
+});
+
+describe("SupabaseProjectRepository.duplicate", () => {
+  it("inserts a copy with the source state and a new name", async () => {
+    let capturedInsert: { name?: string; state?: unknown } | undefined;
+    const client = makeMockClient((state) => {
+      if (state.insertPayload !== undefined) {
+        capturedInsert = state.insertPayload as { name?: string };
+        return { data: { ...FAKE_ROW, name: "My Project (copy)" }, error: null };
+      }
+      // getById lookup of the source.
+      return { data: FAKE_ROW, error: null };
+    });
+    const repo = new SupabaseProjectRepository(client as never);
+    const result = await repo.duplicate(FAKE_ROW.id);
+    expect(capturedInsert?.name).toBe("My Project (copy)");
+    expect(capturedInsert?.state).toEqual(FAKE_ROW.state);
+    expect(result.name).toBe("My Project (copy)");
+  });
+
+  it("throws not_found when the source is gone", async () => {
+    const client = makeMockClient(() => ({ data: null, error: null }));
+    const repo = new SupabaseProjectRepository(client as never);
+    await expect(repo.duplicate("missing")).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+});
+
 describe("SupabaseProjectRepository.save", () => {
   it("inserts a fresh project when no id is provided", async () => {
     let capturedPayload: unknown;

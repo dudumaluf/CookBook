@@ -70,6 +70,27 @@ export interface ProjectDocument {
 const APP_NAME = "Cookbook";
 const APP_VERSION = "M1";
 
+/** A fresh, empty project document — used when creating a new project. */
+export function emptyProjectDocument(
+  name: string = "Untitled Project",
+): ProjectDocument {
+  return {
+    version: PROJECT_STATE_VERSION,
+    app: { name: APP_NAME, version: APP_VERSION },
+    projectName: name,
+    workflow: { nodes: [], edges: [] },
+    assets: [],
+    layout: {
+      libraryOpen: true,
+      queueOpen: false,
+      chatSheetOpen: false,
+      approvalGateOn: false,
+    },
+    executionState: {},
+    savedAt: new Date().toISOString(),
+  };
+}
+
 /* ──────────────────── execution-state (de)serialize ──────────────────── */
 
 /**

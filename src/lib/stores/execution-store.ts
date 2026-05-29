@@ -100,6 +100,14 @@ export interface ExecutionState {
 
   /** Drop every cached output. Next run will re-execute every node. */
   clearCache: () => void;
+
+  /**
+   * Switch the active project (Phase 3). Wipes the in-memory records +
+   * output cache and loads the new project's persisted cache namespace so
+   * one project never serves another's cached outputs. Called by the
+   * ProjectSession controller on open / switch.
+   */
+  setActiveProject: (projectId: string | null) => void;
 }
 
 /**
@@ -125,13 +133,24 @@ const sessionCache: ExecutionCache = new Map();
 const CACHE_STORAGE_KEY = "cookbook-exec-cache-v1";
 const CACHE_PERSIST_CAP = 300;
 
+/**
+ * The cache is namespaced per project so two projects never serve each
+ * other's outputs (and the cap is per-project). `setActiveProject` swaps
+ * this when the user opens a different project.
+ */
+let activeCacheKey = CACHE_STORAGE_KEY;
+
+function cacheKeyFor(projectId: string | null): string {
+  return projectId ? `${CACHE_STORAGE_KEY}::${projectId}` : CACHE_STORAGE_KEY;
+}
+
 function persistCache(): void {
   if (typeof window === "undefined") return;
   try {
     const entries = Array.from(sessionCache.entries()).slice(
       -CACHE_PERSIST_CAP,
     );
-    window.localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(entries));
+    window.localStorage.setItem(activeCacheKey, JSON.stringify(entries));
   } catch {
     // Quota or serialization error — caching is an optimization, not
     // load-bearing. Drop silently.
@@ -141,7 +160,7 @@ function persistCache(): void {
 function loadCache(): void {
   if (typeof window === "undefined") return;
   try {
-    const raw = window.localStorage.getItem(CACHE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(activeCacheKey);
     if (!raw) return;
     const entries = JSON.parse(raw) as [string, ExecutionCacheEntry][];
     for (const [hash, entry] of entries) sessionCache.set(hash, entry);
@@ -150,7 +169,7 @@ function loadCache(): void {
   }
 }
 
-// Rehydrate on first import (client only).
+// Rehydrate on first import (client only). Pre-project: the default key.
 loadCache();
 
 /**
@@ -300,6 +319,18 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
     sessionCache.clear();
     persistCache();
   },
+
+  setActiveProject: (projectId) => {
+    // Abort anything in flight from the previous project.
+    if (currentController) {
+      currentController.abort();
+      currentController = null;
+    }
+    sessionCache.clear();
+    activeCacheKey = cacheKeyFor(projectId);
+    loadCache();
+    set({ records: new Map(), isRunning: false });
+  },
 }));
 
 /** Test-only: reset module-scoped state. */
@@ -307,11 +338,13 @@ export function _resetExecutionForTests(): void {
   sessionCache.clear();
   try {
     if (typeof window !== "undefined") {
+      window.localStorage.removeItem(activeCacheKey);
       window.localStorage.removeItem(CACHE_STORAGE_KEY);
     }
   } catch {
     /* ignore */
   }
+  activeCacheKey = CACHE_STORAGE_KEY;
   currentController?.abort();
   currentController = null;
   useExecutionStore.setState({

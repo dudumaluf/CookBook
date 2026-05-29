@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -16,19 +17,10 @@ import { LogsPanel } from "./logs-panel";
 import { GalleryDrawer } from "./gallery-drawer";
 import { ProjectMenu } from "./project-menu";
 import { EditableTitle } from "./editable-title";
+import { SaveIndicator } from "./save-indicator";
 import { useSession } from "@/lib/auth/use-session";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
-import { useAssetStore } from "@/lib/stores/asset-store";
-import { useLayoutStore } from "@/lib/stores/layout-store";
-import { useProjectStore } from "@/lib/stores/project-store";
-import { useWorkflowStore } from "@/lib/stores/workflow-store";
-import {
-  bootstrapForUser,
-  startAutoSave,
-} from "@/lib/sync/project-sync";
-import { startAutoPersistGenerations } from "@/lib/sync/generation-sync";
-import { hydrateChatForProject } from "@/lib/sync/chat-sync";
-import { startReactiveRunner } from "@/lib/engine/reactive-runner";
+import { closeProject, openProject } from "@/lib/project/session";
 
 /**
  * AppShell — refactor v3 (ADR-0013) + v4 (ADR-0015 polish)
@@ -50,86 +42,48 @@ import { startReactiveRunner } from "@/lib/engine/reactive-runner";
  * Same visual language everywhere: rounded-full pills + rounded-2xl cards,
  * border-border/70, bg-popover/95, backdrop-blur, soft shadow.
  */
-export function AppShell() {
+export function AppShell({ projectId }: { projectId: string }) {
   useLayoutShortcuts();
   const { user } = useSession();
+  const router = useRouter();
+  // Start in `loading` (not `idle`) so the canvas never flashes empty
+  // before the project document is applied on mount.
   const [syncStatus, setSyncStatus] = useState<
     "idle" | "loading" | "ready" | "error"
-  >("idle");
+  >("loading");
 
-  // Rehydrate persisted stores after mount so SSR HTML == client first render.
-  // ORDER MATTERS: asset-store rehydrates BEFORE workflow-store because the
-  // workflow-store v8→v9 migration calls `useAssetStore.getState().createGroup`
-  // to materialise an Untitled group for every legacy iterator with `assetIds[]`
-  // in its config (ADR-0032, Slice 5.6). If workflow rehydrated first, its
-  // migrate would seed groups onto an empty asset-store that would then
-  // get OVERWRITTEN by the asset-store's own rehydrate seconds later.
-  useEffect(() => {
-    useLayoutStore.persist.rehydrate();
-    useProjectStore.persist.rehydrate();
-    useAssetStore.persist.rehydrate();
-    useWorkflowStore.persist.rehydrate();
-  }, []);
-
-  // Slice 6.1 — once authenticated, bootstrap from cloud and start
-  // auto-save. The shell is wrapped in `<AuthGate>` so this effect only
-  // fires when `user` is non-null. When user signs out (`user` becomes
-  // null), cleanup runs and we leave `syncStatus` untouched (no setState
-  // outside of authenticated path → satisfies react-hooks rules).
+  // Open the project named in the URL. The ProjectSession controller owns
+  // all teardown / reset / load / rehydrate / re-subscribe ordering
+  // (race-guarded), so navigating to a different /projetos/[id] is just a
+  // new openProject call. Cloud is canonical per project — no localStorage
+  // rehydrate here, which avoids one project's graph flashing while
+  // another loads (the spinner below covers the load).
   useEffect(() => {
     if (!user) return;
-    let unsubscribeAutoSave: (() => void) | null = null;
-    let unsubscribeGenerations: (() => void) | null = null;
-    let unsubscribeReactive: (() => void) | null = null;
     let cancelled = false;
     void (async () => {
       setSyncStatus("loading");
-      try {
-        const result = await bootstrapForUser(user.id);
-        if (cancelled) return;
-        useProjectStore.getState().setId(result.project.id);
-        useProjectStore.getState().setName(result.project.name);
-        if (result.migrated) {
-          toast.success("Local project migrated to cloud");
-        }
-        unsubscribeAutoSave = startAutoSave({
-          projectId: result.project.id,
-          ownerId: user.id,
-          onError: (err) => {
-            console.error("[project-sync] save failed:", err);
-            toast.error("Failed to save project changes — will retry");
-          },
-        });
-        // Slice 6.2 — auto-persist generations to cloud + rehost external
-        // image URLs into our Supabase bucket. Returns unsubscribe.
-        unsubscribeGenerations = startAutoPersistGenerations({
-          ownerId: user.id,
-        });
-        // Slice 6.3 — reactive runner subscribes to workflow-store and
-        // dispatches debounced `runWorkflow({ mode: "reactive-only" })` so
-        // Array / List / Number / Iterators update live as the user
-        // tweaks config / edges, without re-running the expensive nodes.
-        unsubscribeReactive = startReactiveRunner();
-        // Slice 6.8 — pull the project's persisted chat so the
-        // ChatSheet rehydrates with the user's prior conversation.
-        // Fire-and-forget; chat hydration failures don't block the
-        // shell from rendering.
-        void hydrateChatForProject(result.project.id);
-        setSyncStatus("ready");
-      } catch (err) {
-        if (cancelled) return;
-        console.error("[project-sync] bootstrap failed:", err);
-        toast.error("Failed to load project from cloud");
-        setSyncStatus("error");
+      const result = await openProject({
+        projectId,
+        userId: user.id,
+        onError: (err) => {
+          console.error("[project-session] error:", err);
+          toast.error("Failed to save project changes — will retry");
+        },
+      });
+      if (cancelled) return;
+      if (result.notFound) {
+        toast.error("Project not found");
+        router.replace("/projetos");
+        return;
       }
+      setSyncStatus(result.ok ? "ready" : "error");
     })();
     return () => {
       cancelled = true;
-      unsubscribeAutoSave?.();
-      unsubscribeGenerations?.();
-      unsubscribeReactive?.();
+      closeProject();
     };
-  }, [user]);
+  }, [user, projectId, router]);
 
   // While the cloud project is loading, show a tiny centered spinner so we
   // don't paint stale localStorage state for a flash before swapping it for
@@ -155,10 +109,11 @@ export function AppShell() {
       </div>
 
       {/* Top-center: editable project title */}
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center">
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex flex-col items-center gap-1">
         <div className="pointer-events-auto">
           <EditableTitle />
         </div>
+        <SaveIndicator />
       </div>
 
       {/* Top-right cluster: Gallery (look at past work) → Run (kick off the
