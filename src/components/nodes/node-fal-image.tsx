@@ -1,7 +1,7 @@
 "use client";
 
 import { ImagePlus, Loader2, Sparkles, Wand2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -55,6 +55,13 @@ function FalImageBody({ nodeId, config }: NodeBodyProps<FalImageNodeConfig>) {
   const history = record?.history ?? [];
 
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  // Jump to the newest result when one lands, even if the user was viewing
+  // an older history entry (the result must show the moment it's ready).
+  const prevHistoryLen = useRef(history.length);
+  useEffect(() => {
+    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
+    prevHistoryLen.current = history.length;
+  }, [history.length]);
   const effectiveCursor =
     history.length === 0
       ? 0

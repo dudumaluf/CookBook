@@ -9,7 +9,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -109,6 +109,12 @@ function HiggsfieldImageGenNodeBody({
   // pinned to the newest unless the user has navigated to a specific
   // index (handled via local state).
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  // Jump to the newest result when one lands, even if viewing older history.
+  const prevHistoryLen = useRef(history.length);
+  useEffect(() => {
+    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
+    prevHistoryLen.current = history.length;
+  }, [history.length]);
   const effectiveCursor =
     history.length === 0
       ? 0

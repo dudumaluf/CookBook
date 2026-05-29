@@ -92,6 +92,18 @@ function ListNodeBody({
   const upstream = useUpstreamItemsForList(nodeId);
   const items = upstream.items;
 
+  // When a Number node is wired into `cursor`, IT drives selection
+  // (execute() honors it over config.cursor). Reflect that live in the
+  // body so changing the Number updates which item shows as selected —
+  // index 0 = first item. The picker becomes read-only (externally
+  // driven) so the user edits the Number, not the dropdown.
+  const externalCursor = useExternalCursorForList(nodeId);
+  const isExternallyDriven = externalCursor !== null;
+  const effectiveCursor =
+    isExternallyDriven && items.length > 0
+      ? clampCursor(externalCursor, items.length)
+      : cursor;
+
   function describeItem(item: StandardizedOutput, index: number): string {
     if (item.type === "text") {
       const v = String(item.value);
@@ -109,7 +121,7 @@ function ListNodeBody({
       <div className="flex items-center justify-between gap-2">
         <IteratorCursor
           count={Math.max(items.length, 1)}
-          cursor={Math.min(cursor, Math.max(items.length - 1, 0))}
+          cursor={Math.min(effectiveCursor, Math.max(items.length - 1, 0))}
           onCursorChange={(next) => updateConfig({ cursor: next })}
           ariaLabelPrefix="List"
         />
@@ -117,7 +129,7 @@ function ListNodeBody({
           data-testid="list-mode-chip"
           className="select-none rounded-md bg-foreground/[0.04] px-1.5 py-0.5 text-[10.5px] text-muted-foreground"
         >
-          {mode}
+          {isExternallyDriven ? `index ${effectiveCursor}` : mode}
         </span>
       </div>
 
@@ -127,21 +139,22 @@ function ListNodeBody({
             htmlFor={pickerId}
             className="text-[10.5px] uppercase tracking-wider text-muted-foreground"
           >
-            Pick
+            {isExternallyDriven ? "Selected (driven by Number)" : "Pick"}
           </label>
           <select
             id={pickerId}
             data-testid="list-item-picker"
-            value={Math.min(cursor, items.length - 1)}
+            value={Math.min(effectiveCursor, items.length - 1)}
+            disabled={isExternallyDriven}
             onChange={(e) =>
               updateConfig({ cursor: Number(e.target.value) })
             }
             onPointerDown={(e) => e.stopPropagation()}
-            className="h-7 rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+            className="h-7 rounded-md border border-border/60 bg-background/40 px-2 text-xs disabled:opacity-70"
           >
             {items.map((item, i) => (
               <option key={i} value={i}>
-                {`${i + 1}. ${describeItem(item, i)}`}
+                {`${i}. ${describeItem(item, i)}`}
               </option>
             ))}
           </select>
@@ -203,6 +216,29 @@ function useUpstreamItemsForList(nodeId: string): {
   return {
     items: Array.isArray(out) ? out : [out],
   };
+}
+
+/**
+ * Resolve the external `cursor` value (from a wired Number node) for live
+ * body preview. Returns the number the upstream node emits, or null when
+ * nothing is wired into `cursor`. Reactive — re-renders when the Number's
+ * output record changes, so editing the Number updates the List selection.
+ */
+function useExternalCursorForList(nodeId: string): number | null {
+  const sourceNodeId = useWorkflowStore((s) => {
+    const edge = s.edges.find(
+      (e) => e.target === nodeId && e.targetHandle === "cursor",
+    );
+    return edge?.source ?? null;
+  });
+  const record = useExecutionStore((s) =>
+    sourceNodeId ? s.records.get(sourceNodeId) : undefined,
+  );
+  if (!sourceNodeId) return null;
+  const out = record?.output;
+  const single = Array.isArray(out) ? out[0] : out;
+  if (single && single.type === "number") return single.value;
+  return null;
 }
 
 export const listNodeSchema = defineNode<ListNodeConfig>({
