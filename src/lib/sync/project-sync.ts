@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  applyProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from "@/lib/project/document";
 import { getProjectRepository } from "@/lib/repositories/supabase-project-repository";
 import {
   type ProjectRecord,
@@ -8,6 +13,7 @@ import {
   type SaveProjectInput,
 } from "@/lib/repositories/project-repository";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -40,70 +46,16 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
  * effect calls it once per `userId` change.
  */
 
-interface SerializedState extends ProjectState {
-  /** Schema version stamp — bumped when the on-disk shape changes. */
-  version: number;
-  workflow: {
-    nodes: unknown[];
-    edges: unknown[];
-  };
-  assets: unknown[];
-  layout: {
-    libraryOpen: boolean;
-    queueOpen: boolean;
-    chatSheetOpen: boolean;
-    approvalGateOn: boolean;
-  };
-  projectName: string;
-}
+// The serialized state IS the canonical ProjectDocument (single shape for
+// cloud + file). serialize / apply live in src/lib/project/document.ts.
+type SerializedState = ProjectDocument;
 
 function snapshotStores(): SerializedState {
-  const workflow = useWorkflowStore.getState();
-  const assets = useAssetStore.getState();
-  const layout = useLayoutStore.getState();
-  const project = useProjectStore.getState();
-  return {
-    version: PROJECT_STATE_VERSION,
-    workflow: {
-      nodes: workflow.nodes,
-      edges: workflow.edges,
-    },
-    assets: assets.assets,
-    layout: {
-      libraryOpen: layout.libraryOpen,
-      queueOpen: layout.queueOpen,
-      chatSheetOpen: layout.chatSheetOpen,
-      approvalGateOn: layout.approvalGateOn,
-    },
-    projectName: project.name,
-  };
+  return serializeProject();
 }
 
-function applyStateToStores(state: SerializedState): void {
-  // Apply assets first — workflow's v9 migration may reach into asset-store
-  // when an Image Iterator's legacy `assetIds[]` is encountered, so the
-  // group records need to exist before workflow rehydrates against them.
-  // (Same reasoning as the rehydrate ordering in shell.tsx.)
-  if (state.assets) {
-    useAssetStore.setState({ assets: state.assets as never });
-  }
-  if (state.workflow) {
-    useWorkflowStore.setState({
-      nodes: state.workflow.nodes as never,
-      edges: state.workflow.edges as never,
-    });
-  }
-  if (state.layout) {
-    useLayoutStore.setState({
-      libraryOpen: state.layout.libraryOpen,
-      queueOpen: state.layout.queueOpen,
-      chatSheetOpen: state.layout.chatSheetOpen,
-      approvalGateOn: state.layout.approvalGateOn,
-    });
-  }
-  if (state.projectName) {
-    useProjectStore.setState({ name: state.projectName });
-  }
+function applyStateToStores(state: ProjectDocument | ProjectState): void {
+  applyProjectDocument(state as unknown as Record<string, unknown>);
 }
 
 function hasMeaningfulLocalState(): boolean {
@@ -138,7 +90,7 @@ export async function bootstrapForUser(
     // through the next manual interaction the user makes; we don't want
     // to silently overwrite cloud with stale local).
     if (existing.state) {
-      applyStateToStores(existing.state as SerializedState);
+      applyStateToStores(existing.state);
     }
     return { project: existing, migrated: false, hydrated: true };
   }
@@ -244,12 +196,16 @@ export function startAutoSave({
   }
 
   // Subscribe to every store. Zustand's `subscribe` fires on any mutation;
-  // we rely on the debounce to coalesce bursts (typing, dragging nodes).
+  // we rely on the debounce to coalesce bursts (typing, dragging nodes,
+  // a fan-out emitting many `done` records). The execution-store
+  // subscription is what persists generated results into the document so
+  // they survive a reload (a run's outputs schedule a debounced save).
   const unsubs = [
     useWorkflowStore.subscribe(() => schedule()),
     useAssetStore.subscribe(() => schedule()),
     useLayoutStore.subscribe(() => schedule()),
     useProjectStore.subscribe(() => schedule()),
+    useExecutionStore.subscribe(() => schedule()),
   ];
 
   return () => {

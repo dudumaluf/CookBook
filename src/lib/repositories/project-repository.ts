@@ -40,16 +40,25 @@ export interface ProjectRecord {
  */
 export interface ProjectState {
   version: number;
+  projectName?: string;
   workflow?: {
     nodes: unknown[];
     edges: unknown[];
   };
   assets?: unknown[];
-  layout?: Record<string, unknown>;
-  // Future: nodeHistory, lastRunId, etc.
+  /** Loose: the precise layout shape is owned by `project/document.ts`. */
+  layout?: unknown;
+  /**
+   * Per-node last output + history (v2). Makes the project document
+   * self-contained so reloading restores generated results, not just the
+   * graph. Shape owned by `src/lib/project/document.ts`.
+   */
+  executionState?: Record<string, unknown>;
 }
 
-export const PROJECT_STATE_VERSION = 1;
+// v2: added `executionState` (per-node results/history) + `projectName`.
+// Additive — v1 payloads load fine (fields simply absent).
+export const PROJECT_STATE_VERSION = 2;
 
 export interface ProjectRepository {
   /**
