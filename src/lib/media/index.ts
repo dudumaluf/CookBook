@@ -50,4 +50,6 @@ export { extractFrame, type FramePosition } from "./extract-frame";
 
 export { sliceAudio } from "./slice-audio";
 
+export { sliceVideo } from "./slice-video";
+
 export { concatVideos } from "./concat";

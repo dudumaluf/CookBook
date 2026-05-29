@@ -21,10 +21,12 @@ export { RANDOM_SEED, resolveSeed, isRandomSeed } from "@/lib/utils/seed";
 
 export const SEEDANCE_ASPECT_RATIOS = [
   "auto",
-  "16:9",
-  "9:16",
-  "1:1",
   "21:9",
+  "16:9",
+  "4:3",
+  "1:1",
+  "3:4",
+  "9:16",
 ] as const;
 
 export const SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p"] as const;

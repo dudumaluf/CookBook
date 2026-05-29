@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Reference performance video in the Continuity Builder (singer pipeline)
+
+Unblocks the "singer performance" pipeline end-to-end. **Tests 980 → 981 (+1).** Validated against the official Fal Seedance 2.0 reference-to-video docs.
+
+- **`sliceVideo(src, windows)`** (`src/lib/media/slice-video.ts`) — trims a video into one MP4 per window (mediabunny Conversion; audio discarded since it's a motion reference). The visual counterpart of `sliceAudio`.
+- **Continuity Builder gains a `video` input** — a reference performance video, sliced into the SAME windows as the song; each slice drives that chunk's motion (`@Video1`). Windows derive from the song (lip-sync leads), else the reference video, else the chunk count.
+- **Respects Seedance's `video_urls` cap** (combined 2–15s): with a reference video, the ~15s slice takes the whole video budget, so continuity comes from the previous chunk's **last frame** fed as an image ref (not a second 15s clip). Identity stays the character image.
+- `SEEDANCE_ASPECT_RATIOS` completed with `4:3` / `3:4` (per the docs).
+- Wire it today: Video Input → Continuity Builder `video`. Recipe exposure + standalone slicer nodes are next. **Caveats for real-spend:** the reference video must be ≤720p (no auto-downscale yet) and don't enable "fast" (no documented `/fast/` 2.0 endpoint). Still mock-tested only.
+
+All green: `npm test` (981), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
+
 ## 2026-05-29 — Chat attachments + @-mentions in the prompt bar (ADR-0053)
 
 The assistant can now be pointed at specific files/results. **Tests 972 → 980 (+6 here; +2 from the #185 hotfix).**

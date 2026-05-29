@@ -8,14 +8,15 @@ vi.mock("@/lib/fal/call-seedance", () => ({
   FalCallError: class extends Error {},
 }));
 
-const { sliceAudio, extractFrame, probeMedia } = vi.hoisted(() => ({
+const { sliceAudio, sliceVideo, extractFrame, probeMedia } = vi.hoisted(() => ({
   sliceAudio: vi.fn(),
+  sliceVideo: vi.fn(),
   extractFrame: vi.fn(),
   probeMedia: vi.fn(),
 }));
 vi.mock("@/lib/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/media")>();
-  return { ...actual, sliceAudio, extractFrame, probeMedia };
+  return { ...actual, sliceAudio, sliceVideo, extractFrame, probeMedia };
 });
 
 const { uploadImageAsset, uploadMediaAsset } = vi.hoisted(() => ({
@@ -56,6 +57,7 @@ beforeEach(() => {
     model: "bytedance/seedance-2.0/reference-to-video",
   }));
   sliceAudio.mockReset();
+  sliceVideo.mockReset();
   extractFrame.mockReset();
   extractFrame.mockResolvedValue(new Blob(["frame"], { type: "image/png" }));
   probeMedia.mockReset();
@@ -159,6 +161,65 @@ describe("Continuity Builder — audio windowing", () => {
     // Each chunk gets its audio slice url.
     const call1 = callSeedanceVideo.mock.calls[0]![0];
     expect(call1.audioUrls).toEqual(["https://supabase.test/slice.wav"]);
+  });
+});
+
+describe("Continuity Builder — reference performance video", () => {
+  it("slices the reference video to the same windows and feeds it as @Video1 per chunk", async () => {
+    probeMedia.mockResolvedValue({
+      durationMs: 30000,
+      hasVideo: true,
+      hasAudio: true,
+    });
+    sliceAudio.mockResolvedValue([
+      new Blob(["a"], { type: "audio/wav" }),
+      new Blob(["b"], { type: "audio/wav" }),
+    ]);
+    sliceVideo.mockResolvedValue([
+      new Blob(["v1"], { type: "video/mp4" }),
+      new Blob(["v2"], { type: "video/mp4" }),
+    ]);
+    uploadMediaAsset.mockImplementation(
+      async (_file: File, folder: "videos" | "audio") => ({
+        url:
+          folder === "videos"
+            ? "https://supabase.test/ref.mp4"
+            : "https://supabase.test/slice.wav",
+      }),
+    );
+
+    await continuityBuilderNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "mirror the performance" },
+          image: { type: "image", value: { url: "https://x/face.png" } },
+          audio: { type: "audio", value: { url: "https://x/song.mp3" } },
+          video: { type: "video", value: { url: "https://x/perf.mp4" } },
+        },
+        { strategy: "extension", durationSec: 15 },
+      ) as never,
+    );
+
+    expect(sliceVideo).toHaveBeenCalledTimes(1);
+    // Chunk 1: only the reference slice in video_urls (respects the 15s
+    // combined-video cap); identity via the character image.
+    const call1 = callSeedanceVideo.mock.calls[0]![0];
+    expect(call1.videoUrls).toEqual(["https://supabase.test/ref.mp4"]);
+    expect(call1.imageUrls).toEqual(["https://x/face.png"]);
+    expect(call1.audioUrls).toEqual(["https://supabase.test/slice.wav"]);
+    // A last frame is extracted for continuity (not a 15s previous clip).
+    expect(extractFrame).toHaveBeenCalledWith(
+      "https://cdn.fal.media/clip-1.mp4",
+      "last",
+    );
+    // Chunk 2: still only the reference slice as video; continuity is the
+    // previous last frame, added as a second IMAGE ref (not video).
+    const call2 = callSeedanceVideo.mock.calls[1]![0];
+    expect(call2.videoUrls).toEqual(["https://supabase.test/ref.mp4"]);
+    expect(call2.imageUrls).toEqual([
+      "https://x/face.png",
+      "https://supabase.test/frame.png",
+    ]);
   });
 });
 

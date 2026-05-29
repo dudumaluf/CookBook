@@ -15,6 +15,8 @@ import {
   extractFrame,
   probeMedia,
   sliceAudio,
+  sliceVideo,
+  type MediaWindow,
 } from "@/lib/media";
 import { uploadImageAsset, uploadMediaAsset } from "@/lib/library/upload-asset";
 import { useExecutionStore } from "@/lib/stores/execution-store";
@@ -76,7 +78,7 @@ export interface ContinuityBuilderNodeConfig {
 
 async function uploadBlob(
   blob: Blob,
-  kind: "image" | "audio",
+  kind: "image" | "audio" | "video",
   name: string,
 ): Promise<string> {
   const file = new File([blob], name, { type: blob.type });
@@ -84,7 +86,7 @@ async function uploadBlob(
     const up = await uploadImageAsset(file);
     return up.url;
   }
-  const up = await uploadMediaAsset(file, "audio");
+  const up = await uploadMediaAsset(file, kind === "video" ? "videos" : "audio");
   return up.url;
 }
 
@@ -161,7 +163,7 @@ function ContinuityBuilderBody({
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Link2 className="h-3 w-3" />
-          <span>Wire prompt + character + song, then Run</span>
+          <span>Wire prompt + character + song (+ optional reference video), then Run</span>
         </div>
       )}
     </div>
@@ -272,12 +274,13 @@ export const continuityBuilderNodeSchema =
     category: "ai-video",
     title: "Continuity Builder",
     description:
-      "Loop Seedance to build a continuous video: each chunk continues the previous one (extension or frame-chain). Wire a prompt, a character image, and a song — the song is sliced per chunk for lip-sync. Outputs the ordered clips.",
+      "Loop Seedance to build a continuous video: each chunk continues the previous one (extension or frame-chain). Wire a prompt, a character image, a song (sliced per chunk for lip-sync), and optionally a reference performance video (sliced to the same windows — each slice drives that chunk's motion). Outputs the ordered clips.",
     icon: Repeat,
     inputs: [
       { id: "prompt", label: "prompt", dataType: "text" },
       { id: "image", label: "image", dataType: "image" },
       { id: "audio", label: "audio", dataType: "audio" },
+      { id: "video", label: "video", dataType: "video" },
     ],
     outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
     defaultConfig: { strategy: "extension", durationSec: DEFAULT_DURATION },
@@ -288,6 +291,9 @@ export const continuityBuilderNodeSchema =
       ).trim();
       const characterImage = extractInputByType(inputs, "image", "image");
       const song = extractInputByType(inputs, "audio", "audio");
+      // Reference performance video (singer pipeline): sliced into the SAME
+      // windows as the song; each slice drives its chunk's motion (@Video1).
+      const refVideo = extractInputByType(inputs, "video", "video");
 
       if (prompt.length === 0 && !characterImage) {
         throw new Error(
@@ -301,22 +307,19 @@ export const continuityBuilderNodeSchema =
       );
       const maxChunks = config.maxChunks ?? DEFAULT_MAX_CHUNKS;
 
-      // Derive the chunk count + per-chunk audio slices.
-      let audioUrls: string[] = [];
+      // Derive the chunk windows once — the song drives the count (lip-sync
+      // leads), else the reference video, else the config chunk count.
+      let windows: MediaWindow[] | null = null;
       let chunkCount: number;
-      if (song?.url) {
-        const probe = await probeMedia(song.url);
-        const windows = computeMediaWindows({
+      const durationSource = song?.url ?? refVideo?.url;
+      if (durationSource) {
+        const probe = await probeMedia(durationSource);
+        windows = computeMediaWindows({
           totalMs: probe.durationMs,
           windowMs: durationSec * 1000,
           minTailMs: 2000,
-        });
-        const limited = windows.slice(0, maxChunks);
-        const blobs = await sliceAudio(song.url, limited);
-        audioUrls = await Promise.all(
-          blobs.map((b, i) => uploadBlob(b, "audio", `chunk-${i + 1}.wav`)),
-        );
-        chunkCount = limited.length;
+        }).slice(0, maxChunks);
+        chunkCount = windows.length;
       } else {
         chunkCount = Math.min(config.chunkCount ?? 2, maxChunks);
       }
@@ -325,10 +328,35 @@ export const continuityBuilderNodeSchema =
         throw new Error("Nothing to build — derived chunk count is zero.");
       }
 
+      // Per-chunk audio slices (lip-sync).
+      let audioUrls: string[] = [];
+      if (song?.url && windows) {
+        const blobs = await sliceAudio(song.url, windows);
+        audioUrls = await Promise.all(
+          blobs.map((b, i) => uploadBlob(b, "audio", `chunk-${i + 1}.wav`)),
+        );
+      }
+
+      // Per-chunk reference-video slices (motion / performance to mirror).
+      let refVideoUrls: string[] = [];
+      if (refVideo?.url && windows) {
+        const blobs = await sliceVideo(refVideo.url, windows);
+        refVideoUrls = await Promise.all(
+          blobs.map((b, i) => uploadBlob(b, "video", `refchunk-${i + 1}.mp4`)),
+        );
+      }
+
+      const usingRefVideo = refVideoUrls.length > 0;
+      const characterImageUrl = characterImage?.url;
+
       const chunks: StandardizedOutput[] = [];
       let prevChunkUrl: string | undefined;
-      // Seed the first chunk's visual with the character image.
-      let seedImageUrl: string | undefined = characterImage?.url;
+      // Continuity seed for plain frame-chain / extension (no ref video).
+      let seedImageUrl: string | undefined = characterImageUrl;
+      // Previous chunk's last frame — the continuity seed when a reference
+      // video is in play (we can't also feed a 15s previous CLIP because
+      // Seedance caps combined `video_urls` duration at 15s).
+      let prevLastFrameUrl: string | undefined;
 
       for (let i = 0; i < chunkCount; i++) {
         if (signal.aborted) {
@@ -343,7 +371,16 @@ export const continuityBuilderNodeSchema =
 
         const imageUrls: string[] = [];
         const videoUrls: string[] = [];
-        if (strategy === "extension") {
+        if (usingRefVideo) {
+          // The reference performance slice (~15s) takes the whole video
+          // budget (@Video1 motion). Identity comes from the character
+          // image; continuity from the previous chunk's last frame — both
+          // as IMAGE refs (images don't count against the 15s video cap).
+          if (refVideoUrls[i]) videoUrls.push(refVideoUrls[i]!);
+          if (characterImageUrl) imageUrls.push(characterImageUrl);
+          if (prevLastFrameUrl) imageUrls.push(prevLastFrameUrl);
+        } else if (strategy === "extension") {
+          // No ref video: the previous CLIP fits the 15s video budget.
           if (seedImageUrl) imageUrls.push(seedImageUrl);
           if (prevChunkUrl) videoUrls.push(prevChunkUrl);
         } else {
@@ -367,14 +404,14 @@ export const continuityBuilderNodeSchema =
         chunks.push({ type: "video", value: ref });
         prevChunkUrl = result.videoUrl;
 
-        // frame-chain: extract the last frame to seed the next chunk.
-        if (strategy === "frame-chain" && i < chunkCount - 1) {
+        // Extract the next chunk's continuity frame when we're chaining by
+        // frame (ref-video mode always chains by frame; so does the
+        // frame-chain strategy without a ref video).
+        if ((usingRefVideo || strategy === "frame-chain") && i < chunkCount - 1) {
           const frame = await extractFrame(result.videoUrl, "last");
-          seedImageUrl = await uploadBlob(
-            frame,
-            "image",
-            `frame-${i + 1}.png`,
-          );
+          const frameUrl = await uploadBlob(frame, "image", `frame-${i + 1}.png`);
+          if (usingRefVideo) prevLastFrameUrl = frameUrl;
+          else seedImageUrl = frameUrl;
         }
       }
 
