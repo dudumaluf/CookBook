@@ -168,22 +168,24 @@ function HiggsfieldImageGenNodeBody({
           than one past generation; below that, there's nothing to
           navigate. View-only: navigating just swaps which output
           renders, downstream nodes still see the live `record.output`. */}
-      {history.length > 1 ? (
-        <div
-          data-testid="higgsfield-history-cursor"
-          className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground"
-        >
-          <IteratorCursor
-            count={history.length}
-            cursor={effectiveCursor}
-            onCursorChange={(next) => setHistoryCursor(next)}
-            ariaLabelPrefix="Generation"
-          />
-          <span className="text-muted-foreground/60">past runs</span>
-        </div>
-      ) : null}
+      {/* Output / placeholder area. History cursor overlays the top-right
+          corner of the preview (not a row above it). */}
+      <div className="relative">
+        {history.length > 1 ? (
+          <div
+            data-testid="higgsfield-history-cursor"
+            className="absolute right-1 top-1 z-10"
+          >
+            <IteratorCursor
+              count={history.length}
+              cursor={effectiveCursor}
+              onCursorChange={(next) => setHistoryCursor(next)}
+              ariaLabelPrefix="Generation"
+              className="bg-background/75 shadow-sm backdrop-blur-sm"
+            />
+          </div>
+        ) : null}
 
-      {/* Output / placeholder area. */}
       {status === "error" && record?.error ? (
         <p
           role="alert"
@@ -253,6 +255,7 @@ function HiggsfieldImageGenNodeBody({
           <span>Connect a prompt then click Run</span>
         </div>
       )}
+      </div>
     </div>
   );
 }

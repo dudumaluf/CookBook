@@ -10,9 +10,11 @@ import {
 } from "@/lib/engine/extract-input";
 import { callFalImage } from "@/lib/fal/call-fal-image";
 import {
+  FAL_IMAGE_MODEL_CAPS,
   FAL_IMAGE_MODEL_LABELS,
   FAL_IMAGE_MODELS,
   type FalImageModel,
+  type FalStyleReference,
   isRandomSeed,
   RANDOM_SEED,
   resolveSeed,
@@ -37,14 +39,35 @@ export interface FalImageNodeConfig {
   model?: FalImageModel;
   numImages?: number;
   seed?: number;
+  /** nano-banana / krea. */
+  aspectRatio?: string;
+  /** flux / seedream. */
+  imageSize?: string;
+  /** nano-banana. */
+  resolution?: string;
+  /** krea. */
+  creativity?: string;
+  /** krea — strength applied to every wired style reference. */
+  styleStrength?: number;
 }
 
 const DEFAULT_MODEL: FalImageModel = "nano-banana-2";
+
+/** Cosmetic dropdown defaults matching each field's Fal default. */
+const FIELD_DEFAULTS: Record<string, string> = {
+  resolution: "1K",
+  creativity: "medium",
+};
 
 function hasOverrides(config: FalImageNodeConfig): boolean {
   return (
     (config.model !== undefined && config.model !== DEFAULT_MODEL) ||
     (config.numImages !== undefined && config.numImages !== 1) ||
+    config.aspectRatio !== undefined ||
+    config.imageSize !== undefined ||
+    config.resolution !== undefined ||
+    config.creativity !== undefined ||
+    config.styleStrength !== undefined ||
     !isRandomSeed(config.seed)
   );
 }
@@ -90,17 +113,18 @@ function FalImageBody({ nodeId, config }: NodeBodyProps<FalImageNodeConfig>) {
         </span>
       </div>
 
-      {history.length > 1 ? (
-        <div className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground">
-          <IteratorCursor
-            count={history.length}
-            cursor={effectiveCursor}
-            onCursorChange={(next) => setHistoryCursor(next)}
-            ariaLabelPrefix="Generation"
-          />
-          <span className="text-muted-foreground/60">past runs</span>
-        </div>
-      ) : null}
+      <div className="relative">
+        {history.length > 1 ? (
+          <div className="absolute right-1 top-1 z-10">
+            <IteratorCursor
+              count={history.length}
+              cursor={effectiveCursor}
+              onCursorChange={(next) => setHistoryCursor(next)}
+              ariaLabelPrefix="Generation"
+              className="bg-background/75 shadow-sm backdrop-blur-sm"
+            />
+          </div>
+        ) : null}
 
       {status === "error" && record?.error ? (
         <p
@@ -148,6 +172,43 @@ function FalImageBody({ nodeId, config }: NodeBodyProps<FalImageNodeConfig>) {
           <span>Wire a prompt, then Run</span>
         </div>
       )}
+      </div>
+    </div>
+  );
+}
+
+const SELECT_CLASS =
+  "h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs";
+
+function LabeledSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: readonly string[];
+  onChange: (v: string) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="font-medium text-foreground/90">
+        {label}
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={SELECT_CLASS}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -159,6 +220,16 @@ function FalImageSettings({
   const modelId = useId();
   const numId = useId();
   const seedId = useId();
+  const strId = useId();
+
+  const model = config.model ?? DEFAULT_MODEL;
+  const caps = FAL_IMAGE_MODEL_CAPS[model];
+
+  const wireHint = caps.styleReferences
+    ? "Wire image(s) to use as style references."
+    : caps.editRefs
+      ? `Wire image(s) to switch into edit mode (up to ${caps.editRefs.max}).`
+      : null;
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -168,11 +239,11 @@ function FalImageSettings({
         </label>
         <select
           id={modelId}
-          value={config.model ?? DEFAULT_MODEL}
+          value={model}
           onChange={(e) =>
             updateConfig({ model: e.target.value as FalImageModel })
           }
-          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+          className={SELECT_CLASS}
         >
           {FAL_IMAGE_MODELS.map((m) => (
             <option key={m} value={m}>
@@ -180,26 +251,90 @@ function FalImageSettings({
             </option>
           ))}
         </select>
-        <p className="flex items-center gap-1 text-[10.5px] text-muted-foreground/80">
-          <Wand2 className="h-3 w-3" />
-          Wire an image to switch into edit mode.
-        </p>
+        {wireHint ? (
+          <p className="flex items-center gap-1 text-[10.5px] text-muted-foreground/80">
+            <Wand2 className="h-3 w-3" />
+            {wireHint}
+          </p>
+        ) : null}
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={numId} className="font-medium text-foreground/90">
-          Images
-        </label>
-        <input
-          id={numId}
-          type="number"
-          min={1}
-          max={4}
-          value={config.numImages ?? 1}
-          onChange={(e) => updateConfig({ numImages: Number(e.target.value) })}
-          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+      {caps.aspectRatios ? (
+        <LabeledSelect
+          label="Aspect ratio"
+          value={config.aspectRatio ?? caps.aspectRatios[0]!}
+          options={caps.aspectRatios}
+          onChange={(v) => updateConfig({ aspectRatio: v })}
         />
-      </div>
+      ) : null}
+
+      {caps.imageSizes ? (
+        <LabeledSelect
+          label="Image size"
+          value={config.imageSize ?? caps.imageSizes[0]!}
+          options={caps.imageSizes}
+          onChange={(v) => updateConfig({ imageSize: v })}
+        />
+      ) : null}
+
+      {caps.resolutions ? (
+        <LabeledSelect
+          label="Resolution"
+          value={config.resolution ?? FIELD_DEFAULTS.resolution!}
+          options={caps.resolutions}
+          onChange={(v) => updateConfig({ resolution: v })}
+        />
+      ) : null}
+
+      {caps.creativity ? (
+        <LabeledSelect
+          label="Creativity"
+          value={config.creativity ?? FIELD_DEFAULTS.creativity!}
+          options={caps.creativity}
+          onChange={(v) => updateConfig({ creativity: v })}
+        />
+      ) : null}
+
+      {caps.numImages ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={numId} className="font-medium text-foreground/90">
+            Images
+          </label>
+          <input
+            id={numId}
+            type="number"
+            min={1}
+            max={caps.numImages.max}
+            value={config.numImages ?? 1}
+            onChange={(e) =>
+              updateConfig({ numImages: Number(e.target.value) })
+            }
+            className={SELECT_CLASS}
+          />
+        </div>
+      ) : null}
+
+      {caps.styleReferences ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={strId} className="font-medium text-foreground/90">
+            Style strength
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              (applied to each wired ref)
+            </span>
+          </label>
+          <input
+            id={strId}
+            type="number"
+            step={0.1}
+            placeholder="1"
+            value={config.styleStrength ?? 1}
+            onChange={(e) =>
+              updateConfig({ styleStrength: Number(e.target.value) })
+            }
+            className={SELECT_CLASS}
+          />
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={seedId} className="font-medium text-foreground/90">
@@ -220,7 +355,7 @@ function FalImageSettings({
               seed: raw === "" ? RANDOM_SEED : Number(raw),
             });
           }}
-          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+          className={SELECT_CLASS}
         />
       </div>
     </div>
@@ -232,7 +367,7 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
   category: "ai-image",
   title: "Fal Image",
   description:
-    "Generate or edit images with Fal — Nano Banana 2 (default), Flux 2, or Seedream. Wire a prompt; wire reference image(s) to switch into edit mode.",
+    "Generate or edit images with Fal — Nano Banana 2 (default), Flux 2, Seedream, or Krea 2. Each model exposes its own controls (aspect ratio, resolution, creativity, style references). Wire a prompt; wire image(s) to edit or to steer style.",
   icon: Sparkles,
   inputs: [
     { id: "prompt", label: "prompt", dataType: "text" },
@@ -251,15 +386,45 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
         "Prompt is empty — wire a Text node into the `prompt` handle.",
       );
     }
-    const imageUrls = extractInputArrayByType(inputs, "image", "image")
+    const model = config.model ?? DEFAULT_MODEL;
+    const caps = FAL_IMAGE_MODEL_CAPS[model];
+    const wiredImages = extractInputArrayByType(inputs, "image", "image")
       .map((r) => r.url)
       .filter(Boolean);
 
+    // Wired images go to the edit endpoint (nano/flux/seedream) OR become
+    // Krea style references — never both. Per-model caps decide which.
+    const editImageUrls =
+      caps.editRefs && wiredImages.length
+        ? wiredImages.slice(0, caps.editRefs.max)
+        : undefined;
+    const styleReferences: FalStyleReference[] | undefined =
+      caps.styleReferences && wiredImages.length
+        ? wiredImages
+            .slice(0, caps.styleReferences.max)
+            .map((url) => ({ imageUrl: url, strength: config.styleStrength ?? 1 }))
+        : undefined;
+
     const result = await callFalImage({
-      model: config.model ?? DEFAULT_MODEL,
+      model,
       prompt,
-      ...(imageUrls.length ? { imageUrls } : {}),
-      ...(config.numImages !== undefined ? { numImages: config.numImages } : {}),
+      ...(editImageUrls ? { imageUrls: editImageUrls } : {}),
+      ...(styleReferences ? { styleReferences } : {}),
+      ...(caps.numImages && config.numImages !== undefined
+        ? { numImages: config.numImages }
+        : {}),
+      ...(caps.aspectRatios && config.aspectRatio
+        ? { aspectRatio: config.aspectRatio }
+        : {}),
+      ...(caps.imageSizes && config.imageSize
+        ? { imageSize: config.imageSize }
+        : {}),
+      ...(caps.resolutions && config.resolution
+        ? { resolution: config.resolution }
+        : {}),
+      ...(caps.creativity && config.creativity
+        ? { creativity: config.creativity }
+        : {}),
       // Resolve -1 / unset to a concrete random seed each run.
       seed: resolveSeed(config.seed),
       signal,

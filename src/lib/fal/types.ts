@@ -117,6 +117,8 @@ export const FAL_IMAGE_MODELS = [
   "nano-banana-2",
   "flux-2-pro",
   "seedream-v4.5",
+  "krea-v2-medium",
+  "krea-v2-large",
 ] as const;
 
 export type FalImageModel = (typeof FAL_IMAGE_MODELS)[number];
@@ -125,16 +127,103 @@ export const FAL_IMAGE_MODEL_LABELS: Record<FalImageModel, string> = {
   "nano-banana-2": "Nano Banana 2 (Google)",
   "flux-2-pro": "Flux 2 [pro]",
   "seedream-v4.5": "Seedream 4.5 (ByteDance)",
+  "krea-v2-medium": "Krea 2 Medium",
+  "krea-v2-large": "Krea 2 Large",
 };
+
+/* Per-model option sets (verified from Fal docs 2026-05-29). Each model takes
+ * a DIFFERENT size control + extras — so the node renders only the controls a
+ * model actually supports rather than a one-size-fits-all panel. */
+export const NANO_ASPECT_RATIOS = [
+  "auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1",
+  "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8",
+] as const;
+export const NANO_RESOLUTIONS = ["0.5K", "1K", "2K", "4K"] as const;
+export const FLUX_IMAGE_SIZES = [
+  "square_hd", "square", "portrait_4_3", "portrait_16_9",
+  "landscape_4_3", "landscape_16_9",
+] as const;
+export const SEEDREAM_IMAGE_SIZES = [
+  "square_hd", "square", "portrait_4_3", "portrait_16_9",
+  "landscape_4_3", "landscape_16_9", "auto_2K", "auto_4K",
+] as const;
+export const KREA_ASPECT_RATIOS = [
+  "1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16",
+] as const;
+export const KREA_CREATIVITY = ["raw", "low", "medium", "high"] as const;
+
+/**
+ * What each image model actually accepts. Absent field = control hidden and
+ * the wrapper drops any stale value. `editRefs` = max wired images for the
+ * edit endpoint; `styleReferences` = max wired images used as Krea style
+ * guides (no edit endpoint — refs steer style, with per-call strength).
+ */
+export interface FalImageModelCaps {
+  aspectRatios?: readonly string[];
+  imageSizes?: readonly string[];
+  resolutions?: readonly string[];
+  numImages?: { max: number };
+  creativity?: readonly string[];
+  styleReferences?: { max: number };
+  editRefs?: { max: number };
+}
+
+export const FAL_IMAGE_MODEL_CAPS: Record<FalImageModel, FalImageModelCaps> = {
+  "nano-banana-2": {
+    aspectRatios: NANO_ASPECT_RATIOS,
+    resolutions: NANO_RESOLUTIONS,
+    numImages: { max: 4 },
+    editRefs: { max: 14 },
+  },
+  "flux-2-pro": {
+    imageSizes: FLUX_IMAGE_SIZES,
+    editRefs: { max: 8 },
+  },
+  "seedream-v4.5": {
+    imageSizes: SEEDREAM_IMAGE_SIZES,
+    numImages: { max: 6 },
+    editRefs: { max: 10 },
+  },
+  "krea-v2-medium": {
+    aspectRatios: KREA_ASPECT_RATIOS,
+    creativity: KREA_CREATIVITY,
+    styleReferences: { max: 10 },
+  },
+  "krea-v2-large": {
+    aspectRatios: KREA_ASPECT_RATIOS,
+    creativity: KREA_CREATIVITY,
+    styleReferences: { max: 10 },
+  },
+};
+
+/** Krea style-reference entry: a public image URL + influence strength. */
+export const falStyleReferenceSchema = z
+  .object({
+    imageUrl: z.string().url(),
+    strength: z.number().optional(),
+  })
+  .strict();
+
+export type FalStyleReference = z.infer<typeof falStyleReferenceSchema>;
 
 export const falImageRequestSchema = z
   .object({
     model: z.enum(FAL_IMAGE_MODELS),
     prompt: z.string().min(1),
-    /** When present, switches to the model's edit endpoint. */
-    imageUrls: z.array(z.string().url()).max(8).optional(),
-    numImages: z.number().int().min(1).max(4).optional(),
+    /** When present (edit-capable models), switches to the edit endpoint. */
+    imageUrls: z.array(z.string().url()).max(14).optional(),
+    numImages: z.number().int().min(1).max(6).optional(),
     seed: z.number().int().optional(),
+    /** nano-banana / krea. */
+    aspectRatio: z.string().optional(),
+    /** flux / seedream. */
+    imageSize: z.string().optional(),
+    /** nano-banana. */
+    resolution: z.string().optional(),
+    /** krea. */
+    creativity: z.string().optional(),
+    /** krea — wired images as style guides. */
+    styleReferences: z.array(falStyleReferenceSchema).max(10).optional(),
   })
   .strict();
 

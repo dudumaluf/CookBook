@@ -134,20 +134,21 @@ function SeedanceVideoNodeBody({
         ) : null}
       </div>
 
-      {history.length > 1 ? (
-        <div
-          data-testid="seedance-history-cursor"
-          className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground"
-        >
-          <IteratorCursor
-            count={history.length}
-            cursor={effectiveCursor}
-            onCursorChange={(next) => setHistoryCursor(next)}
-            ariaLabelPrefix="Clip"
-          />
-          <span className="text-muted-foreground/60">past runs</span>
-        </div>
-      ) : null}
+      <div className="relative">
+        {history.length > 1 ? (
+          <div
+            data-testid="seedance-history-cursor"
+            className="absolute right-1 top-1 z-10"
+          >
+            <IteratorCursor
+              count={history.length}
+              cursor={effectiveCursor}
+              onCursorChange={(next) => setHistoryCursor(next)}
+              ariaLabelPrefix="Clip"
+              className="bg-background/75 shadow-sm backdrop-blur-sm"
+            />
+          </div>
+        ) : null}
 
       {status === "error" && record?.error ? (
         <p
@@ -182,6 +183,7 @@ function SeedanceVideoNodeBody({
           <span>Wire a prompt (+ optional refs), then Run</span>
         </div>
       )}
+      </div>
     </div>
   );
 }

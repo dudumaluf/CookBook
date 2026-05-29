@@ -42,7 +42,15 @@
 | `bytedance/seedream/v4.5/text-to-image` | Unified gen+edit, strong prompt adherence. | ~$0.04/img | ✅ |
 | `bytedance/seedream/v5/lite/text-to-image` | Fast, cost-effective latest Seedream. | low | ✅ |
 | GPT Image 1.5 | (user-reported "chatgpt image 2") | — | 🔎 |
-| Krea v2 | (user-reported) | — | 🔎 |
+| `krea/v2/medium/text-to-image` | Aspect ratio + creativity + up to 10 style references (per-ref strength). No edit endpoint. | $0.030/img ($0.035 w/ style refs) | ✅ |
+| `krea/v2/large/text-to-image` | Higher-fidelity Krea 2; same controls as medium. | higher | ✅ |
+
+> **Per-model controls** (Fal Image node): each model exposes only the
+> inputs it actually accepts — see `FAL_IMAGE_MODEL_CAPS` in
+> `src/lib/fal/types.ts`. nano-banana-2 = `aspect_ratio` (15) + `resolution`
+> (0.5K–4K) + `num_images` (≤4) + edit refs (≤14); flux-2-pro = `image_size`
+> (named); seedream-v4.5 = `image_size` (+auto_2K/4K) + `num_images` (≤6) +
+> edit refs (≤10); krea v2 = `aspect_ratio` + `creativity` + style refs (≤10).
 
 ## Image editing
 
