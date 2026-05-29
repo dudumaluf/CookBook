@@ -71,8 +71,14 @@ export function SaveRecipeDialog({
   );
   // Inner config fields the user chose to surface as composite controls.
   const [exposedParams, setExposedParams] = useState<RecipeExposedParam[]>([]);
-  const selectedNodes = useWorkflowStore((s) =>
-    s.nodes.filter((n) => selectedNodeIds.includes(n.id)),
+  // Select the STABLE `nodes` array ref (not a freshly-filtered array) — a
+  // selector returning a new array every render makes useSyncExternalStore
+  // think the store changed on every render, which is an infinite re-render
+  // loop (React #185). Derive the filtered set with useMemo instead.
+  const allNodes = useWorkflowStore((s) => s.nodes);
+  const selectedNodes = useMemo(
+    () => allNodes.filter((n) => selectedNodeIds.includes(n.id)),
+    [allNodes, selectedNodeIds],
   );
 
   // Re-derive defaults whenever the dialog (re-)opens with a fresh
