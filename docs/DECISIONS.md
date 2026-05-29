@@ -2217,3 +2217,43 @@ The node's `execute()` runs `validateSeedanceRequest` (Slice A constraints) befo
 - ADR-0029 (Higgsfield route) — same route/wrapper/node shape, different poll mechanism.
 - ADR-0046 (media layer) — provides VideoRef, constraints, rehost.
 - ADR-0035 (durable generations) — Seedance CDN URLs rehosted on `done`.
+
+## ADR-0048 — Sequential iterator as a macro orchestrator node (M1 Slice D)
+
+- **Date**: 2026-05-28
+- **Status**: implemented in Slice D (multimodal media arc).
+- **Context**: the continuous performance video needs chunk N+1 to continue chunk N — a sequential scan where each step depends on the previous output. Our engine's iterator is the OPPOSITE: parallel fan-out (independent items, no carry). A generic engine-level scan primitive would touch the core scheduler (topo sort, fan-out, cache, progress) — high risk against 900+ tests. ADR-0048 chooses the lower-risk path.
+
+### 1. Decisão: encapsulate the loop in one node's execute(), not the scheduler
+
+The Continuity Builder runs the scan loop INSIDE its `execute()`. The core topological engine is untouched. Trade-off: less composable than a generic "scan any subgraph N times" primitive — the per-step operation is hardcoded to Seedance. But the per-step op IS "generate the next chunk", so the coupling is acceptable, and the scheduler stays simple + proven. A generic engine scan can come later if a second use case needs it.
+
+### 2. Decisão: minimal additive ExecContext.reportProgress
+
+A long loop (16 chunks × 1-3 min) must be observable + interruptible. `execute()` had no progress channel (the engine owns `onProgress`). Slice D adds an optional `reportProgress(progress)` to `ExecContext`; the engine wires it to emit a `running` record with `fanOut { total, done }` + partial output. Additive — every existing node ignores it. The UI previews chunks as they land; abort works between chunks via the existing `signal`.
+
+### 3. Decisão: both continuity strategies, switchable per node
+
+- `extension`: feed the previous clip as `@Video1`; Seedance continues natively.
+- `frame-chain`: `extractFrame(prev, "last")` -> upload -> `@Image1` seeds the next chunk visually.
+Both reuse the existing Seedance reference-to-video wrapper + the Slice C WebCodecs ops. Reusable across any model with frame-in/frame-out (the user's #1 ask).
+
+### 4. Decisão: concat is remux (packet-copy), not re-encode
+
+`concatVideos` (Slice D.2) joins chunks by copying encoded packets with timestamp offsets (mediabunny EncodedPacketSink -> EncodedVideo/AudioPacketSource), not decoding+re-encoding. Lossless + fast, correct for same-codec Seedance chunks. A Video Concat node (non-reactive — remux is heavy) wraps it.
+
+### 5. Decisão: cost guard = caps + abort + assistant awareness (no interactive UI gate yet)
+
+A true per-chunk approval gate needs mid-execute pausing (await user input inside the loop) — not supported by the single-async execute() contract. Slice D ships: `maxChunks` cap (default 16), mid-loop abort, the assistant's $0.50 reasoner cap, and chunk-cost awareness in the assistant vocabulary (~$2.25/chunk, ~$36/song — confirm before long runs). An interactive gate is a future refinement.
+
+### 6. Trade-offs aceitos
+
+- **Macro-node over generic scan** — lower risk now; generic scan deferred.
+- **Loop is browser-only + real-spend to fully verify** — sequencing logic unit-tested with mocks (7 tests); real Seedance chunks verified in the test phase.
+- **No interactive per-chunk gate** — caps + abort + assistant confirmation suffice for MVP.
+
+### 7. Cross-references
+
+- ADR-0030 (parallel fan-out) — this is the sequential complement.
+- ADR-0046 (media layer) — provides sliceAudio / extractFrame / concatVideos.
+- ADR-0047 (Seedance) — the per-chunk video generator.

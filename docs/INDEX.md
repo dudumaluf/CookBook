@@ -30,7 +30,8 @@ End-of-slice and end-of-milestone snapshots. Read the latest one if you're picki
 - **[STATE-AFTER-M0a-slice4.md](./STATE-AFTER-M0a-slice4.md)** — Higgsfield Cloud API + Soul ID + HiggsfieldImageGen + ImageIterator + Export + engine fan-out + complete Soul Image Burst recipe (ADR-0029, ADR-0030).
 - **[STATE-AFTER-M0a-slice5-5.md](./STATE-AFTER-M0a-slice5-5.md)** — Iterator nodes with internal storage + selection mode + cursor + Text Iterator + library multi-select + drop-onto-Iterator (ADR-0031).
 - **[STATE-AFTER-M0a-slice5-6.md](./STATE-AFTER-M0a-slice5-6.md)** — AssetGroup as first-class library kind; Iterator always linked via `groupId`; library Groups section + subview; import-as-group dialog; Detach + Untitled-cleanup (ADR-0032).
-- **[STATE-AFTER-M0a-slice7.md](./STATE-AFTER-M0a-slice7.md)** — Assistant agent autônomo (slices 7.1 → 7.6): provider migration + knowledge bus + reasoner runtime + 25 tools (read/construct/recipe/run/reasoning/eval/capability/RAG) + live trace UI + cross-project memory + user preferences (ADR-0041 → ADR-0045) (current). **M0a CLOSED.**
+- **[STATE-AFTER-M0a-slice7.md](./STATE-AFTER-M0a-slice7.md)** — Assistant agent autônomo (slices 7.1 → 7.6): provider migration + knowledge bus + reasoner runtime + 25 tools (read/construct/recipe/run/reasoning/eval/capability/RAG) + live trace UI + cross-project memory + user preferences (ADR-0041 → ADR-0045). **M0a CLOSED.**
+- **[STATE-AFTER-M1-media-arc.md](./STATE-AFTER-M1-media-arc.md)** — Multimodal media arc (Slices A-F): Seedance video + Continuity Builder (sequential iterator) + Video Concat + Fal image nodes + Video/Audio input + mediabunny WebCodecs ops + Performance Video recipe (ADR-0046 → ADR-0048). Includes the **test plan** (T1-T5). Soul ID training deferred (current).
 
 ## Maintenance rules (the contract)
 

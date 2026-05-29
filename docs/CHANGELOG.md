@@ -2,6 +2,19 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-28 — M1 multimodal media arc — video + audio + continuity (Slices A-F)
+
+Builds the media layer + the performance-video pipeline. Ten commits on `main`, each build-verified. **Tests 841 → 905 (+64).** The "singer show" use case is buildable end-to-end on the canvas; the AI-agency use case is served by the new image nodes + existing Soul ID. Soul ID *training* (Slice G) deferred as a dedicated M0b spike.
+
+- **Slice A — media foundation** (`f54b108`, ADR-0046): `audio` DataType + AudioRef + StandardizedOutput audio variant (video already existed); VideoAsset + AudioAsset; mediabunny dep + `src/lib/media/` (windowing math + Seedance constraints + probe — pure parts tested); uploadVideo/AudioFromUrl + generalized generation-sync rehost; audio handle color.
+- **Slice B — Seedance video node** (`ce112b6`, ADR-0047): `seedance-video` node + `/api/fal/seedance` route + server wrapper via `@fal-ai/client` subscribe. Endpoint dispatch by references; client-side constraint check; `<video>` preview. Lands in the Gallery (video tab).
+- **Slice C — WebCodecs ops + media UI** (`de537ad`, `f7b90e7`): `extractFrame` + `sliceAudio` (mediabunny); gallery + lightbox + download render video/audio; Video + Audio input nodes; `importMediaFiles` pipeline; gallery-video drag-to-canvas.
+- **Slice D — Continuity Builder** (`398496e`, `4eec4e2`, ADR-0048): the sequential iterator — loops Seedance carrying state forward (extension / frame-chain), per-chunk progress via `ExecContext.reportProgress`, abort, maxChunks cap; `concatVideos` remux + Video Concat node. The arc centerpiece; loop logic unit-tested with mocks.
+- **Slice E — Performance Video recipe** (`5c4144e`): seeded composite recipe (Continuity Builder → Video Concat, exposing prompt + character + song); assistant vocabulary for the new concepts + chunk-cost awareness.
+- **Slice F — Fal image nodes** (`6e9e3b7`): one `fal-image` node with a model picker (Nano Banana 2 default, Flux 2, Seedream) + edit mode on reference images.
+
+**Known: real-API + WebCodecs code is unit-tested with mocks but pending real-spend / browser verification (the test phase).** Fal endpoint IDs are best-effort from the catalog. Soul ID training + interactive per-chunk cost gate are deferred.
+
 ## 2026-05-28 — M0a Slice 7 — Assistant agent autônomo (6 sub-slices)
 
 Closes the M0a assistant arc. Six commits on `main`, each independently deployed + smoke 200. **Tests 775 → 841 (+66)**. The assistant evolves from a one-shot JSON-in-text plan generator into a real bounded-loop agent with 25 tools across 7 categories: read, construct, recipe, run, reasoning, eval, capability, RAG.

@@ -27,7 +27,8 @@ This file is the **single starting point** for any new agent / chat session. If 
   Tests **775 → 841** (+66). All four checks (npm test, tsc, lint, docs:check) green at every commit. Six separate commits on `main`, all deployed + smoke 200. **25 tools total** in the registry across 8 categories. The assistant has agency, judgment, capability awareness, and memory — all bounded by a per-message $0.50 cap.
 
   Snapshot: [`docs/STATE-AFTER-M0a-slice7.md`](./docs/STATE-AFTER-M0a-slice7.md).
-- **Next up**: **practical end-to-end testing** of the agent arc (5 cenários in the snapshot doc), then **M0b** — Reference-driven editing & Soul ID training. Open questions: embedding population job (RAG semantic upgrade), token-streaming SSE, trace persistence (summary-on-completion).
+- **Then: M1 multimodal media arc** (Slices A-F, 2026-05-28). Built the media layer + the performance-video pipeline: Seedance video node, the **Continuity Builder** (sequential iterator that loops Seedance with continuity), Video Concat, Fal image nodes (Nano Banana 2 / Flux 2 / Seedream), Video/Audio input nodes, mediabunny WebCodecs ops, and the seeded **Performance Video** recipe. Tests 841 → 905. ADR-0046 → ADR-0048. Snapshot + **test plan**: [`docs/STATE-AFTER-M1-media-arc.md`](./docs/STATE-AFTER-M1-media-arc.md).
+- **Next up**: **the test phase** — real-spend verification of the media arc (Fal endpoint IDs, Seedance shape, WebCodecs ops, the continuity loop) per the T1-T5 plan in the M1 snapshot. Everything is built + mock-tested but NOT yet run against the live services / a real browser. Then: **Soul ID training** (deferred M0b spike — Higgsfield training API + webhooks).
 
 ## Read these first (in order; ~10 min total)
 
