@@ -73,6 +73,12 @@ export interface ContinuityBuilderNodeConfig {
   maxChunks?: number;
   aspectRatio?: (typeof SEEDANCE_ASPECT_RATIOS)[number];
   resolution?: (typeof SEEDANCE_RESOLUTIONS)[number];
+  /**
+   * Downscale target for the reference performance video slices. Seedance
+   * caps reference videos at ~720p, so this is "480p" | "720p" (default
+   * 720p) — NOT the output resolution (that's `resolution`).
+   */
+  refResolution?: "480p" | "720p";
   fast?: boolean;
 }
 
@@ -182,6 +188,7 @@ function ContinuityBuilderSettings({
   const durationId = useId();
   const chunkId = useId();
   const maxId = useId();
+  const refResId = useId();
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -199,6 +206,28 @@ function ContinuityBuilderSettings({
         >
           <option value="extension">extension (feed previous clip)</option>
           <option value="frame-chain">frame-chain (extract last frame)</option>
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={refResId} className="font-medium text-foreground/90">
+          Reference video resolution
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+            (Seedance caps refs at 720p)
+          </span>
+        </label>
+        <select
+          id={refResId}
+          value={config.refResolution ?? "720p"}
+          onChange={(e) =>
+            updateConfig({
+              refResolution: e.target.value as "480p" | "720p",
+            })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="720p">720p (best)</option>
+          <option value="480p">480p (smaller/cheaper)</option>
         </select>
       </div>
 
@@ -340,7 +369,9 @@ export const continuityBuilderNodeSchema =
       // Per-chunk reference-video slices (motion / performance to mirror).
       let refVideoUrls: string[] = [];
       if (refVideo?.url && windows) {
-        const blobs = await sliceVideo(refVideo.url, windows);
+        // Downscale each slice to Seedance's reference cap (default 720p).
+        const maxHeight = (config.refResolution ?? "720p") === "480p" ? 480 : 720;
+        const blobs = await sliceVideo(refVideo.url, windows, { maxHeight });
         refVideoUrls = await Promise.all(
           blobs.map((b, i) => uploadBlob(b, "video", `refchunk-${i + 1}.mp4`)),
         );

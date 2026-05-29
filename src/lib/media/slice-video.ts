@@ -33,9 +33,19 @@ function makeInput(src: Blob | string): Input {
   return new Input({ formats: ALL_FORMATS, source });
 }
 
+export interface SliceVideoOptions {
+  /**
+   * Cap the output height (px), preserving aspect ratio (width auto-scales).
+   * Seedance reference videos must be <= ~720p, so callers pass 720 (or 480
+   * for a smaller/cheaper reference). Omit to keep the source resolution.
+   */
+  maxHeight?: number;
+}
+
 export async function sliceVideo(
   src: Blob | string,
   windows: readonly MediaWindow[],
+  opts: SliceVideoOptions = {},
 ): Promise<Blob[]> {
   const slices: Blob[] = [];
   for (const window of windows) {
@@ -51,6 +61,9 @@ export async function sliceVideo(
         trim: { start: window.startMs / 1000, end: window.endMs / 1000 },
         // Motion reference only — the song audio is fed separately.
         audio: { discard: true },
+        // Downscale to fit Seedance's reference cap (~720p). Setting only
+        // height preserves the source aspect ratio (width auto-scales).
+        ...(opts.maxHeight ? { video: { height: opts.maxHeight } } : {}),
       });
       await conversion.execute();
       const buffer = (output.target as BufferTarget).buffer;

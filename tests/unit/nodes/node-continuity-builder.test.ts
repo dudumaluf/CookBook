@@ -201,6 +201,12 @@ describe("Continuity Builder — reference performance video", () => {
     );
 
     expect(sliceVideo).toHaveBeenCalledTimes(1);
+    // Slices are downscaled to the reference cap (default 720p).
+    expect(sliceVideo).toHaveBeenCalledWith(
+      "https://x/perf.mp4",
+      expect.any(Array),
+      { maxHeight: 720 },
+    );
     // Chunk 1: only the reference slice in video_urls (respects the 15s
     // combined-video cap); identity via the character image.
     const call1 = callSeedanceVideo.mock.calls[0]![0];
