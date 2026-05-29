@@ -71,6 +71,35 @@ export type FalErrorCode =
   | "timeout"
   | "unknown";
 
+/**
+ * Turn a @fal-ai/client error into a readable message. Fal's 422
+ * (ValidationError) carries `body.detail` (FastAPI shape:
+ * [{ loc, msg, type }]) — surfacing the offending field beats a bare
+ * "Unprocessable Entity". Falls back to the generic message otherwise.
+ */
+export function describeFalError(err: unknown): string {
+  const e = err as {
+    status?: number;
+    body?: { detail?: unknown };
+    message?: string;
+  };
+  const detail = e?.body?.detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        const dd = d as { loc?: unknown[]; msg?: string };
+        const field = Array.isArray(dd.loc)
+          ? dd.loc.filter((x) => x !== "body").join(".")
+          : "";
+        return field ? `${field}: ${dd.msg}` : (dd.msg ?? "");
+      })
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join("; ");
+  }
+  if (typeof detail === "string") return detail;
+  return e?.message ?? "Fal request failed";
+}
+
 export interface FalErrorResponse {
   error: string;
   code?: FalErrorCode;

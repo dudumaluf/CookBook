@@ -2,10 +2,11 @@ import "server-only";
 
 import { fal } from "@fal-ai/client";
 
-import type {
-  FalImageModel,
-  FalImageRequest,
-  FalImageSuccessResponse,
+import {
+  describeFalError,
+  type FalImageModel,
+  type FalImageRequest,
+  type FalImageSuccessResponse,
 } from "./types";
 
 /**
@@ -96,9 +97,7 @@ export async function generateFalImage(
     if ((err as Error)?.name === "AbortError" || signal.aborted) {
       throw annotate(new Error("Request cancelled"), "aborted");
     }
-    const message =
-      err instanceof Error ? err.message : "Fal image generation failed";
-    throw annotate(new Error(`Fal: ${message}`), "upstream_error");
+    throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
   }
 
   const urls = (result.data.images ?? [])

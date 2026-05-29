@@ -2,9 +2,10 @@ import "server-only";
 
 import { fal } from "@fal-ai/client";
 
-import type {
-  SeedanceVideoRequest,
-  SeedanceVideoSuccessResponse,
+import {
+  describeFalError,
+  type SeedanceVideoRequest,
+  type SeedanceVideoSuccessResponse,
 } from "./types";
 
 /**
@@ -111,10 +112,8 @@ export async function generateSeedanceVideo(
     if ((err as Error)?.name === "AbortError" || signal.aborted) {
       throw annotate(new Error("Request cancelled"), "aborted");
     }
-    const message =
-      err instanceof Error ? err.message : "Seedance generation failed";
-    // Fal validation errors carry a 422/body; surface as upstream_error.
-    throw annotate(new Error(`Fal: ${message}`), "upstream_error");
+    // Surface Fal's validation detail (which field is unprocessable).
+    throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
   }
 
   const url = result.data.video?.url;

@@ -4,6 +4,7 @@ import { nodeRegistry } from "@/lib/engine/registry";
 import {
   runWorkflow,
   type ExecutionCache,
+  type ExecutionCacheEntry,
 } from "@/lib/engine/run-workflow";
 import type {
   ExecutionHistoryEntry,
@@ -100,6 +101,48 @@ export interface ExecutionState {
 const sessionCache: ExecutionCache = new Map();
 
 /**
+ * Persist the output cache across reloads (multimodal arc fix). Without this,
+ * reloading the page (e.g. to pick up a deploy) drops the cache, so a
+ * Run-here on a downstream node re-executes — and re-pays for — upstream
+ * nodes that already produced a result (the LLM "regenerating" complaint).
+ *
+ * Safe because: cache-busting nodes (gen with seed === -1) never READ the
+ * cache, so a persisted-but-stale image URL is never replayed; the cacheable
+ * cases (LLM text, etc.) are durable. Capped to the most recent N entries to
+ * bound localStorage. Best-effort — any storage/parse error is swallowed.
+ */
+const CACHE_STORAGE_KEY = "cookbook-exec-cache-v1";
+const CACHE_PERSIST_CAP = 300;
+
+function persistCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const entries = Array.from(sessionCache.entries()).slice(
+      -CACHE_PERSIST_CAP,
+    );
+    window.localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // Quota or serialization error — caching is an optimization, not
+    // load-bearing. Drop silently.
+  }
+}
+
+function loadCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(CACHE_STORAGE_KEY);
+    if (!raw) return;
+    const entries = JSON.parse(raw) as [string, ExecutionCacheEntry][];
+    for (const [hash, entry] of entries) sessionCache.set(hash, entry);
+  } catch {
+    // Corrupt payload — ignore; we'll rebuild the cache from runs.
+  }
+}
+
+// Rehydrate on first import (client only).
+loadCache();
+
+/**
  * In-flight AbortController for the current run, if any. Lives in
  * module scope so `cancelRun()` and `startRun()` (which preempts) can
  * reach it without going through React render cycles.
@@ -185,6 +228,9 @@ async function launchRun({
   } finally {
     if (currentController === controller) currentController = null;
     if (get().runId === runId) set({ isRunning: false });
+    // Persist the (now-warmer) cache so a reload doesn't force re-running
+    // upstream nodes on the next Run-here.
+    persistCache();
   }
 }
 
@@ -221,12 +267,20 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
 
   clearCache: () => {
     sessionCache.clear();
+    persistCache();
   },
 }));
 
 /** Test-only: reset module-scoped state. */
 export function _resetExecutionForTests(): void {
   sessionCache.clear();
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(CACHE_STORAGE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
   currentController?.abort();
   currentController = null;
   useExecutionStore.setState({
