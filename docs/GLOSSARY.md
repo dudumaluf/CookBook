@@ -203,6 +203,13 @@ When in doubt, look here first. If a term you needed is missing, add it in the s
 - **Library drawer** — `src/components/layout/library-drawer.tsx`. A bottom drawer (~72vh, `libraryDrawerOpen`, ⌘⇧A) mirroring the Gallery: shared toolbar + views, asset-store multi-select, a bulk action bar (Group / Download / Delete), drag-to-canvas via the pointer-events-none-while-dragging trick. The side panel's expand button opens it.
 - **`libraryView` / `libraryThumb` (layout-store v4)** — persisted UI prefs: `"grid" | "list"` and `"s" | "m" | "l"`. Shared by panel + drawer.
 
+## Recipes as configurable nodes (ADR-0052)
+
+- **RecipeExposedParam** — `src/lib/repositories/recipe-repository.ts`. Binds an inner subgraph node's CONFIG field (`internalNodeId` + `configKey`) to a control (`select` / `number` / `text` / `toggle`, `options` for selects) surfaced on the composite node. Stored in `RecipeSubgraph.exposedParams` (subgraph v2). Distinct from `RecipeExposedHandle` (a wire).
+- **Composite controls + preview** — `src/components/nodes/node-composite.tsx`. The composite body renders `exposedParams` as inline controls (editing writes back into `config.subgraph.nodes[*].config[key]` per instance — no unpack) and previews the last run's result (image/video/text). Falls back to the "packaged recipe · N nodes" summary.
+- **Recipes home = Add Node** — recipes are nodes, so they live in the Add Node popover's "Recipes" group (click instantiates a composite; non-system recipes have inline delete), NOT in the Library (which is assets-only now). The dead Library `recipe-card` was removed.
+- **Exposed-params editor** — `src/components/library/save-recipe-dialog.tsx`'s "Controls" section: check inner primitive config fields to expose, edit the label, pick the control type, and turn a text field into a dropdown via comma-separated options.
+
 ## Process
 
 - **Test-as-you-go** — every shipped feature lands with at least one automated test + a manual smoke test from the user before the next feature starts.

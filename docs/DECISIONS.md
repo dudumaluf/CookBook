@@ -2336,3 +2336,31 @@ A bottom drawer (~72vh, `libraryDrawerOpen`, ⌘⇧A + the panel's expand button
 
 - **Asset pin/favorite not added** — the Gallery's Pin lives on `cookbook_generations`; assets have no `pinned` field. Deferred to avoid a data-model change; delivered search/filter/views/select/delete/rename/group/download instead.
 - **Recipes stay panel-only** in the management drawer (they aren't multi-selectable assets).
+
+## ADR-0052 — Recipes as configurable nodes: exposed params + preview, home in Add Node
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: recipes were a "Recipes" section inside the Library, mixed with assets (confusing — recipes are blocks/nodes, not content). And the composite node was opaque + frozen: it only exposed *handles* (wires), with no way to tweak inner settings or see the result without "Unpack into subgraph".
+
+### 1. Decisão: recipes leave the Library; their home is the node palette
+
+Recipes are nodes, so they belong where you add nodes. The Library is now assets-only (image/video/audio/soul-id/groups). The **Add Node** popover gains a "Recipes" group (lists the user's + system recipes; click instantiates a composite at the cascade position; per-recipe delete for non-system). The dead `recipe-card.tsx` (Library) was removed.
+
+### 2. Decisão: exposed *parameters* (not just handles) on the composite
+
+`RecipeSubgraph` / `CompositeNodeConfig` gain `exposedParams: RecipeExposedParam[]` — each binds an inner node's CONFIG field (`internalNodeId` + `configKey`) to a control (`select` / `number` / `text` / `toggle`, with `options` for selects). The composite body renders these as inline controls; editing one writes back into `config.subgraph.nodes[*].config[key]` (per composite instance), so the next run uses it — no unpack needed. Subgraph version → v2 (additive; v1 recipes simply have none).
+
+### 3. Decisão: result preview on the composite
+
+The composite already recurses into `runWorkflow`; its body now reads the execution-store record and previews the result (image / video / text) like the generation nodes, falling back to the compact "packaged recipe · N nodes" summary when there's no result yet.
+
+### 4. Decisão: pick-what-to-expose in the Save-as-recipe dialog
+
+The save dialog gains a "Controls" editor: every primitive inner config field is a candidate; checking it exposes it with an auto-inferred control (boolean→toggle, number→number, string→text) + an editable label, and a text field can be turned into a dropdown by typing comma-separated options. Generic (works for any node) — a schema-declared param-metadata layer for premium per-field dropdowns/options is a future enhancement.
+
+### 5. Trade-offs aceitos
+
+- **Generic value-type inference** for controls now (vs schema-declared param metadata) — ships the capability for every node without a cross-node schema refactor; enum dropdowns are set via comma-options at save time.
+- **A full dedicated Recipes browse drawer** was not built; the Add Node "Recipes" group serves invoke + basic manage. A richer browse surface can follow if needed.
+- **Composites stay frozen for structure** — exposed params tweak *values*; changing the *graph* still needs Unpack.

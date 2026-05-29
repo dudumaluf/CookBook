@@ -16,7 +16,10 @@ import type {
 import type {
   RecipeSubgraph,
   RecipeExposedHandle,
+  RecipeExposedParam,
 } from "@/lib/repositories/recipe-repository";
+import { useExecutionStore } from "@/lib/stores/execution-store";
+import { Loader2 } from "lucide-react";
 
 /**
  * Composite node — Slice 6.6 (ADR-0039).
@@ -74,33 +77,215 @@ export interface CompositeNodeConfig {
   /** Auto-detected at save time. Each entry binds a public output id
    *  (`label`) to the internal node + handle that produces it. */
   exposedOutputs: RecipeExposedHandle[];
+  /** Inner config fields surfaced as inline controls on the composite,
+   *  so the user tweaks the recipe without unpacking it. Optional —
+   *  recipes saved before this feature have none. */
+  exposedParams?: RecipeExposedParam[];
 }
 
 /**
- * Body — minimal "this is a packaged recipe" surface. Renders the
- * recipe name + an internal-node count + the exposed I/O summary.
- * Editing knobs (rename, unpack) live in the schema's settings popover.
+ * Body — a configurable recipe surface. Renders the exposed parameters as
+ * inline controls (so the user tweaks the recipe without unpacking it) +
+ * a preview of the last run's result. Falls back to a compact "packaged
+ * recipe" summary when there are no params/result yet. Rename + Unpack
+ * live in the schema's settings popover.
  */
 function CompositeNodeBody({
+  nodeId,
   config,
+  updateConfig,
 }: NodeBodyProps<CompositeNodeConfig>) {
+  const record = useExecutionStore((s) => s.records.get(nodeId));
+  const status = record?.status;
+  const params = config.exposedParams ?? [];
   const internalNodeCount = config.subgraph?.nodes.length ?? 0;
-  const inputCount = config.exposedInputs.length;
-  const outputCount = config.exposedOutputs.length;
+
+  function paramValue(p: RecipeExposedParam): unknown {
+    const node = config.subgraph?.nodes.find((n) => n.id === p.internalNodeId);
+    return (node?.config as Record<string, unknown> | undefined)?.[p.configKey];
+  }
+
+  function setParam(p: RecipeExposedParam, value: unknown) {
+    const nodes = (config.subgraph?.nodes ?? []).map((n) =>
+      n.id === p.internalNodeId
+        ? { ...n, config: { ...(n.config as object), [p.configKey]: value } }
+        : n,
+    );
+    updateConfig({ subgraph: { ...config.subgraph, nodes } });
+  }
+
+  const preview = pickPreview(record?.output);
+
   return (
-    <div className="flex w-full min-w-[200px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
-      <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[10.5px] text-muted-foreground">
-        <ScrollText className="h-3 w-3" />
-        <span>
-          Recipe · {internalNodeCount}{" "}
-          {internalNodeCount === 1 ? "node" : "nodes"} inside
-        </span>
-      </div>
-      <p className="text-[10.5px] leading-relaxed text-muted-foreground/80">
-        {inputCount} input{inputCount === 1 ? "" : "s"} ·{" "}
-        {outputCount} output{outputCount === 1 ? "" : "s"}
-      </p>
+    <div className="flex w-full min-w-[200px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
+      {params.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          {params.map((p, i) => (
+            <ParamControl
+              key={`${p.internalNodeId}:${p.configKey}:${i}`}
+              param={p}
+              value={paramValue(p)}
+              onChange={(v) => setParam(p, v)}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {status === "error" && record?.error ? (
+        <p
+          role="alert"
+          className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] leading-snug text-destructive"
+        >
+          {record.error}
+        </p>
+      ) : status === "running" ? (
+        <div className="flex aspect-video w-full items-center justify-center rounded-md bg-foreground/[0.04] text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      ) : preview ? (
+        <RecipePreview preview={preview} />
+      ) : (
+        <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[10.5px] text-muted-foreground">
+          <ScrollText className="h-3 w-3" />
+          <span>
+            Recipe · {internalNodeCount}{" "}
+            {internalNodeCount === 1 ? "node" : "nodes"} inside
+          </span>
+        </div>
+      )}
     </div>
+  );
+}
+
+/* ────────────────────────── Param control ──────────────────────────── */
+
+function ParamControl({
+  param,
+  value,
+  onChange,
+}: {
+  param: RecipeExposedParam;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const labelEl = (
+    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      {param.label}
+    </span>
+  );
+  const stop = (e: React.PointerEvent) => e.stopPropagation();
+  const cls =
+    "h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs";
+
+  if (param.control === "toggle") {
+    return (
+      <label className="flex items-center justify-between gap-2">
+        {labelEl}
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => onChange(e.target.checked)}
+          onPointerDown={stop}
+          className="h-3.5 w-3.5 rounded border border-border/60 bg-background/40"
+        />
+      </label>
+    );
+  }
+
+  return (
+    <label className="flex flex-col gap-1">
+      {labelEl}
+      {param.control === "select" ? (
+        <select
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          onPointerDown={stop}
+          className={cls}
+        >
+          {(param.options ?? []).map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      ) : param.control === "number" ? (
+        <input
+          type="number"
+          value={value === undefined || value === null ? "" : Number(value)}
+          min={param.min}
+          max={param.max}
+          step={param.step}
+          onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+          onPointerDown={stop}
+          className={cls}
+        />
+      ) : (
+        <input
+          type="text"
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          onPointerDown={stop}
+          className={cls}
+        />
+      )}
+    </label>
+  );
+}
+
+/* ────────────────────────── Result preview ─────────────────────────── */
+
+type RecipePreviewKind =
+  | { type: "image"; url: string }
+  | { type: "video"; url: string }
+  | { type: "text"; value: string };
+
+function pickPreview(
+  output: StandardizedOutput | StandardizedOutput[] | undefined,
+): RecipePreviewKind | null {
+  if (output === undefined) return null;
+  const first = Array.isArray(output) ? output[0] : output;
+  if (!first) return null;
+  if (first.type === "image" && first.value?.url)
+    return { type: "image", url: first.value.url };
+  if (first.type === "video" && first.value?.url)
+    return { type: "video", url: first.value.url };
+  if (first.type === "text" && typeof first.value === "string")
+    return { type: "text", value: first.value };
+  return null;
+}
+
+function RecipePreview({ preview }: { preview: RecipePreviewKind }) {
+  if (preview.type === "image") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={preview.url}
+        alt="Recipe result"
+        className="w-full rounded-md bg-foreground/5 object-cover"
+        onError={(e) => {
+          (e.target as HTMLImageElement).style.display = "none";
+        }}
+      />
+    );
+  }
+  if (preview.type === "video") {
+    return (
+      <video
+        src={preview.url}
+        controls
+        loop
+        playsInline
+        onPointerDown={(e) => e.stopPropagation()}
+        className="w-full rounded-md bg-black"
+      />
+    );
+  }
+  return (
+    <p className="max-h-24 overflow-y-auto whitespace-pre-wrap rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[11px] leading-snug text-foreground/85">
+      {preview.value.length > 280
+        ? `${preview.value.slice(0, 277)}…`
+        : preview.value}
+    </p>
   );
 }
 
@@ -174,6 +359,7 @@ export const compositeNodeSchema = defineNode<CompositeNodeConfig>({
     subgraph: { version: 1, nodes: [], edges: [] },
     exposedInputs: [],
     exposedOutputs: [],
+    exposedParams: [],
   },
   // Composites are NOT auto-reactive — the inner subgraph may include
   // expensive non-reactive nodes (LLM, Higgsfield) that the user doesn't

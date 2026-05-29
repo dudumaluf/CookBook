@@ -2,6 +2,17 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Recipes as configurable nodes + moved out of the Library (ADR-0052)
+
+Recipes stop being confusing "assets" and become real, tweakable blocks. **Tests 968 → 972 (+4).**
+
+- **Out of the Library, into Add Node**: the Library is now assets-only; recipes live in the Add Node popover (a "Recipes" group — click to drop a composite, delete non-system inline). Removed the dead Library `recipe-card`.
+- **Exposed params**: recipes/composites gain `exposedParams` (RecipeSubgraph v2) — inner config fields surfaced as inline controls (select/number/text/toggle) on the composite node. Editing writes back into the subgraph per-instance, so you tweak the recipe without unpacking it.
+- **Result preview**: the composite body previews its last run (image/video/text), falling back to the compact summary.
+- **Pick-what-to-expose**: the Save-as-recipe dialog gains a "Controls" editor — check inner fields to expose, set label + control type, turn a text field into a dropdown via comma-options.
+
+All green: `npm test` (972), `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm run docs:check`.
+
 ## 2026-05-29 — Library revamp — scroll + search/filter + views + management drawer (ADR-0051)
 
 Makes the assets area premium: it scrolls, filters, and gains a full management surface. **Tests 947 → 968 (+21).**

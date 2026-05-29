@@ -34,6 +34,28 @@ export interface RecipeExposedHandle {
   dataType: string;
 }
 
+/**
+ * One exposed *parameter* on a composite recipe (Library revamp — recipes
+ * as configurable nodes). Unlike `RecipeExposedHandle` (a wire), this
+ * surfaces an inner node's CONFIG field as a control on the composite, so
+ * the user can tweak it without unpacking the recipe.
+ *
+ * `internalNodeId` + `configKey` point at the saved-subgraph node's
+ * config field; editing the control writes back into that node's config
+ * (per composite instance). `control` picks the widget; `options` powers
+ * a `select`; `min`/`max`/`step` shape a `number`.
+ */
+export interface RecipeExposedParam {
+  internalNodeId: string;
+  configKey: string;
+  label: string;
+  control: "select" | "number" | "text" | "toggle";
+  options?: string[];
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 export interface RecipeSubgraph {
   /** Version tag — bumped when the subgraph shape changes. */
   version: number;
@@ -48,9 +70,16 @@ export interface RecipeSubgraph {
    */
   exposedInputs?: RecipeExposedHandle[];
   exposedOutputs?: RecipeExposedHandle[];
+  /**
+   * v2 — inner config fields surfaced as controls on the composite node
+   * (recipes as configurable nodes). Absent on v1 recipes.
+   */
+  exposedParams?: RecipeExposedParam[];
 }
 
-export const RECIPE_SUBGRAPH_VERSION = 1;
+// v2: adds `exposedParams` (configurable composite controls). Additive —
+// v1 subgraphs load fine (the field is simply absent).
+export const RECIPE_SUBGRAPH_VERSION = 2;
 
 export interface RecipeRecord {
   id: string;

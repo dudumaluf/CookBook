@@ -20,14 +20,11 @@ import type {
   SoulIdAsset,
 } from "@/types/asset";
 
-import { useRecipes } from "@/lib/hooks/use-recipes";
-
 import { AssetCard } from "./asset-card";
 import { AssetView } from "./asset-view";
 import { ImportAsGroupDialog } from "./import-as-group-dialog";
 import { InlineRename } from "./inline-rename";
 import { LibraryToolbar, type LibraryChip } from "./library-toolbar";
-import { RecipeCard } from "./recipe-card";
 
 /**
  * LibraryContent
@@ -143,8 +140,6 @@ export function LibraryContent() {
     setPendingFiles(list);
   }
 
-  const { data: recipes, refresh: refreshRecipes } = useRecipes();
-
   // Per-kind base lists (unfiltered counts drive the chips) + query-filtered
   // lists (drive what renders). Grouped images are hidden from "Images"
   // (they live inside their group's subview — Finder's one-place model).
@@ -174,13 +169,6 @@ export function LibraryContent() {
     [base, query],
   );
 
-  const filteredRecipes = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q
-      ? recipes.filter((r) => r.name.toLowerCase().includes(q))
-      : recipes;
-  }, [recipes, query]);
-
   const chips = useMemo<LibraryChip[]>(() => {
     const defs: Array<{ id: string; label: string; count: number }> = [
       { id: "image", label: "Images", count: base.image.length },
@@ -188,12 +176,11 @@ export function LibraryContent() {
       { id: "soul-id", label: "Soul IDs", count: base["soul-id"].length },
       { id: "video", label: "Videos", count: base.video.length },
       { id: "audio", label: "Audio", count: base.audio.length },
-      { id: "recipe", label: "Recipes", count: recipes.length },
     ];
     const present = defs.filter((d) => d.count > 0);
     const total = present.reduce((n, d) => n + d.count, 0);
     return [{ id: "all", label: "All", count: total }, ...present];
-  }, [base, recipes.length]);
+  }, [base]);
 
   return (
     <div
@@ -247,13 +234,11 @@ export function LibraryContent() {
           </div>
           <TopLevelView
             filtered={filtered}
-            recipes={filteredRecipes}
             activeChip={activeChip}
             view={libraryView}
             thumb={libraryThumb}
             query={query}
             onAssetOpen={handleAssetOpen}
-            refreshRecipes={() => void refreshRecipes()}
           />
         </>
       )}
@@ -279,22 +264,18 @@ type FilteredAssets = {
 
 function TopLevelView({
   filtered,
-  recipes,
   activeChip,
   view,
   thumb,
   query,
   onAssetOpen,
-  refreshRecipes,
 }: {
   filtered: FilteredAssets;
-  recipes: ReturnType<typeof useRecipes>["data"];
   activeChip: string;
   view: LibraryView;
   thumb: LibraryThumb;
   query: string;
   onAssetOpen: (asset: Asset) => void;
-  refreshRecipes: () => void;
 }) {
   const show = (id: string) => activeChip === "all" || activeChip === id;
 
@@ -313,9 +294,8 @@ function TopLevelView({
   const visibleSections = sections.filter(
     (s) => show(s.id) && s.items.length > 0,
   );
-  const showRecipes = show("recipe") && recipes.length > 0;
 
-  if (visibleSections.length === 0 && !showRecipes) {
+  if (visibleSections.length === 0) {
     const filtering = query.trim() !== "" || activeChip !== "all";
     return filtering ? (
       <p className="px-0.5 py-6 text-center text-xs text-muted-foreground">
@@ -350,23 +330,6 @@ function TopLevelView({
           />
         </Section>
       ))}
-      {showRecipes ? (
-        <Section
-          title="Recipes"
-          count={recipes.length}
-          dataTestId="library-section-recipes"
-        >
-          <div className="grid grid-cols-2 gap-1.5">
-            {recipes.map((recipe) => (
-              <RecipeCard
-                key={recipe.id}
-                recipe={recipe}
-                onChanged={refreshRecipes}
-              />
-            ))}
-          </div>
-        </Section>
-      ) : null}
     </div>
   );
 }

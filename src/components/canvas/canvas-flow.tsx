@@ -623,6 +623,7 @@ function CanvasFlowInner() {
                   subgraph: recipe.subgraph,
                   exposedInputs: recipe.subgraph.exposedInputs ?? [],
                   exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
+                  exposedParams: recipe.subgraph.exposedParams ?? [],
                 });
               } else {
                 // Expand subgraph mode — same path the assistant DSL

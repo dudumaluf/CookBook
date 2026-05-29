@@ -15,10 +15,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useSession } from "@/lib/auth/use-session";
+import { nodeRegistry } from "@/lib/engine/registry";
 import { autoDetectExposedIO } from "@/lib/recipes/auto-detect-io";
 import { saveSelectionAsRecipe } from "@/lib/recipes/save-from-canvas";
-import type { RecipeExposedHandle } from "@/lib/repositories/recipe-repository";
+import type {
+  RecipeExposedHandle,
+  RecipeExposedParam,
+} from "@/lib/repositories/recipe-repository";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import type { NodeInstance } from "@/types/node";
 
 /**
  * SaveRecipeDialog — Slice 6.6.
@@ -64,6 +69,11 @@ export function SaveRecipeDialog({
   const [exposedOutputs, setExposedOutputs] = useState<RecipeExposedHandle[]>(
     [],
   );
+  // Inner config fields the user chose to surface as composite controls.
+  const [exposedParams, setExposedParams] = useState<RecipeExposedParam[]>([]);
+  const selectedNodes = useWorkflowStore((s) =>
+    s.nodes.filter((n) => selectedNodeIds.includes(n.id)),
+  );
 
   // Re-derive defaults whenever the dialog (re-)opens with a fresh
   // selection. We don't recompute on every render — that would clobber
@@ -81,6 +91,7 @@ export function SaveRecipeDialog({
     const detected = autoDetectExposedIO(selectedNodes, ws.edges);
     setExposedInputs(detected.inputs);
     setExposedOutputs(detected.outputs);
+    setExposedParams([]);
     setName("");
     setDescription("");
     setReplaceWithComposite(true);
@@ -106,6 +117,7 @@ export function SaveRecipeDialog({
         description: description.trim() || undefined,
         exposedInputs,
         exposedOutputs,
+        exposedParams,
         replaceWithComposite,
       });
       toast.success(
@@ -230,6 +242,12 @@ export function SaveRecipeDialog({
             )}
           </div>
 
+          <RecipeParamsEditor
+            nodes={selectedNodes}
+            params={exposedParams}
+            onChange={setExposedParams}
+          />
+
           <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
             <input
               type="checkbox"
@@ -263,6 +281,163 @@ export function SaveRecipeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ───────────────────── Exposed-params editor ───────────────────────── */
+
+interface ParamCandidate {
+  nodeId: string;
+  nodeTitle: string;
+  key: string;
+  inferred: RecipeExposedParam["control"];
+}
+
+/**
+ * Lets the recipe author pick which inner config fields become controls on
+ * the composite (so the user tweaks the recipe without unpacking it). Each
+ * primitive config field is a candidate; checking it exposes it with an
+ * auto-inferred control + editable label. Text fields can be turned into a
+ * dropdown by typing comma-separated choices.
+ */
+function RecipeParamsEditor({
+  nodes,
+  params,
+  onChange,
+}: {
+  nodes: NodeInstance[];
+  params: RecipeExposedParam[];
+  onChange: (params: RecipeExposedParam[]) => void;
+}) {
+  const candidates = useMemo<ParamCandidate[]>(() => {
+    const out: ParamCandidate[] = [];
+    for (const n of nodes) {
+      const title = nodeRegistry.get(n.kind)?.title ?? n.kind;
+      const cfg = (n.config ?? {}) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(cfg)) {
+        const t = typeof value;
+        if (t !== "string" && t !== "number" && t !== "boolean") continue;
+        out.push({
+          nodeId: n.id,
+          nodeTitle: title,
+          key,
+          inferred: t === "boolean" ? "toggle" : t === "number" ? "number" : "text",
+        });
+      }
+    }
+    return out;
+  }, [nodes]);
+
+  if (candidates.length === 0) return null;
+
+  function find(c: ParamCandidate) {
+    return params.find(
+      (p) => p.internalNodeId === c.nodeId && p.configKey === c.key,
+    );
+  }
+  function toggle(c: ParamCandidate) {
+    if (find(c)) {
+      onChange(
+        params.filter(
+          (p) => !(p.internalNodeId === c.nodeId && p.configKey === c.key),
+        ),
+      );
+    } else {
+      onChange([
+        ...params,
+        {
+          internalNodeId: c.nodeId,
+          configKey: c.key,
+          label: `${c.nodeTitle} · ${c.key}`,
+          control: c.inferred,
+        },
+      ]);
+    }
+  }
+  function patch(c: ParamCandidate, next: Partial<RecipeExposedParam>) {
+    onChange(
+      params.map((p) =>
+        p.internalNodeId === c.nodeId && p.configKey === c.key
+          ? { ...p, ...next }
+          : p,
+      ),
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="text-xs">Controls ({params.length})</label>
+      <p className="text-[11px] text-muted-foreground/70">
+        Pick inner settings to surface on the recipe node, so they can be
+        changed without opening it.
+      </p>
+      <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
+        {candidates.map((c) => {
+          const exposed = find(c);
+          return (
+            <li
+              key={`${c.nodeId}::${c.key}`}
+              data-testid={`save-recipe-param-${c.key}`}
+              className="flex flex-col gap-1.5 rounded-md border border-border/60 bg-background/40 px-2 py-1.5"
+            >
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={Boolean(exposed)}
+                  onChange={() => toggle(c)}
+                  className="h-3.5 w-3.5 rounded border border-border/60 bg-background/40"
+                />
+                <span className="font-medium text-foreground/85">{c.key}</span>
+                <span className="text-[10px] text-muted-foreground/70">
+                  {c.nodeTitle}
+                </span>
+              </label>
+              {exposed ? (
+                <div className="flex flex-wrap items-center gap-1.5 pl-5">
+                  <Input
+                    value={exposed.label}
+                    onChange={(e) => patch(c, { label: e.target.value })}
+                    aria-label={`Label for ${c.key}`}
+                    className="h-7 flex-1 text-xs"
+                  />
+                  <select
+                    value={exposed.control}
+                    onChange={(e) =>
+                      patch(c, {
+                        control: e.target.value as RecipeExposedParam["control"],
+                      })
+                    }
+                    aria-label={`Control type for ${c.key}`}
+                    className="h-7 rounded-md border border-border/60 bg-background/40 px-1.5 text-xs"
+                  >
+                    <option value="text">text</option>
+                    <option value="number">number</option>
+                    <option value="toggle">toggle</option>
+                    <option value="select">dropdown</option>
+                  </select>
+                  {exposed.control === "select" ? (
+                    <Input
+                      value={(exposed.options ?? []).join(", ")}
+                      onChange={(e) =>
+                        patch(c, {
+                          options: e.target.value
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      placeholder="option1, option2, …"
+                      aria-label={`Dropdown options for ${c.key}`}
+                      className="h-7 w-full text-xs"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

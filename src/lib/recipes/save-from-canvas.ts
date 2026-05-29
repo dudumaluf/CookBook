@@ -1,6 +1,7 @@
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import type {
   RecipeExposedHandle,
+  RecipeExposedParam,
   RecipeRecord,
   RecipeSubgraph,
 } from "@/lib/repositories/recipe-repository";
@@ -36,6 +37,8 @@ export interface SaveFromCanvasInput {
   selectedNodeIds: string[];
   exposedInputs: RecipeExposedHandle[];
   exposedOutputs: RecipeExposedHandle[];
+  /** Inner config fields surfaced as controls on the composite. */
+  exposedParams?: RecipeExposedParam[];
   name: string;
   description?: string;
   category?: string;
@@ -102,6 +105,7 @@ export async function saveSelectionAsRecipe(
     edges: internalEdges,
     exposedInputs: input.exposedInputs,
     exposedOutputs: input.exposedOutputs,
+    exposedParams: input.exposedParams ?? [],
   };
 
   // 2. Persist the recipe row.
@@ -150,6 +154,7 @@ export async function saveSelectionAsRecipe(
       subgraph,
       exposedInputs: input.exposedInputs,
       exposedOutputs: input.exposedOutputs,
+      exposedParams: input.exposedParams ?? [],
     },
   };
 
