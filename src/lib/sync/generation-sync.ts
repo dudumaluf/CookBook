@@ -251,14 +251,29 @@ interface AutoPersistOptions {
  * and queue persistence. Dedup per (nodeId, runId) so a record being
  * re-emitted (e.g. status flicker) doesn't insert twice.
  */
+// Module-level singleton guard + shared dedup set. Two failure modes this
+// kills: (1) the shell effect re-subscribing (StrictMode double-invoke, a
+// `user` identity change, remount) would otherwise stack N subscribers, each
+// inserting once -> N duplicate rows per run. (2) Even a single subscriber
+// re-firing for the same (runId, nodeId) is deduped here. The seen set is
+// keyed by (runId, nodeId) so each fresh run still persists (new runId).
+let activeUnsubscribe: (() => void) | null = null;
+const seenPersisted = new Set<string>();
+
 export function startAutoPersistGenerations({
   ownerId,
 }: AutoPersistOptions): () => void {
-  const seen = new Set<string>();
+  // Singleton: tear down any prior subscription before adding a new one, so
+  // there is never more than one active subscriber (no double inserts).
+  if (activeUnsubscribe) {
+    activeUnsubscribe();
+    activeUnsubscribe = null;
+  }
+  const seen = seenPersisted;
   function key(nodeId: string, runId: number): string {
     return `${runId}::${nodeId}`;
   }
-  const unsubscribe = useExecutionStore.subscribe((state) => {
+  const rawUnsubscribe = useExecutionStore.subscribe((state) => {
     const projectId = useProjectStore.getState().id;
     if (!projectId) return; // No project loaded yet.
     const runId = state.runId;
@@ -275,6 +290,11 @@ export function startAutoPersistGenerations({
       });
     }
   });
+  const unsubscribe = () => {
+    rawUnsubscribe();
+    if (activeUnsubscribe) activeUnsubscribe = null;
+  };
+  activeUnsubscribe = unsubscribe;
   return unsubscribe;
 }
 
@@ -284,4 +304,10 @@ export const _internals = {
   isExternalUrl,
   rehostExternalMediaIfNeeded,
   extractPromptForNode,
+  /** Test-only: clear the module-level singleton + dedup state. */
+  resetForTests: () => {
+    if (activeUnsubscribe) activeUnsubscribe();
+    activeUnsubscribe = null;
+    seenPersisted.clear();
+  },
 };

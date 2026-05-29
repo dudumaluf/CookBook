@@ -208,6 +208,11 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
       currentController.abort();
       currentController = null;
     }
+    // Free the UI immediately. The aborted run's `finally` also resets
+    // isRunning when its promise settles, but if an upstream request hangs
+    // without honoring the abort, that could be slow — so we reset here too.
+    // Belt-and-suspenders against a stuck `isRunning` (greyed Run buttons).
+    if (get().isRunning) set({ isRunning: false });
   },
 
   clearRun: () => {

@@ -27,10 +27,19 @@ export interface CallSeedanceArgs extends SeedanceVideoRequest {
   signal: AbortSignal;
 }
 
+/** Hard ceiling so a hung request can't pin the engine's isRunning forever. */
+const VIDEO_TIMEOUT_MS = 5 * 60_000;
+
 export async function callSeedanceVideo(
   args: CallSeedanceArgs,
 ): Promise<SeedanceVideoSuccessResponse> {
   const { signal, ...body } = args;
+  // Engine abort + a timeout ceiling (video is slow — 5 min). Either firing
+  // settles the request so the run completes and Run buttons un-grey.
+  const combined = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(VIDEO_TIMEOUT_MS),
+  ]);
 
   let res: Response;
   try {
@@ -38,7 +47,7 @@ export async function callSeedanceVideo(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal,
+      signal: combined,
     });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;

@@ -55,6 +55,7 @@ const { useProjectStore } = await import("@/lib/stores/project-store");
 const { useWorkflowStore } = await import("@/lib/stores/workflow-store");
 
 beforeEach(() => {
+  _internals.resetForTests();
   Object.values(repoMocks).forEach((m) => m.mockReset());
   uploadMock.mockReset();
   uploadVideoMock.mockReset();
