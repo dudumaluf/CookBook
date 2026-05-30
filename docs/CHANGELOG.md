@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Fix: switching tabs aborted the in-flight run + wiped the canvas
+
+Returning to the tab during a generation "refreshed" the app and the run vanished (Fal kept processing server-side, but the result never showed). Cause: `useSession` emits a fresh `user` object on Supabase token-refresh/refocus events, and the AppShell open-project effect depended on the `user` object — so a refocus tore down + re-opened the project (`setActiveProject` aborts the run + wipes records). Now the effect keys on the stable `user.id`, so a token refresh for the same user no longer re-inits the session. Also surfaced real node errors instead of "[object Object]".
+
 ## 2026-05-30 — List node previews the selected item
 
 The List (the "media switcher") only showed a label like "Video 2". It now renders a **preview of the currently selected item** below the picker — image thumbnail, video/audio player, or text — so you see what it'll emit at a glance. Scalar types (number/soul-id) keep the label. **Tests +1.**

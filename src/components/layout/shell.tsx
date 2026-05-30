@@ -46,6 +46,12 @@ import { closeProject, openProject } from "@/lib/project/session";
 export function AppShell({ projectId }: { projectId: string }) {
   useLayoutShortcuts();
   const { user } = useSession();
+  // Depend on the stable user ID, NOT the `user` object. Supabase re-emits a
+  // fresh session (new `user` reference) on token refresh / tab refocus; if
+  // the open-project effect keyed on `user` it would tear down + re-open the
+  // project every time you switch tabs and back — aborting any in-flight run
+  // and wiping the canvas records. The id only changes on real sign-in/out.
+  const userId = user?.id;
   const router = useRouter();
   // Start in `loading` (not `idle`) so the canvas never flashes empty
   // before the project document is applied on mount.
@@ -60,13 +66,13 @@ export function AppShell({ projectId }: { projectId: string }) {
   // rehydrate here, which avoids one project's graph flashing while
   // another loads (the spinner below covers the load).
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     let cancelled = false;
     void (async () => {
       setSyncStatus("loading");
       const result = await openProject({
         projectId,
-        userId: user.id,
+        userId,
         onError: (err) => {
           console.error("[project-session] error:", err);
           toast.error("Failed to save project changes — will retry");
@@ -84,7 +90,7 @@ export function AppShell({ projectId }: { projectId: string }) {
       cancelled = true;
       closeProject();
     };
-  }, [user, projectId, router]);
+  }, [userId, projectId, router]);
 
   // While the cloud project is loading, show a tiny centered spinner so we
   // don't paint stale localStorage state for a flash before swapping it for
