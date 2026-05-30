@@ -17,6 +17,28 @@ import { getNodeInputs } from "./node-io";
 /* ────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Turn any thrown value into a readable message. A plain `String(obj)` gives
+ * the useless "[object Object]" that hides the real failure; this digs out
+ * `message` / `error` fields and falls back to a JSON dump so the node's
+ * error chip always shows something actionable.
+ */
+function formatError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    if (typeof o.message === "string" && o.message) return o.message;
+    if (typeof o.error === "string" && o.error) return o.error;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      /* fall through */
+    }
+  }
+  return String(err);
+}
+
+/**
  * One cached entry. We persist `usage` alongside the output so a cache
  * hit can credit the same cost / tokens to the queue as the original run
  * (otherwise re-running an LLM call with the same inputs would look like
@@ -631,10 +653,7 @@ export async function runWorkflow(
         return { ok: false, records };
       }
       if (firstError !== undefined) {
-        const message =
-          firstError instanceof Error
-            ? firstError.message
-            : String(firstError);
+        const message = formatError(firstError);
         emit(node.id, {
           status: "error",
           error: message,
@@ -719,7 +738,7 @@ export async function runWorkflow(
         }
         return { ok: false, records };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatError(err);
       emit(node.id, { status: "error", error: message, hash: nodeHash });
       // Everything downstream of the failure stays pending — surface it as
       // cancelled in the UI so it doesn't look like the engine forgot them.
