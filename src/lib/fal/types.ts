@@ -270,3 +270,48 @@ export interface FalImageSuccessResponse {
   seed?: number;
   model: string;
 }
+
+/* ───────────────────── ElevenLabs audio isolation ───────────────────── */
+
+/** Fal `fal-ai/elevenlabs/audio-isolation` — isolate vocals from audio/video. */
+export const AUDIO_ISOLATION_ENDPOINT = "fal-ai/elevenlabs/audio-isolation";
+
+export const audioIsolationRequestSchema = z
+  .object({
+    /** Isolate from an audio file. */
+    audioUrl: z.string().url().optional(),
+    /** Isolate from a video file (uses its audio track). */
+    videoUrl: z.string().url().optional(),
+  })
+  .strict()
+  .refine((d) => Boolean(d.audioUrl) || Boolean(d.videoUrl), {
+    message: "Either audioUrl or videoUrl is required",
+  });
+
+export type AudioIsolationRequest = z.infer<typeof audioIsolationRequestSchema>;
+
+export interface AudioIsolationSuccessResponse {
+  audioUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface AudioIsolationSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const audioIsolationStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type AudioIsolationStatusRequest = z.infer<
+  typeof audioIsolationStatusRequestSchema
+>;
+
+export type AudioIsolationStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & AudioIsolationSuccessResponse);

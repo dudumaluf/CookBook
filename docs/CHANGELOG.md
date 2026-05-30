@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Audio Isolation node (ElevenLabs via Fal)
+
+New **Audio Isolation** node (`fal-audio-isolation`): wire audio or video → Run → isolated vocals as audio output. Uses `fal-ai/elevenlabs/audio-isolation` via async submit + poll (`/api/fal/audio-isolation` + `/status`). Audio input wins when both are wired. ~$0.10/min on Fal. **Tests +8.**
+
+## 2026-05-30 — Video + Audio node: mux a replacement soundtrack
+
+New **Video + Audio** compose node (`video-audio-merge`): wire a video + an audio track, Run → one MP4 with the video frames and the wired audio as the soundtrack (original video audio dropped). Output length follows the video; longer audio is trimmed. Client-side via `replaceVideoAudio` (mediabunny remux when possible, transcode-to-AAC fallback for WAV/MP3). **Tests +4.**
+
 ## 2026-05-29 — Fix: video/audio uploads were blocked by the bucket
 
 The `cookbook-assets` bucket still had its image-only config from before the media arc: `allowed_mime_types` = images only, 30 MB cap. So **any video/audio upload was rejected by Supabase** (MIME not allowed), and the app's 100 MB video cap was a lie (bucket capped at 30 MB).

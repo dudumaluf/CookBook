@@ -22,6 +22,8 @@
  * Slice D.2:
  *   - `concatVideos(clips)` => MP4 Blob — remux (packet-copy) join of the
  *     chunk array into one continuous video.
+ *   - `replaceVideoAudio(video, audio)` => MP4 Blob — mux video frames with a
+ *     replacement audio track (remux when possible, transcode fallback).
  *
  * Still deferred (only when a real pipeline needs it):
  *   - `normalizeMedia(src, target)` — Conversion API transcode/resize to fit
@@ -53,3 +55,5 @@ export { sliceAudio } from "./slice-audio";
 export { sliceVideo } from "./slice-video";
 
 export { concatVideos } from "./concat";
+
+export { replaceVideoAudio } from "./replace-audio";

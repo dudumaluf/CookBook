@@ -58,7 +58,7 @@ export type GenerationOutputType = "image" | "text" | "video";
 export const OUTPUT_TYPE_NODE_KINDS: Record<GenerationOutputType, string[]> = {
   image: ["higgsfield-image-gen", "fal-image"], // + Slice F Fal models.
   text: ["llm-text"],
-  video: ["seedance-video", "continuity-builder", "video-concat"],
+  video: ["seedance-video", "continuity-builder", "video-concat", "video-audio-merge"],
 };
 
 export interface GenerationFilter {

@@ -87,6 +87,7 @@
 
 | Model | Notes | 🔎/✅ |
 |---|---|---|
+| `fal-ai/elevenlabs/audio-isolation` | Isolate vocals from audio or video. ~$0.10/min. | ✅ |
 | ElevenLabs (via Fal) | Voice generation + voice clone. | 🔎 |
 
 ## Post-production
@@ -108,6 +109,7 @@
 | **Frame Extract** | mediabunny (client WebCodecs) | ✅ Shipped (`frame-extract`). Pull first/last frame of a video → image. Lynchpin for frame-chaining continuity. |
 | **Video Concat / Stitch** | mediabunny (client) | ✅ Shipped (`video-concat`). Join clips into one (remux, no re-encode). |
 | **Audio Slicer** | mediabunny (client) | ✅ Shipped (`audio-slicer`). Split a song into 15s windows → audio[] for per-chunk lipsync. |
+| **Audio Isolation** | `fal-ai/elevenlabs/audio-isolation` | ✅ Shipped (`fal-audio-isolation`). Isolate vocals from audio or video (Fal queue). |
 | **Video Slicer** | mediabunny (client) | ✅ Shipped (`video-slicer`). Split a reference performance into 15s windows → video[] (motion refs, ~720p cap). |
 | **Media Normalize** | mediabunny `Conversion` | Deferred util — fit Seedance's resolution/size/format limits (slicers already downscale). |
 | **Video Upscale** | `seedvr/upscale/video` / Topaz | Final-pass quality. |
