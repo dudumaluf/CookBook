@@ -88,6 +88,26 @@ describe("audio-slicer node execute", () => {
     expect(uploadMediaAsset.mock.calls[0]![1]).toBe("audio");
   });
 
+  it("defaults to WAV output", async () => {
+    await audioSlicerNodeSchema.execute!(
+      ctx({ audio: { type: "audio", value: { url: "https://x/song.mp3" } } }) as Cfg,
+    );
+    expect(sliceAudio.mock.calls[0]![2]).toEqual({ format: "wav" });
+    // Uploaded slices keep the .wav extension.
+    expect((uploadMediaAsset.mock.calls[0]![0] as File).name).toMatch(/\.wav$/);
+  });
+
+  it("emits MP3 when outputFormat is mp3", async () => {
+    await audioSlicerNodeSchema.execute!(
+      ctx(
+        { audio: { type: "audio", value: { url: "https://x/song.mp3" } } },
+        { outputFormat: "mp3" },
+      ) as Cfg,
+    );
+    expect(sliceAudio.mock.calls[0]![2]).toEqual({ format: "mp3" });
+    expect((uploadMediaAsset.mock.calls[0]![0] as File).name).toMatch(/\.mp3$/);
+  });
+
   it("passes the configured window length to the windowing math", async () => {
     await audioSlicerNodeSchema.execute!(
       ctx(

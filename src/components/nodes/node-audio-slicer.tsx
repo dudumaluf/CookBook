@@ -32,7 +32,11 @@ export interface AudioSlicerNodeConfig {
   windowSec?: number;
   /** Fold a final window shorter than this into the previous one. */
   minTailSec?: number;
+  /** Output codec for each slice. WAV (lossless, default) or MP3 (smaller). */
+  outputFormat?: "wav" | "mp3";
 }
+
+const DEFAULT_FORMAT: "wav" | "mp3" = "wav";
 
 function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig>) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
@@ -100,8 +104,27 @@ function AudioSlicerSettings({
 }: NodeBodyProps<AudioSlicerNodeConfig>) {
   const windowId = useId();
   const tailId = useId();
+  const formatId = useId();
   return (
     <div className="flex flex-col gap-3 text-xs">
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={formatId} className="font-medium text-foreground/90">
+          Output format
+        </label>
+        <select
+          id={formatId}
+          value={config.outputFormat ?? DEFAULT_FORMAT}
+          onChange={(e) =>
+            updateConfig({
+              outputFormat: e.target.value as "wav" | "mp3",
+            })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="wav">WAV (lossless)</option>
+          <option value="mp3">MP3 (smaller)</option>
+        </select>
+      </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={windowId} className="font-medium text-foreground/90">
           Window length (s)
@@ -142,7 +165,7 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
   category: "transform",
   title: "Audio Slicer",
   description:
-    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Accepts audio OR a video (its audio track is extracted). Emits an array of audio chunks — feed a List to pick one per run, or fan out.",
+    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Accepts audio OR a video (its audio track is extracted). Output as WAV (lossless) or MP3 (smaller). Emits an array of audio chunks — feed a List to pick one per run, or fan out.",
   icon: Scissors,
   inputs: [
     { id: "audio", label: "audio", dataType: "audio" },
@@ -175,14 +198,17 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
       throw new Error("Could not read the media duration — is the file valid?");
     }
 
+    const format = config.outputFormat ?? DEFAULT_FORMAT;
+    const ext = format === "mp3" ? "mp3" : "wav";
+
     reportProgress?.({ fanOut: { total: windows.length, done: 0 } });
-    // sliceAudio discards video + outputs WAV, so a video source yields its
-    // audio track sliced into windows.
-    const blobs = await sliceAudio(sourceUrl, windows);
+    // sliceAudio discards video, so a video source yields its audio track
+    // sliced into windows in the chosen format.
+    const blobs = await sliceAudio(sourceUrl, windows, { format });
     const chunks: StandardizedOutput[] = [];
     for (let i = 0; i < blobs.length; i++) {
-      const file = new File([blobs[i]!], `chunk-${i + 1}.wav`, {
-        type: blobs[i]!.type || "audio/wav",
+      const file = new File([blobs[i]!], `chunk-${i + 1}.${ext}`, {
+        type: blobs[i]!.type || (format === "mp3" ? "audio/mpeg" : "audio/wav"),
       });
       const uploaded = await uploadMediaAsset(file, "audio");
       const ref: AudioRef = { url: uploaded.url };

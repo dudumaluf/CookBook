@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-29 — Audio Slicer: choose WAV or MP3 output
+
+Audio Slicer gained an **Output format** picker: WAV (lossless, default — raw PCM, no encoder) or **MP3** (far smaller). MP3 uses the LAME encoder via `@mediabunny/mp3-encoder`, lazy-loaded + registered on first use (only if the browser can't already encode MP3 natively). Both are accepted by Seedance. **Tests +2.** New dep: `@mediabunny/mp3-encoder@1.45.4`.
+
 ## 2026-05-29 — Audio Slicer accepts video (extracts the audio track)
 
 Audio Slicer gained a `video` input — wire a performance clip and it slices the clip's audio track (no separate extract step). `sliceAudio` already discards video + outputs WAV, so a video URL just works. Audio input wins if both are wired. **Tests +2.**
