@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Compare node: synced video playback
+
+Comparing two videos now keeps them in lockstep: both **start at 0 together**; the **shorter holds its last frame** (a non-looping video pauses on its final frame) while the longer plays on; when the longer (master) ends, **both restart** — a synced loop. The parent owns playback (per-video `loop` disabled). Images/mixed unchanged. **Tests +1.**
+
 ## 2026-05-30 — Fix: only the audio ref name synced (split bug)
 
 The name-sync `split("|", 2)` truncated the `|`-joined name list to the first entry, and since names were sorted alphabetically only the `audio-0` name survived (`a` < `i` < `v`). Split on the first `|` only so image/video/audio all inherit their connected node's name. Regression test added.

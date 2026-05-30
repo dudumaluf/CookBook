@@ -71,4 +71,22 @@ describe("compare node", () => {
     // Moving the mouse changes the reveal without throwing.
     expect(() => fireEvent.mouseMove(stage, { clientX: 100 })).not.toThrow();
   });
+
+  it("disables per-video loop when comparing two videos (parent syncs them)", () => {
+    useWorkflowStore.setState({
+      nodes: [{ id: "cmp", kind: "compare", position: { x: 0, y: 0 }, config: {} }],
+      edges: [],
+    });
+    wire("a", "srcA", { type: "video", value: { url: "https://x/a.mp4" } });
+    wire("b", "srcB", { type: "video", value: { url: "https://x/b.mp4" } });
+
+    const Body = compareNodeSchema.Body;
+    render(<Body nodeId="cmp" config={{}} updateConfig={vi.fn()} selected={false} />);
+
+    const a = screen.getByTestId("compare-a") as HTMLVideoElement;
+    const b = screen.getByTestId("compare-b") as HTMLVideoElement;
+    // Synced playback owns looping; the elements must NOT loop independently.
+    expect(a.loop).toBe(false);
+    expect(b.loop).toBe(false);
+  });
 });

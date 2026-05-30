@@ -1,7 +1,7 @@
 "use client";
 
 import { Columns2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { useExecutionStore } from "@/lib/stores/execution-store";
@@ -48,9 +48,14 @@ function useInputItem(nodeId: string, handle: string): StandardizedOutput | unde
 function MediaLayer({
   item,
   testid,
+  videoRef,
+  loop = true,
 }: {
   item: StandardizedOutput & { type: "image" | "video" };
   testid?: string;
+  /** When comparing two videos, the parent owns playback to sync them. */
+  videoRef?: React.Ref<HTMLVideoElement>;
+  loop?: boolean;
 }) {
   const common =
     "absolute inset-0 h-full w-full select-none object-cover";
@@ -69,16 +74,74 @@ function MediaLayer({
   }
   return (
     <video
+      ref={videoRef}
       src={item.value.url}
       autoPlay
       muted
-      loop
+      loop={loop}
       playsInline
       data-testid={testid}
       onPointerDown={(e) => e.stopPropagation()}
       className={common}
     />
   );
+}
+
+/**
+ * Keep two compared videos in lockstep: both start at 0 together; the shorter
+ * one ends and HOLDS its last frame (a non-looping video pauses on its final
+ * frame) while the longer plays on; when the longer (master) ends, both
+ * restart at 0 — a synced loop. No-op unless both refs are videos.
+ */
+function useSyncedVideos(
+  aRef: React.RefObject<HTMLVideoElement | null>,
+  bRef: React.RefObject<HTMLVideoElement | null>,
+  active: boolean,
+  aUrl: string | undefined,
+  bUrl: string | undefined,
+) {
+  useEffect(() => {
+    if (!active) return;
+    const a = aRef.current;
+    const b = bRef.current;
+    if (!a || !b) return;
+
+    const dur = (v: HTMLVideoElement) =>
+      Number.isFinite(v.duration) ? v.duration : 0;
+    const master = () => (dur(b) > dur(a) ? b : a);
+
+    function startTogether() {
+      try {
+        a!.currentTime = 0;
+        b!.currentTime = 0;
+      } catch {
+        /* not seekable yet */
+      }
+      void a!.play().catch(() => {});
+      void b!.play().catch(() => {});
+    }
+    function tryStart() {
+      if (a!.readyState >= 1 && b!.readyState >= 1) startTogether();
+    }
+    function onEnded(e: Event) {
+      // Only the longer video's end restarts the pair; the shorter one just
+      // holds its last frame until then.
+      if (e.target === master()) startTogether();
+    }
+
+    a.addEventListener("loadedmetadata", tryStart);
+    b.addEventListener("loadedmetadata", tryStart);
+    a.addEventListener("ended", onEnded);
+    b.addEventListener("ended", onEnded);
+    tryStart();
+
+    return () => {
+      a.removeEventListener("loadedmetadata", tryStart);
+      b.removeEventListener("loadedmetadata", tryStart);
+      a.removeEventListener("ended", onEnded);
+      b.removeEventListener("ended", onEnded);
+    };
+  }, [active, aUrl, bUrl, aRef, bRef]);
 }
 
 function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
@@ -96,6 +159,18 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
 
   const aMedia = isMedia(a) ? a : undefined;
   const bMedia = isMedia(b) ? b : undefined;
+
+  // Sync playback only when BOTH sides are videos.
+  const bothVideos = aMedia?.type === "video" && bMedia?.type === "video";
+  const aVideoRef = useRef<HTMLVideoElement | null>(null);
+  const bVideoRef = useRef<HTMLVideoElement | null>(null);
+  useSyncedVideos(
+    aVideoRef,
+    bVideoRef,
+    Boolean(bothVideos),
+    aMedia?.type === "video" ? aMedia.value.url : undefined,
+    bMedia?.type === "video" ? bMedia.value.url : undefined,
+  );
 
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
@@ -130,13 +205,23 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
           style={{ aspectRatio: "16 / 9" }}
         >
           {/* A = bottom layer (revealed on the right). */}
-          <MediaLayer item={aMedia} testid="compare-a" />
+          <MediaLayer
+            item={aMedia}
+            testid="compare-a"
+            videoRef={bothVideos ? aVideoRef : undefined}
+            loop={!bothVideos}
+          />
           {/* B = top layer, clipped to the left of the divider. */}
           <div
             className="absolute inset-0"
             style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }}
           >
-            <MediaLayer item={bMedia} testid="compare-b" />
+            <MediaLayer
+              item={bMedia}
+              testid="compare-b"
+              videoRef={bothVideos ? bVideoRef : undefined}
+              loop={!bothVideos}
+            />
           </div>
           {/* Divider that follows the mouse. */}
           <div
@@ -162,7 +247,7 @@ export const compareNodeSchema = defineNode<CompareNodeConfig>({
   category: "compose",
   title: "Compare",
   description:
-    "A/B before-after viewer for images or videos. Wire A and B; drag across the preview to wipe between them (the divider follows your mouse). Passes B through.",
+    "A/B before-after viewer for images or videos. Wire A and B; drag across the preview to wipe between them. Two videos play in sync (both start together; the shorter holds its last frame until the longer ends, then both loop). Passes B through.",
   icon: Columns2,
   inputs: [
     { id: "a", label: "A", dataType: "any" },
