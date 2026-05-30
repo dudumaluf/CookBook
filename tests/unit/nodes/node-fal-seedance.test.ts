@@ -53,7 +53,23 @@ describe("seedance-video node execute", () => {
     }
   });
 
-  it("forwards image/video/audio reference arrays", async () => {
+  it("forwards numbered reference sockets in order (image-0, image-1, …)", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx({
+        prompt: { type: "text", value: "perform" },
+        "image-0": { type: "image", value: { url: "https://x/face.png" } },
+        "image-1": { type: "image", value: { url: "https://x/frame.png" } },
+        "video-0": { type: "video", value: { url: "https://x/prev.mp4" } },
+        "audio-0": { type: "audio", value: { url: "https://x/slice.mp3" } },
+      }) as Cfg,
+    );
+    const arg = callSeedanceVideo.mock.calls[0]![0];
+    expect(arg.imageUrls).toEqual(["https://x/face.png", "https://x/frame.png"]);
+    expect(arg.videoUrls).toEqual(["https://x/prev.mp4"]);
+    expect(arg.audioUrls).toEqual(["https://x/slice.mp3"]);
+  });
+
+  it("still accepts the legacy image/video/audio multi-handles", async () => {
     await seedanceVideoNodeSchema.execute!(
       ctx({
         prompt: { type: "text", value: "perform" },
@@ -66,6 +82,32 @@ describe("seedance-video node execute", () => {
     expect(arg.imageUrls).toEqual(["https://x/face.png"]);
     expect(arg.videoUrls).toEqual(["https://x/prev.mp4"]);
     expect(arg.audioUrls).toEqual(["https://x/slice.mp3"]);
+  });
+
+  it("reference mode exposes auto-growing per-type sockets up to the Fal caps", () => {
+    const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
+    expect(ref.map((h) => h.id)).toEqual(["prompt", "image-0", "video-0", "audio-0"]);
+    const grown = seedanceVideoNodeSchema.getInputs!({
+      mode: "reference",
+      imagePorts: 3,
+      videoPorts: 2,
+      audioPorts: 1,
+    });
+    expect(grown.map((h) => h.id)).toEqual([
+      "prompt",
+      "image-0",
+      "image-1",
+      "image-2",
+      "video-0",
+      "video-1",
+      "audio-0",
+    ]);
+    // Caps clamp: asking for more than 9 images yields exactly 9.
+    const capped = seedanceVideoNodeSchema.getInputs!({
+      mode: "reference",
+      imagePorts: 99,
+    });
+    expect(capped.filter((h) => h.id.startsWith("image-")).length).toBe(9);
   });
 
   it("first-frame mode sends the wired start frame as startImageUrl (image-to-video)", async () => {
@@ -105,7 +147,7 @@ describe("seedance-video node execute", () => {
 
   it("image-to-video mode exposes start/(end) frame sockets via getInputs", () => {
     const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
-    expect(ref.map((h) => h.id)).toEqual(["prompt", "image", "video", "audio"]);
+    expect(ref.map((h) => h.id)).toEqual(["prompt", "image-0", "video-0", "audio-0"]);
     const ff = seedanceVideoNodeSchema.getInputs!({ mode: "first-frame" });
     expect(ff.map((h) => h.id)).toEqual(["prompt", "start"]);
     const fl = seedanceVideoNodeSchema.getInputs!({ mode: "first-last" });

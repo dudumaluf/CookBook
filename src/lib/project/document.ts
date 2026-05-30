@@ -18,7 +18,10 @@
  * playbook as the workflow-store's local migrations.
  */
 
-import { migrateVideoConcatClips } from "@/lib/engine/migrate-graph";
+import {
+  migrateSeedanceRefHandles,
+  migrateVideoConcatClips,
+} from "@/lib/engine/migrate-graph";
 import { PROJECT_STATE_VERSION } from "@/lib/repositories/project-repository";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import {
@@ -215,10 +218,11 @@ export function applyProjectDocument(
   if (doc.workflow) {
     // Cloud/file loads bypass the workflow-store persist migrate, so run the
     // graph-level forward-port here too (ADR-0056: Video Concat clips → clip-N).
-    const migrated = migrateVideoConcatClips(
+    const m1 = migrateVideoConcatClips(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
+    const migrated = migrateSeedanceRefHandles(m1.nodes, m1.edges);
     useWorkflowStore.setState({
       nodes: migrated.nodes as never,
       edges: migrated.edges as never,

@@ -170,24 +170,25 @@ describe("Singer Performance — modular 2-chunk unroll", () => {
     for (const p of [vPick0, vPick1])
       s.addEdge({ source: vSlice, sourceHandle: "out", target: p, targetHandle: "items" });
 
-    // Chunk 0 — character identity + first performance slice.
+    // Chunk 0 — character identity + first performance slice (ADR-0058
+    // numbered reference sockets).
     const seed0 = s.addNode("seedance-video", { x: 720, y: 240 }, {});
     s.addEdge({ source: prompt, sourceHandle: "out", target: seed0, targetHandle: "prompt" });
-    s.addEdge({ source: character, sourceHandle: "out", target: seed0, targetHandle: "image" });
-    s.addEdge({ source: vPick0, sourceHandle: "out", target: seed0, targetHandle: "video" });
-    s.addEdge({ source: aPick0, sourceHandle: "out", target: seed0, targetHandle: "audio" });
+    s.addEdge({ source: character, sourceHandle: "out", target: seed0, targetHandle: "image-0" });
+    s.addEdge({ source: vPick0, sourceHandle: "out", target: seed0, targetHandle: "video-0" });
+    s.addEdge({ source: aPick0, sourceHandle: "out", target: seed0, targetHandle: "audio-0" });
 
     // Continuity: chunk 0's last frame.
     const frame0 = s.addNode("frame-extract", { x: 960, y: 240 }, { position: "last" });
     s.addEdge({ source: seed0, sourceHandle: "out", target: frame0, targetHandle: "video" });
 
     // Chunk 1 — character + previous last frame (continuity) + second slice.
-    const seed1 = s.addNode("seedance-video", { x: 1200, y: 500 }, {});
+    const seed1 = s.addNode("seedance-video", { x: 1200, y: 500 }, { imagePorts: 2 });
     s.addEdge({ source: prompt, sourceHandle: "out", target: seed1, targetHandle: "prompt" });
-    s.addEdge({ source: character, sourceHandle: "out", target: seed1, targetHandle: "image" });
-    s.addEdge({ source: frame0, sourceHandle: "out", target: seed1, targetHandle: "image" });
-    s.addEdge({ source: vPick1, sourceHandle: "out", target: seed1, targetHandle: "video" });
-    s.addEdge({ source: aPick1, sourceHandle: "out", target: seed1, targetHandle: "audio" });
+    s.addEdge({ source: character, sourceHandle: "out", target: seed1, targetHandle: "image-0" });
+    s.addEdge({ source: frame0, sourceHandle: "out", target: seed1, targetHandle: "image-1" });
+    s.addEdge({ source: vPick1, sourceHandle: "out", target: seed1, targetHandle: "video-0" });
+    s.addEdge({ source: aPick1, sourceHandle: "out", target: seed1, targetHandle: "audio-0" });
 
     // Join — ordered clip sockets (ADR-0056).
     const concat = s.addNode("video-concat", { x: 1440, y: 360 }, { portCount: 2 });

@@ -2483,3 +2483,23 @@ Changing `clips` → `clip-N` is a graph-shape change spanning nodes + edges. `m
 - **Polling, not webhooks/streaming** — simplest robust option; a 3s poll is negligible and survives backgrounding. Streaming (`subscribeToStatus`) was avoided since our proxy would have to relay SSE.
 - **No mid-render cancel on Fal** — aborting stops the client poll; the job may still complete on Fal (and land in the Gallery via a future surgical fetch). Acceptable; spend already happened at submit.
 - **Two short requests instead of one long one** — slightly more chatter, vastly more reliable. The old blocking path is gone (`generateSeedanceVideo` removed).
+
+## ADR-0058 — Seedance reference mode: numbered auto-growing per-type sockets
+
+- **Date**: 2026-05-30
+- **Status**: implemented.
+- **Context**: reference-to-video accepts up to **9 images / 3 videos / 3 audios**, but the node exposed one `multiple` socket per type — the per-ref slots + caps were invisible, and order across multiple refs wasn't explicit. Same pattern we'd already adopted for Video Concat (ADR-0056).
+
+### 1. Decisão: indexed sockets via `getInputs`, auto-grown to the caps
+
+Reference mode renders `image-0..N`, `video-0..N`, `audio-0..N` (+ `prompt`). A body effect watches incoming edges and keeps one empty trailing socket per type — `desired = min(cap, maxWired + 2)` (caps 9/3/3) — so filling the last reveals the next, until the cap. Counts live in config (`imagePorts`/`videoPorts`/`audioPorts`). `execute` gathers each type's sockets in order (with a legacy multi-handle fallback). image-to-video mode is unchanged (`start`/`end`).
+
+### 2. Decisão: migrate legacy `image`/`video`/`audio` edges
+
+`migrateSeedanceRefHandles` (in `migrate-graph.ts`) spreads legacy edges into the numbered sockets in order (capped) and sets the port counts. Runs from both the persist funnel (**v10 → v11**) and `applyProjectDocument`. The seeded recipe was updated in place (file + DB): the 2nd character/continuity image on chunk 1 now wires `image-0` + `image-1`.
+
+### 3. Trade-offs aceitos
+
+- **Per-type config counters** — three small fields, one guarded effect; mirrors Video Concat's `portCount`.
+- **Catalog shows `image-0` etc.** — the assistant's node catalog lists the index-0 sockets (it can't see the auto-grow); wiring more than one ref programmatically needs the indexed ids. Acceptable.
+- **Legacy fallback kept in execute** — belt-and-suspenders for any unmigrated path (the Continuity Builder calls `callSeedanceVideo` directly and is unaffected).

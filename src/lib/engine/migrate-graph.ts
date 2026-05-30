@@ -49,3 +49,62 @@ export function migrateVideoConcatClips(
   });
   return { nodes: nextNodes, edges: nextEdges };
 }
+
+const SEEDANCE_REF_CAPS = { image: 9, video: 3, audio: 3 } as const;
+const SEEDANCE_PORT_KEY = {
+  image: "imagePorts",
+  video: "videoPorts",
+  audio: "audioPorts",
+} as const;
+
+/**
+ * Seedance reference mode moved from single `image`/`video`/`audio`
+ * multi-handles to numbered `image-0..N` / `video-0..N` / `audio-0..N`
+ * sockets (ADR-0058). Rewrite legacy edges to the indexed sockets (in edge
+ * order, capped per type) and set the node's port counts so they render.
+ */
+export function migrateSeedanceRefHandles(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const seedanceIds = new Set(
+    nodes.filter((n) => n.kind === "seedance-video").map((n) => n.id),
+  );
+  if (seedanceIds.size === 0) return { nodes, edges };
+
+  // counters[nodeId][base] = how many edges of that base seen so far.
+  const counters = new Map<string, { image: number; video: number; audio: number }>();
+  let changed = false;
+  const nextEdges = edges.map((e) => {
+    const base = (["image", "video", "audio"] as const).find(
+      (b) => e.targetHandle === b,
+    );
+    if (!base || !seedanceIds.has(e.target)) return e;
+    const c = counters.get(e.target) ?? { image: 0, video: 0, audio: 0 };
+    const i = c[base];
+    c[base] = i + 1;
+    counters.set(e.target, c);
+    if (i >= SEEDANCE_REF_CAPS[base]) return e; // beyond cap — leave (will be dropped)
+    changed = true;
+    return { ...e, targetHandle: `${base}-${i}` };
+  });
+  if (!changed) return { nodes, edges };
+
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "seedance-video") return n;
+    const c = counters.get(n.id);
+    if (!c) return n;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = { ...cfg };
+    for (const base of ["image", "video", "audio"] as const) {
+      if (c[base] > 0) {
+        patch[SEEDANCE_PORT_KEY[base]] = Math.min(
+          SEEDANCE_REF_CAPS[base],
+          c[base],
+        );
+      }
+    }
+    return { ...n, config: patch };
+  });
+  return { nodes: nextNodes, edges: nextEdges };
+}

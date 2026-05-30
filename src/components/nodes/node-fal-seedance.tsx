@@ -16,8 +16,9 @@ import {
 } from "@/lib/fal/types";
 import { validateSeedanceRequest } from "@/lib/media/constraints";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { parseAspectRatio } from "@/lib/utils/aspect-ratio";
-import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
+import type { NodeBodyProps, NodeIO, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
 
@@ -65,11 +66,50 @@ export interface SeedanceVideoNodeConfig {
   generateAudio?: boolean;
   seed?: number;
   fast?: boolean;
+  /** Reference mode: how many image/video/audio sockets to show. Auto-grow. */
+  imagePorts?: number;
+  videoPorts?: number;
+  audioPorts?: number;
 }
 
 const DEFAULT_ASPECT = "auto" as const;
 const DEFAULT_RESOLUTION = "720p" as const;
 const DEFAULT_MODE: SeedanceMode = "reference";
+
+/** Fal reference-to-video per-type caps (mirrors seedanceVideoRequestSchema). */
+const REF_CAPS = { image: 9, video: 3, audio: 3 } as const;
+type RefBase = keyof typeof REF_CAPS;
+const REF_DATATYPE: Record<RefBase, "image" | "video" | "audio"> = {
+  image: "image",
+  video: "video",
+  audio: "audio",
+};
+
+function refPortCount(config: SeedanceVideoNodeConfig, base: RefBase): number {
+  const raw =
+    base === "image"
+      ? config.imagePorts
+      : base === "video"
+        ? config.videoPorts
+        : config.audioPorts;
+  return Math.min(REF_CAPS[base], Math.max(1, raw ?? 1));
+}
+
+/** Indexed reference sockets for reference mode: prompt + image/video/audio-N. */
+function referenceInputs(config: SeedanceVideoNodeConfig): NodeIO[] {
+  const out: NodeIO[] = [{ id: "prompt", label: "prompt", dataType: "text" }];
+  for (const base of ["image", "video", "audio"] as const) {
+    const n = refPortCount(config, base);
+    for (let i = 0; i < n; i++) {
+      out.push({
+        id: `${base}-${i}`,
+        label: `${base} ${i + 1}`,
+        dataType: REF_DATATYPE[base],
+      });
+    }
+  }
+  return out;
+}
 
 function hasSeedanceOverrides(config: SeedanceVideoNodeConfig): boolean {
   return (
@@ -91,10 +131,44 @@ function hasSeedanceOverrides(config: SeedanceVideoNodeConfig): boolean {
 function SeedanceVideoNodeBody({
   nodeId,
   config,
+  updateConfig,
 }: NodeBodyProps<SeedanceVideoNodeConfig>) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
   const history = record?.history ?? [];
+
+  // Reference mode: auto-grow per-type sockets. Track the highest connected
+  // index per base as a STABLE string (selector must not return a fresh
+  // object — that loops, React #185), then keep one empty trailing socket up
+  // to each Fal cap.
+  const mode = config.mode ?? DEFAULT_MODE;
+  const connectedKey = useWorkflowStore((s) => {
+    const m: Record<RefBase, number> = { image: -1, video: -1, audio: -1 };
+    for (const e of s.edges) {
+      if (e.target !== nodeId || !e.targetHandle) continue;
+      for (const base of ["image", "video", "audio"] as const) {
+        if (e.targetHandle.startsWith(`${base}-`)) {
+          const idx = Number(e.targetHandle.slice(base.length + 1));
+          if (Number.isFinite(idx)) m[base] = Math.max(m[base], idx);
+        }
+      }
+    }
+    return `${m.image},${m.video},${m.audio}`;
+  });
+  useEffect(() => {
+    if (mode !== "reference") return;
+    const [mi, mv, ma] = connectedKey.split(",").map(Number) as [number, number, number];
+    const want = {
+      imagePorts: Math.min(REF_CAPS.image, Math.max(1, mi + 2)),
+      videoPorts: Math.min(REF_CAPS.video, Math.max(1, mv + 2)),
+      audioPorts: Math.min(REF_CAPS.audio, Math.max(1, ma + 2)),
+    };
+    const patch: Partial<SeedanceVideoNodeConfig> = {};
+    if (refPortCount(config, "image") !== want.imagePorts) patch.imagePorts = want.imagePorts;
+    if (refPortCount(config, "video") !== want.videoPorts) patch.videoPorts = want.videoPorts;
+    if (refPortCount(config, "audio") !== want.audioPorts) patch.audioPorts = want.audioPorts;
+    if (Object.keys(patch).length > 0) updateConfig(patch);
+  }, [mode, connectedKey, config, updateConfig]);
 
   const [historyCursor, setHistoryCursor] = useState<number | null>(null);
   // Jump to the newest clip when one lands, even if viewing older history.
@@ -387,12 +461,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   description:
     "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio (identity, motion, lip-sync). Or switch to image-to-video mode (settings) to animate a literal first frame, optionally to an end frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
-  inputs: [
-    { id: "prompt", label: "prompt", dataType: "text" },
-    { id: "image", label: "image", dataType: "image", multiple: true },
-    { id: "video", label: "video", dataType: "video", multiple: true },
-    { id: "audio", label: "audio", dataType: "audio", multiple: true },
-  ],
+  inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal
   // start/(end) frame sockets instead of the reference image/video/audio set,
   // so the first/last-frame contract is visible on the node, not hidden in
@@ -412,12 +481,9 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
         { id: "end", label: "end frame", dataType: "image" },
       ];
     }
-    return [
-      { id: "prompt", label: "prompt", dataType: "text" },
-      { id: "image", label: "image", dataType: "image", multiple: true },
-      { id: "video", label: "video", dataType: "video", multiple: true },
-      { id: "audio", label: "audio", dataType: "audio", multiple: true },
-    ];
+    // Reference mode: numbered per-type sockets that auto-grow up to the Fal
+    // caps (9 images / 3 videos / 3 audios).
+    return referenceInputs(config);
   },
   outputs: [{ id: "out", label: "out", dataType: "video" }],
   configParams: {
@@ -479,15 +545,37 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
         ...common,
       };
     } else {
-      const imageUrls = extractInputArrayByType(inputs, "image", "image")
-        .map((r) => r.url)
-        .filter(Boolean);
-      const videoUrls = extractInputArrayByType(inputs, "video", "video")
-        .map((r) => r.url)
-        .filter(Boolean);
-      const audioUrls = extractInputArrayByType(inputs, "audio", "audio")
-        .map((r) => r.url)
-        .filter(Boolean);
+      // Gather each type from its numbered sockets in order, then any legacy
+      // single multi-handle (pre-ADR-0058 graphs) as a fallback.
+      const extractOne = (handle: string, base: RefBase): string | undefined => {
+        const r =
+          base === "image"
+            ? extractInputByType(inputs, handle, "image")
+            : base === "video"
+              ? extractInputByType(inputs, handle, "video")
+              : extractInputByType(inputs, handle, "audio");
+        return r?.url || undefined;
+      };
+      const extractMany = (handle: string, base: RefBase): string[] => {
+        const arr =
+          base === "image"
+            ? extractInputArrayByType(inputs, handle, "image")
+            : base === "video"
+              ? extractInputArrayByType(inputs, handle, "video")
+              : extractInputArrayByType(inputs, handle, "audio");
+        return arr.map((r) => r.url).filter(Boolean);
+      };
+      const gather = (base: RefBase): string[] => {
+        const urls: string[] = [];
+        for (let i = 0; i < REF_CAPS[base]; i++) {
+          const u = extractOne(`${base}-${i}`, base);
+          if (u) urls.push(u);
+        }
+        return [...urls, ...extractMany(base, base)].slice(0, REF_CAPS[base]);
+      };
+      const imageUrls = gather("image");
+      const videoUrls = gather("video");
+      const audioUrls = gather("audio");
       const hasRefs =
         imageUrls.length > 0 || videoUrls.length > 0 || audioUrls.length > 0;
       if (prompt.length === 0 && !hasRefs) {

@@ -2,7 +2,10 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
-import { migrateVideoConcatClips } from "@/lib/engine/migrate-graph";
+import {
+  migrateSeedanceRefHandles,
+  migrateVideoConcatClips,
+} from "@/lib/engine/migrate-graph";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useAssetStore } from "@/lib/stores/asset-store";
 
@@ -303,7 +306,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 10,
+      version: 11,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -577,13 +580,15 @@ export const useWorkflowStore = create<WorkflowState>()(
             : (state.edges ?? []);
 
         // v10 (ADR-0056): Video Concat `clips` multi-handle → ordered
-        // `clip-N` sockets.
+        // `clip-N` sockets. v11 (ADR-0058): Seedance reference image/video/
+        // audio multi-handles → numbered per-type sockets.
         const v10 = migrateVideoConcatClips(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
         );
+        const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
 
-        return { ...state, nodes: v10.nodes, edges: v10.edges };
+        return { ...state, nodes: v11.nodes, edges: v11.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

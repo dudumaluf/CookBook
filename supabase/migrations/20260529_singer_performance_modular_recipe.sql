@@ -51,7 +51,7 @@ insert into public.cookbook_recipes (
 
       { "id": "seed0", "kind": "seedance-video", "position": { "x": 900, "y": 240 }, "config": {} },
       { "id": "frame0", "kind": "frame-extract", "position": { "x": 1200, "y": 240 }, "config": { "position": "last" } },
-      { "id": "seed1", "kind": "seedance-video", "position": { "x": 1500, "y": 520 }, "config": {} },
+      { "id": "seed1", "kind": "seedance-video", "position": { "x": 1500, "y": 520 }, "config": { "imagePorts": 2 } },
 
       { "id": "concat", "kind": "video-concat", "position": { "x": 1800, "y": 380 }, "config": { "portCount": 2 } }
     ],
@@ -65,17 +65,17 @@ insert into public.cookbook_recipes (
       { "id": "e_v1",     "source": "vslice", "sourceHandle": "out", "target": "vpick1", "targetHandle": "items" },
 
       { "id": "e_s0_p",   "source": "prompt",    "sourceHandle": "out", "target": "seed0", "targetHandle": "prompt" },
-      { "id": "e_s0_img", "source": "character", "sourceHandle": "out", "target": "seed0", "targetHandle": "image" },
-      { "id": "e_s0_vid", "source": "vpick0",    "sourceHandle": "out", "target": "seed0", "targetHandle": "video" },
-      { "id": "e_s0_aud", "source": "apick0",    "sourceHandle": "out", "target": "seed0", "targetHandle": "audio" },
+      { "id": "e_s0_img", "source": "character", "sourceHandle": "out", "target": "seed0", "targetHandle": "image-0" },
+      { "id": "e_s0_vid", "source": "vpick0",    "sourceHandle": "out", "target": "seed0", "targetHandle": "video-0" },
+      { "id": "e_s0_aud", "source": "apick0",    "sourceHandle": "out", "target": "seed0", "targetHandle": "audio-0" },
 
       { "id": "e_frame",  "source": "seed0", "sourceHandle": "out", "target": "frame0", "targetHandle": "video" },
 
       { "id": "e_s1_p",   "source": "prompt",    "sourceHandle": "out", "target": "seed1", "targetHandle": "prompt" },
-      { "id": "e_s1_img", "source": "character", "sourceHandle": "out", "target": "seed1", "targetHandle": "image" },
-      { "id": "e_s1_fr",  "source": "frame0",    "sourceHandle": "out", "target": "seed1", "targetHandle": "image" },
-      { "id": "e_s1_vid", "source": "vpick1",    "sourceHandle": "out", "target": "seed1", "targetHandle": "video" },
-      { "id": "e_s1_aud", "source": "apick1",    "sourceHandle": "out", "target": "seed1", "targetHandle": "audio" },
+      { "id": "e_s1_img", "source": "character", "sourceHandle": "out", "target": "seed1", "targetHandle": "image-0" },
+      { "id": "e_s1_fr",  "source": "frame0",    "sourceHandle": "out", "target": "seed1", "targetHandle": "image-1" },
+      { "id": "e_s1_vid", "source": "vpick1",    "sourceHandle": "out", "target": "seed1", "targetHandle": "video-0" },
+      { "id": "e_s1_aud", "source": "apick1",    "sourceHandle": "out", "target": "seed1", "targetHandle": "audio-0" },
 
       { "id": "e_c0",     "source": "seed0", "sourceHandle": "out", "target": "concat", "targetHandle": "clip-0" },
       { "id": "e_c1",     "source": "seed1", "sourceHandle": "out", "target": "concat", "targetHandle": "clip-1" }
