@@ -1,14 +1,17 @@
 "use client";
 
-import { Film, Loader2, Scissors } from "lucide-react";
-import { useId } from "react";
+import { Download, DownloadCloud, Film, Loader2, Scissors } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { downloadFromUrl, safeFilename } from "@/lib/library/download";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
 import { computeMediaWindows, probeMedia, sliceVideo } from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
+
+import { IteratorCursor } from "./iterator-cursor";
 
 /**
  * Video Slicer — split a video into sequential windows (motion references).
@@ -49,6 +52,33 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
         .map((o) => o.value.url)
     : [];
 
+  // View one slice at a time. Clamp the cursor as the chunk count changes.
+  const [cursor, setCursor] = useState(0);
+  const safeCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const prevLen = useRef(chunks.length);
+  useEffect(() => {
+    // A fresh run resets the view to the first slice.
+    if (chunks.length !== prevLen.current) {
+      setCursor(0);
+      prevLen.current = chunks.length;
+    }
+  }, [chunks.length]);
+
+  async function downloadOne(i: number) {
+    const url = chunks[i];
+    if (!url) return;
+    await downloadFromUrl(url, safeFilename(`slice-${i + 1}`, "slice") + ".mp4");
+  }
+  async function downloadAll() {
+    setDownloadingAll(true);
+    try {
+      for (let i = 0; i < chunks.length; i++) await downloadOne(i);
+    } finally {
+      setDownloadingAll(false);
+    }
+  }
+
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
@@ -57,6 +87,14 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
           <>
             <span className="text-muted-foreground/60">·</span>
             <span>{chunks.length} chunks</span>
+            <span className="ml-auto">
+              <IteratorCursor
+                count={chunks.length}
+                cursor={safeCursor}
+                onCursorChange={setCursor}
+                ariaLabelPrefix="Slice"
+              />
+            </span>
           </>
         ) : null}
       </div>
@@ -77,20 +115,41 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
           </span>
         </div>
       ) : chunks.length > 0 ? (
-        <div className="grid grid-cols-2 gap-1.5">
-          {chunks.map((url, i) => (
-            <video
-              key={`${url}-${i}`}
-              src={url}
-              muted
-              loop
-              playsInline
-              preload="metadata"
+        <div className="flex flex-col gap-1.5">
+          <video
+            key={chunks[safeCursor]}
+            src={chunks[safeCursor]}
+            controls
+            loop
+            playsInline
+            preload="metadata"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="block w-full rounded-md bg-black"
+            style={{ aspectRatio: "16 / 9" }}
+          />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">
+              Slice {safeCursor + 1}
+            </span>
+            <button
+              type="button"
+              onClick={() => void downloadOne(safeCursor)}
               onPointerDown={(e) => e.stopPropagation()}
-              className="block w-full rounded-md bg-black"
-              style={{ aspectRatio: "16 / 9" }}
-            />
-          ))}
+              className="ml-auto flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10"
+            >
+              <Download className="h-3 w-3" /> This one
+            </button>
+            <button
+              type="button"
+              disabled={downloadingAll}
+              onClick={() => void downloadAll()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10 disabled:opacity-50"
+            >
+              <DownloadCloud className="h-3 w-3" />
+              {downloadingAll ? "Downloading…" : `All (${chunks.length})`}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">

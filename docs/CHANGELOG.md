@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-29 — Video Slicer: single-clip player + downloads
+
+The Video Slicer showed a grid of muted looping clips — hard to inspect. Now it plays **one slice at a time** in a real `controls` player with a `‹ N / M ›` navigator, plus **download buttons**: "This one" (current slice) and "All (N)" (sequential). Downloads via the existing blob-fetch helper so cross-origin Supabase URLs save instead of opening a tab.
+
 ## 2026-05-29 — Recipe params keep the node's real control (dropdowns, not text) + Continuity Builder MP3
 
 Two things:
