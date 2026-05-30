@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Frame Extract: pick a specific frame by time
+
+Frame Extract gained an **"at a specific time"** mode (seconds) alongside first/last — `extractFrame` already supported `{ atMs }`, so the node just exposes it. Settings show a time input when Mode = "at"; the body chip reads `@ 3.5s`. **Tests 1006 → 1007 (+1).**
+
 ## 2026-05-29 — Dynamic handles + title cleanup: Seedance frame sockets, Video Concat ordered ports (ADR-0056)
 
 UX polish from testing the modular recipe. **Tests 1000 → 1006 (+6).** (Note: the new nodes only appear in a deployed build — these are local until the next deploy.)

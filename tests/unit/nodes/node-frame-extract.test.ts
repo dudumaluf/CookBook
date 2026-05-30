@@ -58,6 +58,18 @@ describe("frame-extract node execute", () => {
     expect(extractFrame).toHaveBeenCalledWith("https://x/clip.mp4", "first");
   });
 
+  it("extracts a specific time when position is 'at' (seconds → atMs)", async () => {
+    await frameExtractNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/clip.mp4" } } },
+        { position: "at", atSec: 3.5 },
+      ) as Cfg,
+    );
+    expect(extractFrame).toHaveBeenCalledWith("https://x/clip.mp4", {
+      atMs: 3500,
+    });
+  });
+
   it("is a non-reactive transform node with an image output", () => {
     expect(frameExtractNodeSchema.kind).toBe("frame-extract");
     expect(frameExtractNodeSchema.reactive).toBe(false);
