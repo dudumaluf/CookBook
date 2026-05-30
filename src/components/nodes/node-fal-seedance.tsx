@@ -70,6 +70,21 @@ export interface SeedanceVideoNodeConfig {
   imagePorts?: number;
   videoPorts?: number;
   audioPorts?: number;
+  /**
+   * Reference mode: friendly name inherited from the node wired into each
+   * slot (slot id → name), so the prompt can say `@img_performance` instead
+   * of `@Image1`. Synced from the graph; the socket shows it and `execute`
+   * rewrites the prompt name → the Fal positional token.
+   */
+  refNames?: Record<string, string>;
+}
+
+/** Sanitize a node label into a prompt-safe `@token` name (no spaces/punct). */
+function sanitizeRefName(name: string): string {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 const DEFAULT_ASPECT = "auto" as const;
@@ -111,11 +126,14 @@ function referenceInputs(config: SeedanceVideoNodeConfig): NodeIO[] {
   for (const base of ["image", "video", "audio"] as const) {
     const n = refPortCount(config, base);
     for (let i = 0; i < n; i++) {
+      const id = `${base}-${i}`;
+      // Label = the connected node's name (`@img_performance`) when wired +
+      // renamed, else the positional Fal token (`@Image1`). The label is what
+      // you type in the prompt.
+      const name = config.refNames?.[id];
       out.push({
-        // Handle id stays index-based (edges/migration); the LABEL is the Fal
-        // prompt token so hovering the socket shows what to type (@Image1…).
-        id: `${base}-${i}`,
-        label: refToken(base, i),
+        id,
+        label: name ? `@${name}` : refToken(base, i),
         dataType: REF_DATATYPE[base],
       });
     }
@@ -154,31 +172,50 @@ function SeedanceVideoNodeBody({
   // object — that loops, React #185), then keep one empty trailing socket up
   // to each Fal cap.
   const mode = config.mode ?? DEFAULT_MODE;
+  // Stable string snapshot of the ref slots: per-type max index + each wired
+  // slot's source node name. A string (not an object) keeps the selector
+  // equality stable (returning a fresh object loops — React #185).
   const connectedKey = useWorkflowStore((s) => {
     const m: Record<RefBase, number> = { image: -1, video: -1, audio: -1 };
+    const names: string[] = [];
     for (const e of s.edges) {
       if (e.target !== nodeId || !e.targetHandle) continue;
       for (const base of ["image", "video", "audio"] as const) {
         if (e.targetHandle.startsWith(`${base}-`)) {
           const idx = Number(e.targetHandle.slice(base.length + 1));
           if (Number.isFinite(idx)) m[base] = Math.max(m[base], idx);
+          const src = s.nodes.find((n) => n.id === e.source);
+          const label = (src?.label ?? "").trim();
+          if (label) names.push(`${e.targetHandle}=${label}`);
         }
       }
     }
-    return `${m.image},${m.video},${m.audio}`;
+    return `${m.image},${m.video},${m.audio}|${names.sort().join("|")}`;
   });
   useEffect(() => {
     if (mode !== "reference") return;
-    const [mi, mv, ma] = connectedKey.split(",").map(Number) as [number, number, number];
+    const [counts, namePart = ""] = connectedKey.split("|", 2);
+    const [mi, mv, ma] = counts!.split(",").map(Number) as [number, number, number];
     const want = {
       imagePorts: Math.min(REF_CAPS.image, Math.max(1, mi + 2)),
       videoPorts: Math.min(REF_CAPS.video, Math.max(1, mv + 2)),
       audioPorts: Math.min(REF_CAPS.audio, Math.max(1, ma + 2)),
     };
+    const refNames: Record<string, string> = {};
+    if (namePart) {
+      for (const pair of namePart.split("|")) {
+        const [slot, ...rest] = pair.split("=");
+        const safe = sanitizeRefName(rest.join("="));
+        if (slot && safe) refNames[slot] = safe;
+      }
+    }
     const patch: Partial<SeedanceVideoNodeConfig> = {};
     if (refPortCount(config, "image") !== want.imagePorts) patch.imagePorts = want.imagePorts;
     if (refPortCount(config, "video") !== want.videoPorts) patch.videoPorts = want.videoPorts;
     if (refPortCount(config, "audio") !== want.audioPorts) patch.audioPorts = want.audioPorts;
+    if (JSON.stringify(config.refNames ?? {}) !== JSON.stringify(refNames)) {
+      patch.refNames = refNames;
+    }
     if (Object.keys(patch).length > 0) updateConfig(patch);
   }, [mode, connectedKey, config, updateConfig]);
 
@@ -220,11 +257,19 @@ function SeedanceVideoNodeBody({
   // exactly what to type (@Image1, @Video1, …). Built from the connected key.
   const refTokens = (() => {
     if (mode !== "reference") return [] as string[];
-    const [mi, mv, ma] = connectedKey.split(",").map(Number) as [number, number, number];
+    const counts = connectedKey.split("|", 1)[0] ?? "-1,-1,-1";
+    const [mi, mv, ma] = counts.split(",").map(Number) as [number, number, number];
+    const names = config.refNames ?? {};
     const toks: string[] = [];
-    for (let i = 0; i <= mi; i++) toks.push(refToken("image", i));
-    for (let i = 0; i <= mv; i++) toks.push(refToken("video", i));
-    for (let i = 0; i <= ma; i++) toks.push(refToken("audio", i));
+    const add = (base: RefBase, max: number) => {
+      for (let i = 0; i <= max; i++) {
+        const slot = `${base}-${i}`;
+        toks.push(names[slot] ? `@${names[slot]}` : refToken(base, i));
+      }
+    };
+    add("image", mi);
+    add("video", mv);
+    add("audio", ma);
     return toks;
   })();
 
@@ -603,17 +648,42 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
               : extractInputArrayByType(inputs, handle, "audio");
         return arr.map((r) => r.url).filter(Boolean);
       };
+      // Gather filled sockets in index order; assign SEQUENTIAL Fal tokens to
+      // the filled ones (gap-proof) and remember which friendly name maps to
+      // which token, so we can rewrite the prompt.
+      const nameToToken: Record<string, string> = {};
+      const refNames = config.refNames ?? {};
       const gather = (base: RefBase): string[] => {
         const urls: string[] = [];
         for (let i = 0; i < REF_CAPS[base]; i++) {
           const u = extractOne(`${base}-${i}`, base);
-          if (u) urls.push(u);
+          if (!u) continue;
+          urls.push(u);
+          const token = refToken(base, urls.length - 1); // sequential position
+          const name = refNames[`${base}-${i}`];
+          if (name) nameToToken[name] = token;
         }
-        return [...urls, ...extractMany(base, base)].slice(0, REF_CAPS[base]);
+        const legacy = extractMany(base, base);
+        return [...urls, ...legacy].slice(0, REF_CAPS[base]);
       };
       const imageUrls = gather("image");
       const videoUrls = gather("video");
       const audioUrls = gather("audio");
+
+      // Rewrite `@friendlyName` → the Fal positional token. Longest names
+      // first so one name can't partially shadow another. Direct `@Image1`
+      // tokens in the prompt are left untouched.
+      const finalPrompt = Object.entries(nameToToken)
+        .sort((a, b) => b[0].length - a[0].length)
+        .reduce(
+          (text, [name, token]) =>
+            text.replace(
+              new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"),
+              token,
+            ),
+          prompt,
+        );
+
       const hasRefs =
         imageUrls.length > 0 || videoUrls.length > 0 || audioUrls.length > 0;
       if (prompt.length === 0 && !hasRefs) {
@@ -636,7 +706,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
       }
 
       request = {
-        prompt,
+        prompt: finalPrompt,
         ...(imageUrls.length ? { imageUrls } : {}),
         ...(videoUrls.length ? { videoUrls } : {}),
         ...(audioUrls.length ? { audioUrls } : {}),

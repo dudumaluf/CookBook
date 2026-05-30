@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Seedance: reference media by the connected node's NAME in the prompt
+
+Nicer than memorizing `@Image1`: rename a node (e.g. `img_performance`), wire it into a reference slot, and the slot inherits that name — the socket shows `@img_performance` and you write that in the prompt. `execute` rewrites each `@name` → the Fal positional token (`@Image1`…) before sending, mapping to the **actual array position** so it's gap-proof. Plain `@Image1` tokens still work (fallback). The node lists the live ref names. **Tests +1.**
+
 ## 2026-05-30 — Seedance reference sockets show their prompt token (@Image1, …)
 
 Each numbered reference socket is now **labeled with the exact Fal prompt token** it maps to — `image-0` → `@Image1`, `video-0` → `@Video1`, `audio-0` → `@Audio1` (hover the socket to see it). Since `execute` sends each type's sockets in index order, that mapping is stable: wire anything into a slot and reference it in the prompt by its token. The node body also lists the tokens for the currently-wired slots ("prompt refs: @Image1 @Video1 …"). **Tests +1.**

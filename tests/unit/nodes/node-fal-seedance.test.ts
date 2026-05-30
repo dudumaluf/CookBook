@@ -69,6 +69,31 @@ describe("seedance-video node execute", () => {
     expect(arg.audioUrls).toEqual(["https://x/slice.mp3"]);
   });
 
+  it("rewrites @friendlyName in the prompt to the Fal positional token", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        {
+          prompt: {
+            type: "text",
+            value: "Put @character into @performance, singing @song",
+          },
+          "image-0": { type: "image", value: { url: "https://x/char.png" } },
+          "video-0": { type: "video", value: { url: "https://x/perf.mp4" } },
+          "audio-0": { type: "audio", value: { url: "https://x/song.mp3" } },
+        },
+        {
+          refNames: {
+            "image-0": "character",
+            "video-0": "performance",
+            "audio-0": "song",
+          },
+        },
+      ) as Cfg,
+    );
+    const arg = callSeedanceVideo.mock.calls[0]![0];
+    expect(arg.prompt).toBe("Put @Image1 into @Video1, singing @Audio1");
+  });
+
   it("still accepts the legacy image/video/audio multi-handles", async () => {
     await seedanceVideoNodeSchema.execute!(
       ctx({
