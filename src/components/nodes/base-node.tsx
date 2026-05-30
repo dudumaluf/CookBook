@@ -529,12 +529,14 @@ function NodeSettingsTrigger({ settings }: { settings: BaseNodeSettings }) {
  * classic run-here that re-executes the node and all ancestors, for when
  * the user deliberately wants upstream refreshed.
  *
- * Disabled while a run is in-flight so a click can't kick off a new
- * subgraph mid-execution. `onPointerDown stopPropagation` keeps the click
- * from initiating a node drag (header is the drag handle — ADR-0031).
+ * Disabled only while THIS node is running — other nodes can render in
+ * parallel (e.g. two Seedance nodes at once). `onPointerDown
+ * stopPropagation` keeps the click from initiating a node drag (header is
+ * the drag handle — ADR-0031).
  */
 function RunHereButton({ nodeId }: { nodeId: string }) {
-  const isRunning = useExecutionStore((s) => s.isRunning);
+  const isThisNodeRunning =
+    useExecutionStore((s) => s.getRecord(nodeId)?.status) === "running";
   const startRunNode = useExecutionStore((s) => s.startRunNode);
   const startRunFrom = useExecutionStore((s) => s.startRunFrom);
   return (
@@ -549,7 +551,7 @@ function RunHereButton({ nodeId }: { nodeId: string }) {
               ? void startRunFrom(nodeId)
               : void startRunNode(nodeId)
           }
-          disabled={isRunning}
+          disabled={isThisNodeRunning}
           aria-label="Run this node"
           className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >

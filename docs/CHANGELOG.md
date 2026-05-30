@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Parallel per-node runs (e.g. two Seedance nodes at once)
+
+Per-node **Run** was greyed out globally while ANY node was generating. Now only the node that is actively `running` disables its own Run button — you can start a second Seedance (or any other node) while the first is still rendering. Full **Run workflow** / shift-click **Run including upstream** still cancel other in-flight runs first (one graph run at a time).
+
 ## 2026-05-30 — Audio Isolation: per-run history navigator
 
 **Audio Isolation** now shows the same history arrows as Seedance / Fal Image — browse past isolations without losing earlier results. New runs auto-jump to the latest.

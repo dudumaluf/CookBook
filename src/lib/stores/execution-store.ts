@@ -173,11 +173,21 @@ function loadCache(): void {
 loadCache();
 
 /**
- * In-flight AbortController for the current run, if any. Lives in
- * module scope so `cancelRun()` and `startRun()` (which preempts) can
- * reach it without going through React render cycles.
+ * In-flight runs keyed by run id. Multiple surgical per-node runs can overlap
+ * (e.g. two Seedance nodes rendering in parallel); full / run-here runs
+ * preempt everything else first.
  */
-let currentController: AbortController | null = null;
+const activeRuns = new Map<number, AbortController>();
+
+function syncIsRunning(
+  set: (
+    partial:
+      | Partial<ExecutionState>
+      | ((state: ExecutionState) => Partial<ExecutionState>),
+  ) => void,
+): void {
+  set({ isRunning: activeRuns.size > 0 });
+}
 
 /**
  * Shared run launcher (Slice 5.8 refactor) — used by both `startRun`
@@ -190,6 +200,7 @@ async function launchRun({
   set,
   endAtNodeId,
   seedOutputs,
+  preemptOthers = false,
 }: {
   get: () => ExecutionState;
   set: (
@@ -199,15 +210,17 @@ async function launchRun({
   ) => void;
   endAtNodeId: string | undefined;
   seedOutputs?: ReadonlyMap<string, ExecutionCacheEntry>;
+  /** When true, abort every other in-flight run before starting (full / run-here). */
+  preemptOthers?: boolean;
 }): Promise<void> {
-  if (currentController) {
-    currentController.abort();
-    currentController = null;
+  if (preemptOthers) {
+    for (const c of activeRuns.values()) c.abort();
+    activeRuns.clear();
   }
 
   const runId = get().runId + 1;
   const controller = new AbortController();
-  currentController = controller;
+  activeRuns.set(runId, controller);
 
   const { nodes, edges } = useWorkflowStore.getState();
 
@@ -233,7 +246,7 @@ async function launchRun({
       ...(endAtNodeId !== undefined ? { endAtNodeId } : {}),
       ...(seedOutputs !== undefined ? { seedOutputs } : {}),
       onProgress: (nodeId, record) => {
-        if (get().runId !== runId) return;
+        if (!activeRuns.has(runId)) return;
         const prev = get().records.get(nodeId);
         const prevHistory = prev?.history ?? [];
         // History append (Slice 5.8): only on `done` records that
@@ -261,8 +274,8 @@ async function launchRun({
       },
     });
   } finally {
-    if (currentController === controller) currentController = null;
-    if (get().runId === runId) set({ isRunning: false });
+    activeRuns.delete(runId);
+    syncIsRunning(set);
     // Persist the (now-warmer) cache so a reload doesn't force re-running
     // upstream nodes on the next Run-here.
     persistCache();
@@ -277,11 +290,16 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
   getRecord: (nodeId) => get().records.get(nodeId),
 
   startRun: async () => {
-    await launchRun({ get, set, endAtNodeId: undefined });
+    await launchRun({ get, set, endAtNodeId: undefined, preemptOthers: true });
   },
 
   startRunFrom: async (endNodeId: string) => {
-    await launchRun({ get, set, endAtNodeId: endNodeId });
+    await launchRun({
+      get,
+      set,
+      endAtNodeId: endNodeId,
+      preemptOthers: true,
+    });
   },
 
   startRunNode: async (nodeId: string) => {
@@ -302,15 +320,11 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
   },
 
   cancelRun: () => {
-    if (currentController) {
-      currentController.abort();
-      currentController = null;
-    }
-    // Free the UI immediately. The aborted run's `finally` also resets
-    // isRunning when its promise settles, but if an upstream request hangs
-    // without honoring the abort, that could be slow — so we reset here too.
-    // Belt-and-suspenders against a stuck `isRunning` (greyed Run buttons).
-    if (get().isRunning) set({ isRunning: false });
+    for (const c of activeRuns.values()) c.abort();
+    activeRuns.clear();
+    // Free the UI immediately. Each run's `finally` also decrements, but if
+    // an upstream request hangs without honoring abort, reset here too.
+    set({ isRunning: false });
   },
 
   clearRun: () => {
@@ -324,10 +338,8 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
 
   setActiveProject: (projectId) => {
     // Abort anything in flight from the previous project.
-    if (currentController) {
-      currentController.abort();
-      currentController = null;
-    }
+    for (const c of activeRuns.values()) c.abort();
+    activeRuns.clear();
     sessionCache.clear();
     activeCacheKey = cacheKeyFor(projectId);
     loadCache();
@@ -347,8 +359,8 @@ export function _resetExecutionForTests(): void {
     /* ignore */
   }
   activeCacheKey = CACHE_STORAGE_KEY;
-  currentController?.abort();
-  currentController = null;
+  for (const c of activeRuns.values()) c.abort();
+  activeRuns.clear();
   useExecutionStore.setState({
     runId: 0,
     isRunning: false,
