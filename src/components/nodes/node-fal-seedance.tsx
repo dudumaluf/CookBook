@@ -95,6 +95,16 @@ function refPortCount(config: SeedanceVideoNodeConfig, base: RefBase): number {
   return Math.min(REF_CAPS[base], Math.max(1, raw ?? 1));
 }
 
+/**
+ * The exact token Fal parses in the prompt for a given socket: `image-0` ->
+ * `@Image1`, `video-1` -> `@Video2`, etc. (1-indexed, capitalized). The socket
+ * order we send to Fal IS this numbering, so the token on a socket is stable.
+ */
+function refToken(base: RefBase, index: number): string {
+  const Cap = base.charAt(0).toUpperCase() + base.slice(1);
+  return `@${Cap}${index + 1}`;
+}
+
 /** Indexed reference sockets for reference mode: prompt + image/video/audio-N. */
 function referenceInputs(config: SeedanceVideoNodeConfig): NodeIO[] {
   const out: NodeIO[] = [{ id: "prompt", label: "prompt", dataType: "text" }];
@@ -102,8 +112,10 @@ function referenceInputs(config: SeedanceVideoNodeConfig): NodeIO[] {
     const n = refPortCount(config, base);
     for (let i = 0; i < n; i++) {
       out.push({
+        // Handle id stays index-based (edges/migration); the LABEL is the Fal
+        // prompt token so hovering the socket shows what to type (@Image1…).
         id: `${base}-${i}`,
-        label: `${base} ${i + 1}`,
+        label: refToken(base, i),
         dataType: REF_DATATYPE[base],
       });
     }
@@ -204,6 +216,18 @@ function SeedanceVideoNodeBody({
       ? (parseAspectRatio(config.aspectRatio)?.cssAspect ?? "16 / 9")
       : "16 / 9";
 
+  // Prompt-reference tokens for the currently-wired slots, so the user knows
+  // exactly what to type (@Image1, @Video1, …). Built from the connected key.
+  const refTokens = (() => {
+    if (mode !== "reference") return [] as string[];
+    const [mi, mv, ma] = connectedKey.split(",").map(Number) as [number, number, number];
+    const toks: string[] = [];
+    for (let i = 0; i <= mi; i++) toks.push(refToken("image", i));
+    for (let i = 0; i <= mv; i++) toks.push(refToken("video", i));
+    for (let i = 0; i <= ma; i++) toks.push(refToken("audio", i));
+    return toks;
+  })();
+
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
@@ -225,6 +249,20 @@ function SeedanceVideoNodeBody({
           </>
         ) : null}
       </div>
+
+      {refTokens.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+          <span className="text-muted-foreground/60">prompt refs:</span>
+          {refTokens.map((t) => (
+            <code
+              key={t}
+              className="rounded bg-foreground/[0.06] px-1 font-mono text-foreground/80"
+            >
+              {t}
+            </code>
+          ))}
+        </div>
+      ) : null}
 
       <div className="relative">
         {history.length > 1 ? (
@@ -459,7 +497,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio (identity, motion, lip-sync). Or switch to image-to-video mode (settings) to animate a literal first frame, optionally to an end frame. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal

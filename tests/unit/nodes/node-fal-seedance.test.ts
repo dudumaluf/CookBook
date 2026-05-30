@@ -110,6 +110,20 @@ describe("seedance-video node execute", () => {
     expect(capped.filter((h) => h.id.startsWith("image-")).length).toBe(9);
   });
 
+  it("labels each reference socket with its Fal prompt token (@Image1, …)", () => {
+    const ref = seedanceVideoNodeSchema.getInputs!({
+      mode: "reference",
+      imagePorts: 2,
+      videoPorts: 1,
+      audioPorts: 1,
+    });
+    const byId = Object.fromEntries(ref.map((h) => [h.id, h.label]));
+    expect(byId["image-0"]).toBe("@Image1");
+    expect(byId["image-1"]).toBe("@Image2");
+    expect(byId["video-0"]).toBe("@Video1");
+    expect(byId["audio-0"]).toBe("@Audio1");
+  });
+
   it("first-frame mode sends the wired start frame as startImageUrl (image-to-video)", async () => {
     await seedanceVideoNodeSchema.execute!(
       ctx(

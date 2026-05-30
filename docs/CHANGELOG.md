@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Seedance reference sockets show their prompt token (@Image1, …)
+
+Each numbered reference socket is now **labeled with the exact Fal prompt token** it maps to — `image-0` → `@Image1`, `video-0` → `@Video1`, `audio-0` → `@Audio1` (hover the socket to see it). Since `execute` sends each type's sockets in index order, that mapping is stable: wire anything into a slot and reference it in the prompt by its token. The node body also lists the tokens for the currently-wired slots ("prompt refs: @Image1 @Video1 …"). **Tests +1.**
+
 ## 2026-05-30 — Seedance reference mode: multiple refs via auto-growing sockets (ADR-0058)
 
 Reference-to-video takes up to **9 images / 3 videos / 3 audios**, but the node only showed one socket per type. Now reference mode renders numbered `image 1..N` / `video 1..N` / `audio 1..N` sockets that **grow as you wire** (fill the last → the next appears, up to each cap) — so multiple refs + their order are explicit. `execute` reads them in order; image-to-video mode (start/end frame) is unchanged. Legacy `image`/`video`/`audio` edges are migrated to the numbered sockets (workflow **v10 → v11** + `applyProjectDocument`); the seeded recipe was updated in place. **Tests +5.**
