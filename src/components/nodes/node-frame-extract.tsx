@@ -1,10 +1,11 @@
 "use client";
 
-import { Image as ImageIcon, Loader2, ScissorsLineDashed } from "lucide-react";
+import { Download, Image as ImageIcon, Loader2, ScissorsLineDashed } from "lucide-react";
 import { useId } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { downloadFromUrl, safeFilename } from "@/lib/library/download";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
 import { extractFrame, type FramePosition } from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
@@ -67,13 +68,28 @@ function FrameExtractBody({ nodeId, config }: NodeBodyProps<FrameExtractNodeConf
           <span>Extracting frame…</span>
         </div>
       ) : url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt="Extracted frame"
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black"
-        />
+        <div className="flex flex-col gap-1.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt="Extracted frame"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="block w-full rounded-md bg-black"
+          />
+          <button
+            type="button"
+            onClick={() =>
+              void downloadFromUrl(
+                url,
+                safeFilename(`frame-${positionLabel(config)}`, "frame") + ".png",
+              )
+            }
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 self-end rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10"
+          >
+            <Download className="h-3 w-3" /> Download
+          </button>
+        </div>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <ImageIcon className="h-3 w-3" />
