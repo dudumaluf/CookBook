@@ -315,3 +315,74 @@ export type AudioIsolationStatusRequest = z.infer<
 export type AudioIsolationStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & AudioIsolationSuccessResponse);
+
+/* ───────────────────── Hunyuan 3D Pro image-to-3d ───────────────────── */
+
+/** Fal `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` — generate a GLB mesh from images. */
+export const HUNYUAN3D_ENDPOINT = "fal-ai/hunyuan-3d/v3.1/pro/image-to-3d";
+
+export const HUNYUAN3D_GENERATE_TYPES = ["Normal", "Geometry"] as const;
+export type Hunyuan3dGenerateType = (typeof HUNYUAN3D_GENERATE_TYPES)[number];
+
+export const HUNYUAN3D_FACE_COUNT_MIN = 40_000;
+export const HUNYUAN3D_FACE_COUNT_MAX = 1_500_000;
+export const HUNYUAN3D_FACE_COUNT_DEFAULT = 500_000;
+
+export const hunyuan3dRequestSchema = z
+  .object({
+    /** Required: front view image. */
+    inputImageUrl: z.string().url(),
+    /** Optional multi-view images (any combination). */
+    backImageUrl: z.string().url().optional(),
+    leftImageUrl: z.string().url().optional(),
+    rightImageUrl: z.string().url().optional(),
+    topImageUrl: z.string().url().optional(),
+    bottomImageUrl: z.string().url().optional(),
+    leftFrontImageUrl: z.string().url().optional(),
+    rightFrontImageUrl: z.string().url().optional(),
+
+    generateType: z.enum(HUNYUAN3D_GENERATE_TYPES).optional(),
+    /** Adds $0.15 when true and generateType !== "Geometry". */
+    enablePbr: z.boolean().optional(),
+    /** Adds $0.15 when set. Range 40k–1.5M. */
+    faceCount: z
+      .number()
+      .int()
+      .min(HUNYUAN3D_FACE_COUNT_MIN)
+      .max(HUNYUAN3D_FACE_COUNT_MAX)
+      .optional(),
+  })
+  .strict();
+
+export type Hunyuan3dRequest = z.infer<typeof hunyuan3dRequestSchema>;
+
+export interface Hunyuan3dSuccessResponse {
+  /** GLB url — the canonical mesh URL the viewer renders. */
+  glbUrl: string;
+  /** Optional sibling format. */
+  objUrl?: string;
+  /** Optional thumbnail PNG. */
+  thumbnailUrl?: string;
+  /** GLB file size in bytes if reported. */
+  sizeBytes?: number;
+  seed?: number;
+  model: string;
+}
+
+export interface Hunyuan3dSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const hunyuan3dStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type Hunyuan3dStatusRequest = z.infer<typeof hunyuan3dStatusRequestSchema>;
+
+export type Hunyuan3dStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & Hunyuan3dSuccessResponse);

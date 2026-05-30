@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Hunyuan 3D Pro: image-to-3D mesh node
+
+New **Hunyuan 3D Pro** node (`fal-hunyuan-3d`): wire a front-view image (required) and any optional multi-view inputs (back, left/right, top/bottom, 3-4 angles) → Run → a GLB mesh you can **orbit, pan and zoom** right inside the node body via a built-in `<model-viewer>` preview. Output is a new `mesh` data type carrying GLB url + optional sibling OBJ + thumbnail. Settings let you pick generate type (Normal / Geometry), toggle PBR materials, and tune face count (40k–1.5M). Uses `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` via async submit + poll (`/api/fal/hunyuan-3d` + `/status`). Per-run history navigator like the other Fal generators. ~$0.375 per render on Fal (+$0.15 each for PBR / multi-view / custom face count). **Tests +11.**
+
 ## 2026-05-30 — Parallel per-node runs (e.g. two Seedance nodes at once)
 
 Per-node **Run** was greyed out globally while ANY node was generating. Now only the node that is actively `running` disables its own Run button — you can start a second Seedance (or any other node) while the first is still rendering. Full **Run workflow** / shift-click **Run including upstream** still cancel other in-flight runs first (one graph run at a time).

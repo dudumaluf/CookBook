@@ -2,6 +2,7 @@ import type {
   AudioRef,
   DataType,
   ImageRef,
+  MeshRef,
   SoulIdRef,
   StandardizedOutput,
   VideoRef,
@@ -47,6 +48,11 @@ export function extractInputByType(
   handleId: string,
   expected: "audio",
 ): AudioRef | undefined;
+export function extractInputByType(
+  inputs: InputRecord,
+  handleId: string,
+  expected: "mesh",
+): MeshRef | undefined;
 export function extractInputByType(
   inputs: InputRecord,
   handleId: string,
@@ -99,6 +105,11 @@ export function extractInputArrayByType(
   handleId: string,
   expected: "audio",
 ): AudioRef[];
+export function extractInputArrayByType(
+  inputs: InputRecord,
+  handleId: string,
+  expected: "mesh",
+): MeshRef[];
 export function extractInputArrayByType(
   inputs: InputRecord,
   handleId: string,

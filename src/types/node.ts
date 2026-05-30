@@ -29,6 +29,7 @@ export type DataType =
   | "image"
   | "video"
   | "audio"
+  | "mesh"
   | "number"
   | "soul-id"
   | "any";
@@ -61,6 +62,27 @@ export interface AudioRef {
 }
 
 /**
+ * 3D mesh reference (M1 — image-to-3D arc). A URL to a binary glTF (`.glb`)
+ * file plus optional sibling formats (`.obj`) and a thumbnail. The Hunyuan
+ * 3D Pro node ships with this; other 3D models will reuse the same shape.
+ *
+ * The viewer (`<model-viewer>`) consumes the GLB url; `thumbnailUrl` is
+ * shown while the heavy GLB downloads, and `objUrl` gives the user a
+ * download for DCC tools that prefer OBJ.
+ */
+export interface MeshRef {
+  /** Required: GLB url (binary glTF — what the viewer + most pipelines use). */
+  url: string;
+  /** Optional sibling format. */
+  objUrl?: string;
+  /** Optional preview PNG rendered server-side by the model. */
+  thumbnailUrl?: string;
+  /** File size in bytes for the GLB, when reported. */
+  sizeBytes?: number;
+  mime?: string;
+}
+
+/**
  * Higgsfield Soul ID character reference. The `customReferenceId` is the
  * UUID Higgsfield assigns each trained character; `variant` ("v1" / "v2" /
  * "cinema") is what the character was trained as and dictates which
@@ -87,6 +109,7 @@ export type StandardizedOutput =
   | { type: "image"; value: ImageRef }
   | { type: "video"; value: VideoRef }
   | { type: "audio"; value: AudioRef }
+  | { type: "mesh"; value: MeshRef }
   | { type: "number"; value: number }
   | { type: "soul-id"; value: SoulIdRef };
 
