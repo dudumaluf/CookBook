@@ -16,7 +16,11 @@ import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
  * inline audio slicing: emit an ARRAY of audio chunks so a List (index/
  * increment) can feed one chunk per Seedance run, or a fan-out can map them.
  *
- * Input:  audio (single)
+ * Accepts EITHER an audio track OR a video (its audio track is extracted —
+ * `sliceAudio` already discards video and outputs WAV), so you can pull the
+ * song straight off a performance clip. Audio input wins if both are wired.
+ *
+ * Inputs: audio (single) | video (single)
  * Output: audio[] (one per window)
  */
 
@@ -83,7 +87,7 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <AudioLines className="h-3 w-3" />
-          <span>Wire a song, then Run</span>
+          <span>Wire a song (or a video to pull its audio), then Run</span>
         </div>
       )}
     </div>
@@ -138,9 +142,12 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
   category: "transform",
   title: "Audio Slicer",
   description:
-    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Emits an array of audio chunks — feed a List to pick one per run, or fan out.",
+    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Accepts audio OR a video (its audio track is extracted). Emits an array of audio chunks — feed a List to pick one per run, or fan out.",
   icon: Scissors,
-  inputs: [{ id: "audio", label: "audio", dataType: "audio" }],
+  inputs: [
+    { id: "audio", label: "audio", dataType: "audio" },
+    { id: "video", label: "video", dataType: "video" },
+  ],
   outputs: [{ id: "out", label: "out", dataType: "audio", multiple: true }],
   defaultConfig: {
     windowSec: DEFAULT_WINDOW_SEC,
@@ -148,25 +155,30 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
   },
   reactive: false,
   execute: async ({ config, inputs, reportProgress }) => {
+    // Audio wins; else extract the audio track from a wired video.
     const audio = extractInputByType(inputs, "audio", "audio");
-    if (!audio?.url) {
-      throw new Error("Wire an audio track into the `audio` handle.");
+    const video = extractInputByType(inputs, "video", "video");
+    const sourceUrl = audio?.url ?? video?.url;
+    if (!sourceUrl) {
+      throw new Error("Wire an audio track (or a video) into the slicer.");
     }
     const windowSec = config.windowSec ?? DEFAULT_WINDOW_SEC;
     const minTailSec = config.minTailSec ?? DEFAULT_MIN_TAIL_SEC;
 
-    const probe = await probeMedia(audio.url);
+    const probe = await probeMedia(sourceUrl);
     const windows = computeMediaWindows({
       totalMs: probe.durationMs,
       windowMs: windowSec * 1000,
       minTailMs: minTailSec * 1000,
     });
     if (windows.length === 0) {
-      throw new Error("Could not read the audio duration — is the file valid?");
+      throw new Error("Could not read the media duration — is the file valid?");
     }
 
     reportProgress?.({ fanOut: { total: windows.length, done: 0 } });
-    const blobs = await sliceAudio(audio.url, windows);
+    // sliceAudio discards video + outputs WAV, so a video source yields its
+    // audio track sliced into windows.
+    const blobs = await sliceAudio(sourceUrl, windows);
     const chunks: StandardizedOutput[] = [];
     for (let i = 0; i < blobs.length; i++) {
       const file = new File([blobs[i]!], `chunk-${i + 1}.wav`, {

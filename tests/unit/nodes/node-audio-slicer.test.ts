@@ -48,10 +48,31 @@ beforeEach(() => {
 });
 
 describe("audio-slicer node execute", () => {
-  it("throws when no audio is wired", async () => {
+  it("throws when neither audio nor video is wired", async () => {
     await expect(
       audioSlicerNodeSchema.execute!(ctx({}) as Cfg),
     ).rejects.toThrow(/Wire an audio/);
+  });
+
+  it("extracts + slices the audio track from a wired video", async () => {
+    const result = await audioSlicerNodeSchema.execute!(
+      ctx({ video: { type: "video", value: { url: "https://x/perf.mp4" } } }) as Cfg,
+    );
+    // sliceAudio is fed the video URL (it discards video, outputs WAV).
+    expect(sliceAudio.mock.calls[0]![0]).toBe("https://x/perf.mp4");
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(out).toHaveLength(2);
+    expect(out.every((o) => o.type === "audio")).toBe(true);
+  });
+
+  it("prefers the audio input when both audio and video are wired", async () => {
+    await audioSlicerNodeSchema.execute!(
+      ctx({
+        audio: { type: "audio", value: { url: "https://x/song.mp3" } },
+        video: { type: "video", value: { url: "https://x/perf.mp4" } },
+      }) as Cfg,
+    );
+    expect(sliceAudio.mock.calls[0]![0]).toBe("https://x/song.mp3");
   });
 
   it("emits one audio output per window", async () => {

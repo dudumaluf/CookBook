@@ -45,7 +45,7 @@ describe("importMediaFiles", () => {
 
   it("rejects an oversized video", async () => {
     const result = await importMediaFiles(
-      [file("huge.mp4", "video/mp4", 200 * 1024 * 1024)],
+      [file("huge.mp4", "video/mp4", 800 * 1024 * 1024)],
       "video",
     );
     expect(result.created).toBe(0);
