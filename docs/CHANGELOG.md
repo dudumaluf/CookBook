@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Fix: video/audio uploads were blocked by the bucket
+
+The `cookbook-assets` bucket still had its image-only config from before the media arc: `allowed_mime_types` = images only, 30 MB cap. So **any video/audio upload was rejected by Supabase** (MIME not allowed), and the app's 100 MB video cap was a lie (bucket capped at 30 MB).
+
+- **Bucket updated** (live, no deploy): `allowed_mime_types` → `image/*, video/*, audio/*`; `file_size_limit` → **500 MB**.
+- **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
+- **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
+
 ## 2026-05-29 — Frame Extract: pick a specific frame by time
 
 Frame Extract gained an **"at a specific time"** mode (seconds) alongside first/last — `extractFrame` already supported `{ atMs }`, so the node just exposes it. Settings show a time input when Mode = "at"; the body chip reads `@ 3.5s`. **Tests 1006 → 1007 (+1).**

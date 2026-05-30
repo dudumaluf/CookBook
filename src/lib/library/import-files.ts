@@ -7,23 +7,19 @@ import { useAssetStore } from "@/lib/stores/asset-store";
  * through this helper so policy (MIME filtering, size cap, scope, toast
  * batching) stays in one place.
  *
- * The 25 MB cap is conservative for an MVP: it keeps Supabase uploads
- * snappy on slower connections, sits comfortably under the bucket's 30 MB
- * server-side limit, and is easy to relax once we have image-resize on
- * import.
+ * The 25 MB image cap is conservative: it keeps uploads snappy and is easy
+ * to relax once we have image-resize on import. Video/audio are far larger
+ * (songs, performance clips). All caps sit at/under the `cookbook-assets`
+ * bucket's 500 MB server-side limit + its image/video/audio MIME allowlist.
+ * Seedance's own per-file caps (30 MB image / 50 MB video / 15 MB audio
+ * total) are enforced separately at generation time.
  */
 
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const ACCEPTED_IMAGE_MIME = /^image\//;
 
-/**
- * Media (video/audio) import caps (Slice C). Larger than images because a
- * song or a driving clip is naturally heavier, but still under common
- * bucket limits. Seedance's own per-file caps (30 MB image / 50 MB video /
- * 15 MB audio total) are enforced separately at generation time.
- */
-export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
-export const MAX_AUDIO_BYTES = 30 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 export const ACCEPTED_VIDEO_MIME = /^video\//;
 export const ACCEPTED_AUDIO_MIME = /^audio\//;
 
@@ -79,7 +75,7 @@ export async function importMediaFiles(
   const acceptMime =
     kind === "video" ? ACCEPTED_VIDEO_MIME : ACCEPTED_AUDIO_MIME;
   const maxBytes = kind === "video" ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES;
-  const maxLabel = kind === "video" ? "100 MB" : "30 MB";
+  const maxLabel = "500 MB";
 
   const errors: string[] = [];
   const ids: string[] = [];
