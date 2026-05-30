@@ -194,8 +194,13 @@ function SeedanceVideoNodeBody({
   });
   useEffect(() => {
     if (mode !== "reference") return;
-    const [counts, namePart = ""] = connectedKey.split("|", 2);
-    const [mi, mv, ma] = counts!.split(",").map(Number) as [number, number, number];
+    // Split ONLY on the first "|": the name part itself contains "|"-joined
+    // pairs, so `split("|", 2)` would drop all but the first name (bug: only
+    // the alphabetically-first slot kept its name).
+    const sep = connectedKey.indexOf("|");
+    const counts = sep === -1 ? connectedKey : connectedKey.slice(0, sep);
+    const namePart = sep === -1 ? "" : connectedKey.slice(sep + 1);
+    const [mi, mv, ma] = counts.split(",").map(Number) as [number, number, number];
     const want = {
       imagePorts: Math.min(REF_CAPS.image, Math.max(1, mi + 2)),
       videoPorts: Math.min(REF_CAPS.video, Math.max(1, mv + 2)),

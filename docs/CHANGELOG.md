@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Fix: only the audio ref name synced (split bug)
+
+The name-sync `split("|", 2)` truncated the `|`-joined name list to the first entry, and since names were sorted alphabetically only the `audio-0` name survived (`a` < `i` < `v`). Split on the first `|` only so image/video/audio all inherit their connected node's name. Regression test added.
+
 ## 2026-05-30 — Seedance: reference media by the connected node's NAME in the prompt
 
 Nicer than memorizing `@Image1`: rename a node (e.g. `img_performance`), wire it into a reference slot, and the slot inherits that name — the socket shows `@img_performance` and you write that in the prompt. `execute` rewrites each `@name` → the Fal positional token (`@Image1`…) before sending, mapping to the **actual array position** so it's gap-proof. Plain `@Image1` tokens still work (fallback). The node lists the live ref names. **Tests +1.**
