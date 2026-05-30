@@ -46,6 +46,12 @@ export interface SerializedNodeExecution {
   usage?: NodeUsage;
   elapsedMs?: number;
   history?: ExecutionHistoryEntry[];
+  /**
+   * User's selected history-entry index (per-node Run history). Mirrors
+   * `ExecutionRecord.cursorIndex` so reloads land back on the same entry
+   * the user was viewing. Undefined === default to latest.
+   */
+  cursorIndex?: number;
 }
 
 /** Per-node execution results, keyed by node id. */
@@ -144,6 +150,17 @@ export function serializeExecutionState(): SerializedExecutionState {
     if (usage) entry.usage = usage;
     if (elapsedMs !== undefined) entry.elapsedMs = elapsedMs;
     if (history) entry.history = history;
+    // Persist the user's history-cursor selection so reloads land back on
+    // the same entry the user was viewing. Only carry it forward when it
+    // points at a valid index in the (possibly capped) history slice.
+    if (
+      rec.cursorIndex !== undefined &&
+      history &&
+      rec.cursorIndex >= 0 &&
+      rec.cursorIndex < history.length
+    ) {
+      entry.cursorIndex = rec.cursorIndex;
+    }
     out[nodeId] = entry;
   }
   return out;
@@ -170,6 +187,21 @@ export function executionStateToRecords(
     if (entry.elapsedMs !== undefined) rec.elapsedMs = entry.elapsedMs;
     if (entry.history && entry.history.length > 0) {
       rec.history = entry.history.slice(-HISTORY_CAP);
+    }
+    if (
+      entry.cursorIndex !== undefined &&
+      rec.history &&
+      entry.cursorIndex >= 0 &&
+      entry.cursorIndex < rec.history.length
+    ) {
+      rec.cursorIndex = entry.cursorIndex;
+      // Mirror the selected entry's output onto the record so that on
+      // reload the canvas immediately reflects the user's prior cursor
+      // position (matches what `setHistoryCursor` does at runtime).
+      const selected = rec.history[entry.cursorIndex]!;
+      rec.output = selected.output;
+      if (selected.usage) rec.usage = selected.usage;
+      if (selected.elapsedMs !== undefined) rec.elapsedMs = selected.elapsedMs;
     }
     records.set(nodeId, rec);
   }

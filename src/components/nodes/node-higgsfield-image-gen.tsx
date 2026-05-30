@@ -38,6 +38,7 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * Higgsfield Image Gen — the executable image-generation node.
@@ -104,30 +105,14 @@ function HiggsfieldImageGenNodeBody({
   const status = record?.status;
   const history = record?.history ?? [];
 
-  // Slice 5.8 — history cursor lets the user navigate past generations.
-  // Default to the latest entry. When history grows we keep the cursor
-  // pinned to the newest unless the user has navigated to a specific
-  // index (handled via local state).
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  // Jump to the newest result when one lands, even if viewing older history.
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
   // Active output: when navigating history we read from the entry,
   // otherwise the live record output (which during a `running` paint
   // is still empty — fine, history is empty too on first run).
   const activeOutput =
     history.length > 0
-      ? history[effectiveCursor]?.output
+      ? history[cursor]?.output
       : record?.output;
 
   const imageUrls: string[] =
@@ -178,8 +163,8 @@ function HiggsfieldImageGenNodeBody({
           >
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Generation"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

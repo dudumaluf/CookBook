@@ -92,6 +92,21 @@ export interface ExecutionState {
   cancelRun: () => void;
 
   /**
+   * Pick a different history entry as the node's current output.
+   *
+   * Updates `record.cursorIndex` AND mirrors `record.output` / `usage` /
+   * `elapsedMs` to that entry's values so downstream consumers (engine
+   * seeding, reactive runner) flow the user-selected output, not always
+   * the latest. Reactive runs see the change automatically; surgical
+   * "Run this node" runs also receive an explicit per-entry seed hash so
+   * the downstream cache distinguishes selections.
+   *
+   * No-op when the node has no history yet. Index is clamped into range
+   * defensively.
+   */
+  setHistoryCursor: (nodeId: string, cursorIndex: number) => void;
+
+  /**
    * Forget every record so all nodes render as "idle" again. Does NOT
    * clear the output cache — re-running with the same inputs is still
    * instant. Use `clearCache()` to drop the cache itself.
@@ -264,9 +279,25 @@ async function launchRun({
             timestamp: Date.now(),
           };
           const history = [...prevHistory, entry].slice(-HISTORY_CAP);
-          nextRecord = { ...record, history };
+          // Auto-jump cursor to the new latest entry. Users can still
+          // navigate back via the IteratorCursor in the body — this just
+          // ensures a fresh result is what they see right after a run.
+          nextRecord = {
+            ...record,
+            history,
+            cursorIndex: history.length - 1,
+          };
         } else if (prevHistory.length > 0) {
-          nextRecord = { ...record, history: prevHistory };
+          // Preserve prior history + cursor position during running /
+          // pending / cached transitions so the user's selection isn't
+          // wiped mid-run.
+          nextRecord = {
+            ...record,
+            history: prevHistory,
+            ...(prev?.cursorIndex !== undefined
+              ? { cursorIndex: prev.cursorIndex }
+              : {}),
+          };
         }
         const next = new Map(get().records);
         next.set(nodeId, nextRecord);
@@ -307,16 +338,66 @@ export const useExecutionStore = create<ExecutionState>()((set, get) => ({
     // verbatim (no re-execution). Exclude the target so it always runs.
     // Ancestors with no recorded output are absent here → they execute on
     // demand (covers an empty upstream the target depends on).
+    //
+    // Cursor-aware seeding (history bug fix): if the ancestor has history
+    // and the user has navigated the body cursor to an OLDER entry, seed
+    // with that entry's output AND a per-entry hash. The hash makes the
+    // downstream cache key distinguish selections — running the target
+    // twice with cursor on different upstream entries returns different
+    // results instead of aliasing on the latest. When the cursor is on
+    // the latest entry (or undefined), we pass the regular `rec.output`
+    // with no hash override, preserving today's cache hits.
     const seedOutputs = new Map<string, ExecutionCacheEntry>();
     for (const [id, rec] of get().records) {
       if (id === nodeId) continue;
       if (rec.output === undefined) continue;
+      const history = rec.history ?? [];
+      const latest = history.length - 1;
+      const cursor =
+        rec.cursorIndex !== undefined &&
+        rec.cursorIndex >= 0 &&
+        rec.cursorIndex <= latest
+          ? rec.cursorIndex
+          : latest;
+      const isOlder = history.length > 0 && cursor >= 0 && cursor < latest;
+      const entry = isOlder ? history[cursor] : undefined;
+
+      const seedOutput = entry?.output ?? rec.output;
+      const seedUsage = entry?.usage ?? rec.usage;
       seedOutputs.set(id, {
-        output: rec.output,
-        ...(rec.usage ? { usage: rec.usage } : {}),
+        output: seedOutput,
+        ...(seedUsage ? { usage: seedUsage } : {}),
+        ...(isOlder && entry
+          ? { hash: `${id}::run-${entry.runId}` }
+          : {}),
       });
     }
     await launchRun({ get, set, endAtNodeId: nodeId, seedOutputs });
+  },
+
+  setHistoryCursor: (nodeId, cursorIndex) => {
+    const records = new Map(get().records);
+    const rec = records.get(nodeId);
+    if (!rec || !rec.history || rec.history.length === 0) return;
+    const idx = Math.min(
+      Math.max(0, Math.trunc(cursorIndex)),
+      rec.history.length - 1,
+    );
+    if (rec.cursorIndex === idx) return;
+    const entry = rec.history[idx]!;
+    // Mirror the selected entry into the record so reactive consumers +
+    // engine seeding pick it up. We intentionally MUTATE `output` and
+    // `usage` here — the history entry is the source of truth for what
+    // the user has selected, and downstream code should see exactly that.
+    const next: ExecutionRecord = {
+      ...rec,
+      cursorIndex: idx,
+      output: entry.output,
+      usage: entry.usage,
+      ...(entry.elapsedMs !== undefined ? { elapsedMs: entry.elapsedMs } : {}),
+    };
+    records.set(nodeId, next);
+    set({ records });
   },
 
   cancelRun: () => {

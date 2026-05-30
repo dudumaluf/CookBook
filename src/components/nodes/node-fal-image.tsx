@@ -1,7 +1,7 @@
 "use client";
 
 import { ImagePlus, Loader2, Sparkles, Wand2 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -27,6 +27,7 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * Fal Image — multi-model image generation/edit (Slice F).
@@ -77,22 +78,9 @@ function FalImageBody({ nodeId, config }: NodeBodyProps<FalImageNodeConfig>) {
   const status = record?.status;
   const history = record?.history ?? [];
 
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  // Jump to the newest result when one lands, even if the user was viewing
-  // an older history entry (the result must show the moment it's ready).
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
   const activeOutput =
-    history.length > 0 ? history[effectiveCursor]?.output : record?.output;
+    history.length > 0 ? history[cursor]?.output : record?.output;
 
   const imageUrls: string[] = Array.isArray(activeOutput)
     ? activeOutput
@@ -118,8 +106,8 @@ function FalImageBody({ nodeId, config }: NodeBodyProps<FalImageNodeConfig>) {
           <div className="absolute right-1 top-1 z-10">
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Generation"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

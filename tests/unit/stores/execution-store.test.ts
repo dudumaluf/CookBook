@@ -276,4 +276,90 @@ describe("execution-store", () => {
       expect(rec?.history).toHaveLength(1);
     });
   });
+
+  /* ─── History cursor (canonical state, picks per-entry as output) ─── */
+
+  describe("setHistoryCursor", () => {
+    it("mirrors the selected history entry into record.output and bumps cursorIndex", async () => {
+      const textId = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "v0" });
+
+      await useExecutionStore.getState().startRun();
+      useWorkflowStore.getState().updateNodeConfig(textId, { text: "v1" });
+      await useExecutionStore.getState().startRun();
+      useWorkflowStore.getState().updateNodeConfig(textId, { text: "v2" });
+      await useExecutionStore.getState().startRun();
+
+      const rec0 = useExecutionStore.getState().getRecord(textId);
+      expect(rec0?.history).toHaveLength(3);
+      // Auto-bumps cursor to latest after each run.
+      expect(rec0?.cursorIndex).toBe(2);
+      expect((rec0!.output as StandardizedOutput).value).toBe("v2");
+
+      // Pick history entry 0 — record.output mirrors it.
+      useExecutionStore.getState().setHistoryCursor(textId, 0);
+      const rec1 = useExecutionStore.getState().getRecord(textId);
+      expect(rec1?.cursorIndex).toBe(0);
+      expect((rec1!.output as StandardizedOutput).value).toBe("v0");
+    });
+
+    it("clamps out-of-range indices instead of throwing", async () => {
+      const textId = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "v0" });
+      await useExecutionStore.getState().startRun();
+      useExecutionStore.getState().setHistoryCursor(textId, 99);
+      const rec = useExecutionStore.getState().getRecord(textId);
+      expect(rec?.cursorIndex).toBe(0); // history.length - 1 with one entry
+    });
+
+    it("flows the cursor-selected upstream output into a downstream surgical run (regression)", async () => {
+      // The bug: navigating an upstream node's history cursor to an OLDER
+      // entry, then clicking Run on the downstream, used the LATEST output
+      // anyway. After this fix, the surgical run must see exactly what the
+      // user has selected in the body.
+      const a = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "alpha" });
+      const b = useWorkflowStore.getState().addNode("list", { x: 0, y: 0 });
+      useWorkflowStore.getState().addEdge({
+        source: a,
+        sourceHandle: "out",
+        target: b,
+        targetHandle: "items",
+      });
+
+      // Build up 3 entries on A (alpha, beta, gamma).
+      await useExecutionStore.getState().startRun();
+      useWorkflowStore.getState().updateNodeConfig(a, { text: "beta" });
+      await useExecutionStore.getState().startRun();
+      useWorkflowStore.getState().updateNodeConfig(a, { text: "gamma" });
+      await useExecutionStore.getState().startRun();
+
+      const recA = useExecutionStore.getState().getRecord(a);
+      expect(recA?.history).toHaveLength(3);
+
+      // User scrolls A's cursor back to entry[0] (alpha).
+      useExecutionStore.getState().setHistoryCursor(a, 0);
+      // User runs B surgically — must consume "alpha", not "gamma".
+      await useExecutionStore.getState().startRunNode(b);
+      const recB = useExecutionStore.getState().getRecord(b);
+      expect((recB?.output as StandardizedOutput).value).toBe("alpha");
+
+      // Now cursor at entry[1] (beta) and re-run B — cache must NOT alias
+      // back to the alpha result; downstream must re-execute with beta.
+      useExecutionStore.getState().setHistoryCursor(a, 1);
+      await useExecutionStore.getState().startRunNode(b);
+      const recB2 = useExecutionStore.getState().getRecord(b);
+      expect((recB2?.output as StandardizedOutput).value).toBe("beta");
+
+      // Move back to entry[0] (alpha) again. Same per-entry seed hash as
+      // the first run → expected cache hit returning "alpha".
+      useExecutionStore.getState().setHistoryCursor(a, 0);
+      await useExecutionStore.getState().startRunNode(b);
+      const recB3 = useExecutionStore.getState().getRecord(b);
+      expect((recB3?.output as StandardizedOutput).value).toBe("alpha");
+    });
+  });
 });

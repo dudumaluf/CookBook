@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * LLM Text — Slice 3.2 (real Fal OpenRouter wiring, ADR-0024).
@@ -126,19 +127,11 @@ function LLMTextNodeBody({
 
   // Slice 5.8 — history cursor (view-only). Defaults to the latest
   // entry; user navigates with the cursor chip below the model chip.
-  // `null` means "follow the live record"; once the user navigates we
-  // pin to a specific index until they return to the latest.
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
   const activeOutput =
     history.length > 0
-      ? history[effectiveCursor]?.output
+      ? history[cursor]?.output
       : record?.output;
 
   const output =
@@ -165,8 +158,8 @@ function LLMTextNodeBody({
         >
           <IteratorCursor
             count={history.length}
-            cursor={effectiveCursor}
-            onCursorChange={(next) => setHistoryCursor(next)}
+            cursor={cursor}
+            onCursorChange={setCursor}
             ariaLabelPrefix="Response"
           />
           <span className="text-muted-foreground/60">past responses</span>

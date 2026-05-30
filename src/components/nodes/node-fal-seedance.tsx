@@ -1,7 +1,7 @@
 "use client";
 
 import { Clapperboard, Film, Loader2 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputArrayByType, extractInputByType } from "@/lib/engine/extract-input";
@@ -21,6 +21,7 @@ import { parseAspectRatio } from "@/lib/utils/aspect-ratio";
 import type { NodeBodyProps, NodeIO, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * Seedance Video — the executable video-generation node (Slice B).
@@ -224,22 +225,10 @@ function SeedanceVideoNodeBody({
     if (Object.keys(patch).length > 0) updateConfig(patch);
   }, [mode, connectedKey, config, updateConfig]);
 
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  // Jump to the newest clip when one lands, even if viewing older history.
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
   const activeOutput =
-    history.length > 0 ? history[effectiveCursor]?.output : record?.output;
+    history.length > 0 ? history[cursor]?.output : record?.output;
 
   const videoUrl: string | null =
     activeOutput &&
@@ -322,8 +311,8 @@ function SeedanceVideoNodeBody({
           >
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Clip"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

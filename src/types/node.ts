@@ -504,6 +504,23 @@ export interface ExecutionRecord {
    * Cleared by `clearRun()` along with `records`.
    */
   history?: ExecutionHistoryEntry[];
+  /**
+   * 0-indexed pointer into `history` representing **which entry is
+   * currently selected by the user** in the node body. Two consequences:
+   *
+   *  1. `output` and `usage` are mirrored to `history[cursorIndex]` so
+   *     downstream consumers (engine seeding, reactive runner) see the
+   *     selected entry, not always the latest.
+   *  2. When the user picks a non-latest entry, the engine receives an
+   *     explicit per-entry seed hash (see `ExecutionCacheEntry.hash`)
+   *     so a downstream cache key can never alias across entries.
+   *
+   * `undefined` (or out-of-range) means "latest" — equivalent to
+   * `history.length - 1`. Auto-bumps to the new latest on every fresh
+   * `done` append. Persisted in ProjectDocument so the user's selection
+   * survives reloads.
+   */
+  cursorIndex?: number;
 }
 
 /** A single entry in `ExecutionRecord.history` (Slice 5.8). */

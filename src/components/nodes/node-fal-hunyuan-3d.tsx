@@ -23,6 +23,7 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * Hunyuan 3D Pro — image-to-3D mesh generation (Fal).
@@ -134,21 +135,10 @@ function Hunyuan3dBody({ nodeId, config }: NodeBodyProps<Hunyuan3dNodeConfig>) {
   const status = record?.status;
   const history = record?.history ?? [];
 
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
   const activeOutput =
-    history.length > 0 ? history[effectiveCursor]?.output : record?.output;
+    history.length > 0 ? history[cursor]?.output : record?.output;
   const mesh = meshFromOutput(activeOutput);
 
   const generateType = config.generateType ?? DEFAULT_GENERATE_TYPE;
@@ -176,8 +166,8 @@ function Hunyuan3dBody({ nodeId, config }: NodeBodyProps<Hunyuan3dNodeConfig>) {
           >
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Mesh"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

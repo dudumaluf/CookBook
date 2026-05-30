@@ -1,7 +1,6 @@
 "use client";
 
 import { Loader2, Mic2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
@@ -10,6 +9,7 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * ElevenLabs Audio Isolation (via Fal) — isolate vocals from audio or video.
@@ -37,21 +37,10 @@ function AudioIsolationBody({ nodeId }: NodeBodyProps) {
   const status = record?.status;
   const history = record?.history ?? [];
 
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
   const activeOutput =
-    history.length > 0 ? history[effectiveCursor]?.output : record?.output;
+    history.length > 0 ? history[cursor]?.output : record?.output;
   const url = audioUrlFromOutput(activeOutput);
 
   return (
@@ -69,8 +58,8 @@ function AudioIsolationBody({ nodeId }: NodeBodyProps) {
           >
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Isolation"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

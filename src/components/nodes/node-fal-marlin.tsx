@@ -1,7 +1,7 @@
 "use client";
 
 import { Eye, Loader2, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
@@ -21,6 +21,7 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
  * Marlin (video VLM, via Fal) — caption a clip with scene + time-ranged
@@ -91,20 +92,9 @@ function MarlinBody({ nodeId, config }: NodeBodyProps<MarlinNodeConfig>) {
   const status = record?.status;
   const history = record?.history ?? [];
 
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
-  const prevHistoryLen = useRef(history.length);
-  useEffect(() => {
-    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
-    prevHistoryLen.current = history.length;
-  }, [history.length]);
-  const effectiveCursor =
-    history.length === 0
-      ? 0
-      : historyCursor === null || historyCursor >= history.length
-        ? history.length - 1
-        : Math.max(0, historyCursor);
+  const { cursor, setCursor } = useNodeHistoryCursor(nodeId, history.length);
 
-  const activeEntry = history[effectiveCursor];
+  const activeEntry = history[cursor];
   const activeOutput = activeEntry?.output ?? record?.output;
   const text = textFromOutput(activeOutput);
   const meta = readMeta(nodeId, activeEntry);
@@ -138,8 +128,8 @@ function MarlinBody({ nodeId, config }: NodeBodyProps<MarlinNodeConfig>) {
           >
             <IteratorCursor
               count={history.length}
-              cursor={effectiveCursor}
-              onCursorChange={(next) => setHistoryCursor(next)}
+              cursor={cursor}
+              onCursorChange={setCursor}
               ariaLabelPrefix="Caption"
               className="bg-background/75 shadow-sm backdrop-blur-sm"
             />

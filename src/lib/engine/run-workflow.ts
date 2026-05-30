@@ -48,6 +48,15 @@ function formatError(err: unknown): string {
 export interface ExecutionCacheEntry {
   output: StandardizedOutput | StandardizedOutput[];
   usage?: NodeUsage;
+  /**
+   * Optional explicit hash to use for this seeded ancestor instead of the
+   * config-derived `nodeHash`. Lets `startRunNode` distinguish per-history-
+   * entry selections from each other so a downstream cache key never
+   * aliases across two different upstream outputs (e.g. Seedance run #3
+   * vs. run #5 with the same config + seed=-1). When undefined, the engine
+   * falls back to `computeNodeHash` like before — backwards compatible.
+   */
+  hash?: string;
 }
 
 /**
@@ -493,7 +502,22 @@ export async function runWorkflow(
       upstreamHashesByTargetHandle.set(edge.targetHandle, hashBucket);
     }
 
-    const nodeHash = computeNodeHash(node, upstreamHashesByTargetHandle);
+    const computedHash = computeNodeHash(node, upstreamHashesByTargetHandle);
+    // Seeded ancestors (only present in `startRunNode`) may carry an
+    // explicit `hash` that overrides the config-derived `computedHash` for
+    // *this* node. That's how the cursor's selection on an upstream
+    // history entry propagates as a distinct dep into downstream cache
+    // keys — without it, two different Seedance runs with the same config
+    // collide in the cache (hash depends only on config + upstream hashes).
+    const seedEntry = seedOutputs?.get(node.id);
+    const isSeededAncestor =
+      seedOutputs !== undefined &&
+      node.id !== endAtNodeId &&
+      seedOutputs.has(node.id);
+    const nodeHash =
+      isSeededAncestor && seedEntry?.hash !== undefined
+        ? seedEntry.hash
+        : computedHash;
     hashes.set(node.id, nodeHash);
 
     // Surgical node-only run: an ancestor with a seeded output is reused
