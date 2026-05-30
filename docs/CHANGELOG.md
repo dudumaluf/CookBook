@@ -10,6 +10,10 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Compare node: A/B before-after wipe (image + video)
+
+New `Compare` node — wire two images or two videos into `A` / `B`, then drag across the preview: a vertical divider follows your mouse, revealing more of B to the left and A to the right (the classic before/after wipe). Videos autoplay muted + looped so motion compares too. Reactive viewer; passes B through (falls back to A) so it can sit inline. **Tests +3.**
+
 ## 2026-05-30 — Library imports video + audio (not just images)
 
 The Library upload button + drop zone only accepted `image/*` and only ran the image pipeline, so you could never import audio/video as assets — which is why no Audio filter chip ever appeared (chips show per kind when count > 0). Now both routes accept `image/* , video/* , audio/*` and fan files to the right import (image / video / audio). The audio chip + section already existed; they light up once audio assets exist.
