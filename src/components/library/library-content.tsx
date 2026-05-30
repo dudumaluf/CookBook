@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { filterAssets } from "@/lib/library/filter-assets";
-import { importImageFiles } from "@/lib/library/import-files";
+import { importImageFiles, importMediaFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import {
   useLayoutStore,
@@ -125,19 +125,36 @@ export function LibraryContent() {
     setIsDropTarget(false);
     const list = Array.from(event.dataTransfer.files);
     if (list.length === 0) return;
-    if (list.length === 1) {
-      // Single-file drop: import straight, no dialog.
-      const result = await importImageFiles(list);
-      if (result.created > 0) {
-        toast.success(
-          `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
-        );
-      }
-      for (const err of result.errors) toast.error(err);
+    const images = list.filter((f) => f.type.startsWith("image/"));
+    const videos = list.filter((f) => f.type.startsWith("video/"));
+    const audios = list.filter((f) => f.type.startsWith("audio/"));
+
+    // Pure-image multi-drop keeps the "import as group?" flow.
+    if (images.length === list.length && list.length > 1) {
+      setPendingFiles(list);
       return;
     }
-    // 2+ files: ask the user via the dialog.
-    setPendingFiles(list);
+
+    let created = 0;
+    const errors: string[] = [];
+    const collect = (r: { created: number; errors: string[] }) => {
+      created += r.created;
+      errors.push(...r.errors);
+    };
+    if (images.length) collect(await importImageFiles(images));
+    if (videos.length) collect(await importMediaFiles(videos, "video"));
+    if (audios.length) collect(await importMediaFiles(audios, "audio"));
+    const skipped = list.length - images.length - videos.length - audios.length;
+
+    if (created > 0) {
+      toast.success(
+        `${created} asset${created === 1 ? "" : "s"} added to Library`,
+      );
+    }
+    for (const err of errors) toast.error(err);
+    if (skipped > 0) {
+      toast.error(`${skipped} file${skipped === 1 ? "" : "s"} skipped — unsupported type`);
+    }
   }
 
   // Per-kind base lists (unfiltered counts drive the chips) + query-filtered

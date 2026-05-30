@@ -29,7 +29,7 @@ import {
   fetchSoulIds,
   HiggsfieldCallError,
 } from "@/lib/higgsfield/call-higgsfield-image";
-import { importImageFiles } from "@/lib/library/import-files";
+import { importImageFiles, importMediaFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import type { HiggsfieldSoulIdSummary } from "@/lib/higgsfield/types";
 
@@ -70,25 +70,41 @@ export function UploadAssetButton() {
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
-    if (list.length === 1) {
-      // Single-file: skip the dialog, import straight (today's behaviour).
-      setIsUploading(true);
-      let result;
-      try {
-        result = await importImageFiles(list);
-      } finally {
-        setIsUploading(false);
-      }
-      if (result.created > 0) {
-        toast.success(
-          `${result.created} image${result.created === 1 ? "" : "s"} added to Library`,
-        );
-      }
-      for (const err of result.errors) toast.error(err);
+    const images = list.filter((f) => f.type.startsWith("image/"));
+    const videos = list.filter((f) => f.type.startsWith("video/"));
+    const audios = list.filter((f) => f.type.startsWith("audio/"));
+
+    // Pure-image multi-select keeps the "import as group?" flow.
+    if (images.length === list.length && list.length > 1) {
+      setPendingFiles(list);
       return;
     }
-    // Multi-file: ask the user via the dialog.
-    setPendingFiles(list);
+
+    setIsUploading(true);
+    try {
+      let created = 0;
+      const errors: string[] = [];
+      const collect = (r: { created: number; errors: string[] }) => {
+        created += r.created;
+        errors.push(...r.errors);
+      };
+      if (images.length) collect(await importImageFiles(images));
+      if (videos.length) collect(await importMediaFiles(videos, "video"));
+      if (audios.length) collect(await importMediaFiles(audios, "audio"));
+      const skipped = list.length - images.length - videos.length - audios.length;
+
+      if (created > 0) {
+        toast.success(
+          `${created} asset${created === 1 ? "" : "s"} added to Library`,
+        );
+      }
+      for (const err of errors) toast.error(err);
+      if (skipped > 0) {
+        toast.error(`${skipped} file${skipped === 1 ? "" : "s"} skipped — unsupported type`);
+      }
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   return (
@@ -101,7 +117,7 @@ export function UploadAssetButton() {
             disabled={isUploading}
             onClick={() => inputRef.current?.click()}
             className="h-6 w-6 text-muted-foreground"
-            aria-label="Upload image from disk"
+            aria-label="Upload media from disk"
           >
             {isUploading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -110,14 +126,14 @@ export function UploadAssetButton() {
             )}
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Upload image(s) from disk</TooltipContent>
+        <TooltipContent>Upload image / video / audio from disk</TooltipContent>
       </Tooltip>
       {isUploading ? <UploadingBadge /> : null}
       {/* Hidden, focus-skipped — the visible Button is the real control. */}
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*,audio/*"
         multiple
         className="hidden"
         aria-hidden

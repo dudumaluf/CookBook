@@ -81,13 +81,13 @@ const SOUL_FIXTURE: HiggsfieldSoulIdSummary[] = [
 describe("<UploadAssetButton />", () => {
   it("renders a Plus button + a hidden file input — no popover", () => {
     render(<UploadAssetButton />);
-    expect(screen.getByLabelText("Upload image from disk")).toBeTruthy();
+    expect(screen.getByLabelText("Upload media from disk")).toBeTruthy();
     const fileInput = document.querySelector(
       'input[type="file"]',
     ) as HTMLInputElement;
     expect(fileInput).toBeTruthy();
     expect(fileInput.multiple).toBe(true);
-    expect(fileInput.accept).toBe("image/*");
+    expect(fileInput.accept).toBe("image/*,video/*,audio/*");
     // No popover — there should be no "Or add an image URL"-style disclosure.
     expect(screen.queryByText(/Or add an image URL/)).toBeNull();
   });
@@ -134,7 +134,7 @@ describe("<UploadAssetButton />", () => {
     // Button stays mounted under the same aria-label but is now disabled
     // and renders the spinner instead of the plus.
     const button = screen.getByLabelText(
-      "Upload image from disk",
+      "Upload media from disk",
     ) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(screen.getByText("Uploading…")).toBeTruthy();
