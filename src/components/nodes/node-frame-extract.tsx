@@ -142,6 +142,10 @@ export const frameExtractNodeSchema = defineNode<FrameExtractNodeConfig>({
   icon: ScissorsLineDashed,
   inputs: [{ id: "video", label: "video", dataType: "video" }],
   outputs: [{ id: "out", label: "out", dataType: "image" }],
+  configParams: {
+    position: { control: "select", options: ["first", "last", "at"], label: "frame" },
+    atSec: { control: "number", label: "time (s)" },
+  },
   defaultConfig: { position: DEFAULT_POSITION },
   reactive: false,
   execute: async ({ config, inputs }) => {

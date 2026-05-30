@@ -132,6 +132,24 @@ export interface NodeBodyProps<TConfig = unknown> {
   selected: boolean;
 }
 
+/**
+ * Declarative description of a config field's UI control. Read by the recipe
+ * params editor so that exposing a field on a composite keeps the original
+ * node's control (dropdown / toggle / number) instead of degrading to a bare
+ * text box. Without it, the editor can only infer from the JS type (string →
+ * text), losing dropdown options. Mirrors `RecipeExposedParam`'s control set.
+ */
+export interface NodeConfigParamSpec {
+  control: "select" | "number" | "text" | "toggle";
+  /** Choices for a `select` control. */
+  options?: readonly string[];
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Friendly label; defaults to the config key. */
+  label?: string;
+}
+
 export interface NodeSchema<TConfig = unknown> {
   kind: string;
   category: NodeCategory;
@@ -153,6 +171,12 @@ export interface NodeSchema<TConfig = unknown> {
    */
   getInputs?: (config: TConfig) => NodeIO[];
   getOutputs?: (config: TConfig) => NodeIO[];
+  /**
+   * Per-config-key control descriptors for the recipe params editor. Keyed
+   * by config field name. Lets a recipe surface a field with the same
+   * dropdown/toggle/number the node's own settings use. Optional.
+   */
+  configParams?: Record<string, NodeConfigParamSpec>;
   defaultConfig: TConfig;
   /**
    * Reactive nodes derive their output from `config` alone (Text, Image,

@@ -79,6 +79,8 @@ export interface ContinuityBuilderNodeConfig {
    * 720p) — NOT the output resolution (that's `resolution`).
    */
   refResolution?: "480p" | "720p";
+  /** Per-chunk audio slice format. WAV (default, lossless) or MP3 (smaller). */
+  audioFormat?: "wav" | "mp3";
   fast?: boolean;
 }
 
@@ -189,6 +191,7 @@ function ContinuityBuilderSettings({
   const chunkId = useId();
   const maxId = useId();
   const refResId = useId();
+  const audioFmtId = useId();
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -228,6 +231,23 @@ function ContinuityBuilderSettings({
         >
           <option value="720p">720p (best)</option>
           <option value="480p">480p (smaller/cheaper)</option>
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={audioFmtId} className="font-medium text-foreground/90">
+          Audio slice format
+        </label>
+        <select
+          id={audioFmtId}
+          value={config.audioFormat ?? "wav"}
+          onChange={(e) =>
+            updateConfig({ audioFormat: e.target.value as "wav" | "mp3" })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="wav">WAV (lossless)</option>
+          <option value="mp3">MP3 (smaller)</option>
         </select>
       </div>
 
@@ -312,6 +332,15 @@ export const continuityBuilderNodeSchema =
       { id: "video", label: "video", dataType: "video" },
     ],
     outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
+    configParams: {
+      strategy: { control: "select", options: ["extension", "frame-chain"], label: "strategy" },
+      refResolution: { control: "select", options: ["720p", "480p"], label: "ref resolution" },
+      audioFormat: { control: "select", options: ["wav", "mp3"], label: "audio format" },
+      durationSec: { control: "number", label: "chunk duration (s)" },
+      chunkCount: { control: "number", label: "chunk count" },
+      maxChunks: { control: "number", label: "max chunks" },
+      fast: { control: "toggle", label: "fast tier" },
+    },
     defaultConfig: { strategy: "extension", durationSec: DEFAULT_DURATION },
     reactive: false,
     execute: async ({ config, inputs, signal, reportProgress }) => {
@@ -358,13 +387,15 @@ export const continuityBuilderNodeSchema =
       }
 
       // Per-chunk audio slices (lip-sync).
-      let audioUrls: string[] = [];
-      if (song?.url && windows) {
-        const blobs = await sliceAudio(song.url, windows);
-        audioUrls = await Promise.all(
-          blobs.map((b, i) => uploadBlob(b, "audio", `chunk-${i + 1}.wav`)),
-        );
-      }
+    let audioUrls: string[] = [];
+    if (song?.url && windows) {
+      const audioFormat = config.audioFormat ?? "wav";
+      const ext = audioFormat === "mp3" ? "mp3" : "wav";
+      const blobs = await sliceAudio(song.url, windows, { format: audioFormat });
+      audioUrls = await Promise.all(
+        blobs.map((b, i) => uploadBlob(b, "audio", `chunk-${i + 1}.${ext}`)),
+      );
+    }
 
       // Per-chunk reference-video slices (motion / performance to mirror).
       let refVideoUrls: string[] = [];

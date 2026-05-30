@@ -10,6 +10,15 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-29 — Recipe params keep the node's real control (dropdowns, not text) + Continuity Builder MP3
+
+Two things:
+
+- **Recipe exposed params inherit the original node's UI.** Before, exposing a field on a recipe (e.g. Seedance `aspectRatio`) degraded to a bare text box — the save dialog only inferred control from the JS type. Nodes now declare `configParams` (control + options) on their schema, so the editor pre-fills the right control (dropdown/toggle/number) AND its options. Annotated: Seedance, Fal Image, Frame Extract, Audio/Video Slicer, Continuity Builder, List. Others fall back to type inference. The composite already rendered these controls — the gap was purely in how params were built at save time.
+- **Continuity Builder audio format** — added the same WAV/MP3 picker (passes `format` to `sliceAudio`); default WAV.
+
+**Tests +1.** New schema field `NodeSchema.configParams` (`src/types/node.ts`); `defineNode` is identity so it just flows through.
+
 ## 2026-05-29 — Audio Slicer: choose WAV or MP3 output
 
 Audio Slicer gained an **Output format** picker: WAV (lossless, default — raw PCM, no encoder) or **MP3** (far smaller). MP3 uses the LAME encoder via `@mediabunny/mp3-encoder`, lazy-loaded + registered on first use (only if the browser can't already encode MP3 natively). Both are accepted by Seedance. **Tests +2.** New dep: `@mediabunny/mp3-encoder@1.45.4`.

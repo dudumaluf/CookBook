@@ -297,6 +297,9 @@ interface ParamCandidate {
   nodeTitle: string;
   key: string;
   inferred: RecipeExposedParam["control"];
+  /** Dropdown options + label inherited from the node's schema, if declared. */
+  options?: readonly string[];
+  label?: string;
 }
 
 /**
@@ -318,16 +321,24 @@ function RecipeParamsEditor({
   const candidates = useMemo<ParamCandidate[]>(() => {
     const out: ParamCandidate[] = [];
     for (const n of nodes) {
-      const title = nodeRegistry.get(n.kind)?.title ?? n.kind;
+      const schema = nodeRegistry.get(n.kind);
+      const title = schema?.title ?? n.kind;
       const cfg = (n.config ?? {}) as Record<string, unknown>;
       for (const [key, value] of Object.entries(cfg)) {
         const t = typeof value;
         if (t !== "string" && t !== "number" && t !== "boolean") continue;
+        // Prefer the node's declared control (keeps dropdowns/toggles) and
+        // fall back to inferring from the JS type.
+        const spec = schema?.configParams?.[key];
         out.push({
           nodeId: n.id,
           nodeTitle: title,
           key,
-          inferred: t === "boolean" ? "toggle" : t === "number" ? "number" : "text",
+          inferred:
+            spec?.control ??
+            (t === "boolean" ? "toggle" : t === "number" ? "number" : "text"),
+          ...(spec?.options ? { options: spec.options } : {}),
+          ...(spec?.label ? { label: spec.label } : {}),
         });
       }
     }
@@ -354,8 +365,9 @@ function RecipeParamsEditor({
         {
           internalNodeId: c.nodeId,
           configKey: c.key,
-          label: `${c.nodeTitle} · ${c.key}`,
+          label: c.label ? `${c.nodeTitle} · ${c.label}` : `${c.nodeTitle} · ${c.key}`,
           control: c.inferred,
+          ...(c.options ? { options: [...c.options] } : {}),
         },
       ]);
     }

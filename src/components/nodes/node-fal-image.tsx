@@ -374,6 +374,11 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
     { id: "image", label: "image", dataType: "image", multiple: true },
   ],
   outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],
+  configParams: {
+    model: { control: "select", options: FAL_IMAGE_MODELS, label: "model" },
+    numImages: { control: "number", label: "images" },
+    seed: { control: "number", label: "seed" },
+  },
   defaultConfig: { model: DEFAULT_MODEL, seed: RANDOM_SEED },
   reactive: false,
   // seed === -1 (or unset) -> random each run -> bust the cache so pressing

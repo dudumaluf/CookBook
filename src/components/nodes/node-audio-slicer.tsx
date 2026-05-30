@@ -172,6 +172,11 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
     { id: "video", label: "video", dataType: "video" },
   ],
   outputs: [{ id: "out", label: "out", dataType: "audio", multiple: true }],
+  configParams: {
+    outputFormat: { control: "select", options: ["wav", "mp3"], label: "output format" },
+    windowSec: { control: "number", label: "window (s)" },
+    minTailSec: { control: "number", label: "min tail (s)" },
+  },
   defaultConfig: {
     windowSec: DEFAULT_WINDOW_SEC,
     minTailSec: DEFAULT_MIN_TAIL_SEC,

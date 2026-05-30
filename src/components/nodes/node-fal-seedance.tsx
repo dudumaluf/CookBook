@@ -420,6 +420,14 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     ];
   },
   outputs: [{ id: "out", label: "out", dataType: "video" }],
+  configParams: {
+    mode: { control: "select", options: ["reference", "first-frame", "first-last"], label: "mode" },
+    aspectRatio: { control: "select", options: SEEDANCE_ASPECT_RATIOS, label: "aspect ratio" },
+    resolution: { control: "select", options: SEEDANCE_RESOLUTIONS, label: "resolution" },
+    generateAudio: { control: "toggle", label: "native audio" },
+    fast: { control: "toggle", label: "fast tier" },
+    seed: { control: "number", label: "seed" },
+  },
   defaultConfig: {
     generateAudio: true,
     resolution: DEFAULT_RESOLUTION,

@@ -174,6 +174,11 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
   icon: Scissors,
   inputs: [{ id: "video", label: "video", dataType: "video" }],
   outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
+  configParams: {
+    maxHeight: { control: "select", options: ["720p", "480p", "source"], label: "downscale" },
+    windowSec: { control: "number", label: "window (s)" },
+    minTailSec: { control: "number", label: "min tail (s)" },
+  },
   defaultConfig: {
     windowSec: DEFAULT_WINDOW_SEC,
     minTailSec: DEFAULT_MIN_TAIL_SEC,

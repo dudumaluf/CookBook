@@ -253,6 +253,10 @@ export const listNodeSchema = defineNode<ListNodeConfig>({
     { id: "cursor", label: "cursor", dataType: "number" },
   ],
   outputs: [{ id: "out", label: "out", dataType: "text" }],
+  configParams: {
+    mode: { control: "select", options: LIST_MODES, label: "mode" },
+    cursor: { control: "number", label: "cursor" },
+  },
   defaultConfig: {
     cursor: 0,
     mode: "fixed",
