@@ -10,7 +10,7 @@ import { useAssetStore } from "@/lib/stores/asset-store";
  * The 25 MB image cap is conservative: it keeps uploads snappy and is easy
  * to relax once we have image-resize on import. Video/audio are far larger
  * (songs, performance clips). All caps sit at/under the `cookbook-assets`
- * bucket's 500 MB server-side limit + its image/video/audio MIME allowlist.
+ * bucket's 750 MB server-side limit + its image/video/audio MIME allowlist.
  * Seedance's own per-file caps (30 MB image / 50 MB video / 15 MB audio
  * total) are enforced separately at generation time.
  */
@@ -18,8 +18,8 @@ import { useAssetStore } from "@/lib/stores/asset-store";
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const ACCEPTED_IMAGE_MIME = /^image\//;
 
-export const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
-export const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 750 * 1024 * 1024;
+export const MAX_AUDIO_BYTES = 750 * 1024 * 1024;
 export const ACCEPTED_VIDEO_MIME = /^video\//;
 export const ACCEPTED_AUDIO_MIME = /^audio\//;
 
@@ -75,7 +75,7 @@ export async function importMediaFiles(
   const acceptMime =
     kind === "video" ? ACCEPTED_VIDEO_MIME : ACCEPTED_AUDIO_MIME;
   const maxBytes = kind === "video" ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES;
-  const maxLabel = "500 MB";
+  const maxLabel = "750 MB";
 
   const errors: string[] = [];
   const ids: string[] = [];
