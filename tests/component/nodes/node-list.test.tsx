@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { listNodeSchema } from "@/components/nodes/node-list";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { StandardizedOutput } from "@/types/node";
 
@@ -216,5 +217,42 @@ describe("listNodeSchema", () => {
     expect(screen.getByTestId("list-mode-chip").textContent).toBe(
       "increment",
     );
+  });
+
+  it("previews the selected media item (image thumbnail)", () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "src", kind: "array", position: { x: 0, y: 0 }, config: {} },
+        { id: "n", kind: "list", position: { x: 0, y: 0 }, config: { cursor: 1, mode: "fixed" } },
+      ],
+      edges: [
+        { id: "e", source: "src", sourceHandle: "out", target: "n", targetHandle: "items" },
+      ],
+    });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "src",
+          {
+            status: "done",
+            output: [
+              { type: "image", value: { url: "https://x/a.png" } },
+              { type: "image", value: { url: "https://x/b.png" } },
+            ],
+          },
+        ],
+      ]),
+    });
+    const Body = listNodeSchema.Body;
+    render(
+      <Body
+        nodeId="n"
+        config={{ cursor: 1, mode: "fixed" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    const img = screen.getByAltText("Selected") as HTMLImageElement;
+    expect(img.src).toContain("https://x/b.png");
   });
 });

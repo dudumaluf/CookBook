@@ -116,6 +116,11 @@ function ListNodeBody({
     return `Item ${index + 1}`;
   }
 
+  const selected =
+    items.length > 0
+      ? items[Math.min(effectiveCursor, items.length - 1)]
+      : undefined;
+
   return (
     <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center justify-between gap-2">
@@ -158,6 +163,7 @@ function ListNodeBody({
               </option>
             ))}
           </select>
+          {selected ? <ListItemPreview item={selected} /> : null}
         </div>
       ) : null}
 
@@ -193,6 +199,60 @@ function ListNodeBody({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Visual preview of the currently selected item, so the List reads at a
+ * glance which media it'll emit (not just a "Video 2" label). Renders the
+ * appropriate player/thumbnail per type; scalar types fall back to text.
+ */
+function ListItemPreview({ item }: { item: StandardizedOutput }) {
+  if (item.type === "image") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={item.value.url}
+        alt="Selected"
+        onPointerDown={(e) => e.stopPropagation()}
+        className="mt-1 block w-full rounded-md bg-black"
+      />
+    );
+  }
+  if (item.type === "video") {
+    return (
+      <video
+        key={item.value.url}
+        src={item.value.url}
+        controls
+        loop
+        playsInline
+        preload="metadata"
+        onPointerDown={(e) => e.stopPropagation()}
+        className="mt-1 block w-full rounded-md bg-black"
+        style={{ aspectRatio: "16 / 9" }}
+      />
+    );
+  }
+  if (item.type === "audio") {
+    return (
+      <audio
+        key={item.value.url}
+        src={item.value.url}
+        controls
+        preload="metadata"
+        onPointerDown={(e) => e.stopPropagation()}
+        className="mt-1 h-8 w-full"
+      />
+    );
+  }
+  if (item.type === "text") {
+    return (
+      <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap rounded-md bg-foreground/[0.04] px-2 py-1 text-[11px] leading-snug text-foreground/80">
+        {String(item.value)}
+      </p>
+    );
+  }
+  return null;
 }
 
 /**
