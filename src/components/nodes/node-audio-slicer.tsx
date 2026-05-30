@@ -1,14 +1,17 @@
 "use client";
 
-import { AudioLines, Loader2, Scissors } from "lucide-react";
-import { useId } from "react";
+import { AudioLines, Download, DownloadCloud, Loader2, Scissors } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
+import { downloadFromUrl, safeFilename } from "@/lib/library/download";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
 import { computeMediaWindows, probeMedia, sliceAudio } from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
+
+import { IteratorCursor } from "./iterator-cursor";
 
 /**
  * Audio Slicer — split a track into sequential windows (one paid generation
@@ -48,6 +51,34 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
         .map((o) => o.value.url)
     : [];
 
+  const ext = (config.outputFormat ?? DEFAULT_FORMAT) === "mp3" ? "mp3" : "wav";
+
+  // View one slice at a time. Clamp the cursor as the chunk count changes.
+  const [cursor, setCursor] = useState(0);
+  const safeCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const prevLen = useRef(chunks.length);
+  useEffect(() => {
+    if (chunks.length !== prevLen.current) {
+      setCursor(0);
+      prevLen.current = chunks.length;
+    }
+  }, [chunks.length]);
+
+  async function downloadOne(i: number) {
+    const url = chunks[i];
+    if (!url) return;
+    await downloadFromUrl(url, safeFilename(`chunk-${i + 1}`, "chunk") + `.${ext}`);
+  }
+  async function downloadAll() {
+    setDownloadingAll(true);
+    try {
+      for (let i = 0; i < chunks.length; i++) await downloadOne(i);
+    } finally {
+      setDownloadingAll(false);
+    }
+  }
+
   return (
     <div className="flex w-full min-w-[240px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
@@ -56,6 +87,14 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
           <>
             <span className="text-muted-foreground/60">·</span>
             <span>{chunks.length} chunks</span>
+            <span className="ml-auto">
+              <IteratorCursor
+                count={chunks.length}
+                cursor={safeCursor}
+                onCursorChange={setCursor}
+                ariaLabelPrefix="Chunk"
+              />
+            </span>
           </>
         ) : null}
       </div>
@@ -72,21 +111,38 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
           <span>Slicing audio…</span>
         </div>
       ) : chunks.length > 0 ? (
-        <div className="flex flex-col gap-1">
-          {chunks.map((url, i) => (
-            <div key={`${url}-${i}`} className="flex items-center gap-1.5">
-              <span className="w-4 shrink-0 text-[10px] text-muted-foreground">
-                {i}
-              </span>
-              <audio
-                src={url}
-                controls
-                preload="none"
-                onPointerDown={(e) => e.stopPropagation()}
-                className="h-7 w-full"
-              />
-            </div>
-          ))}
+        <div className="flex flex-col gap-1.5">
+          <audio
+            key={chunks[safeCursor]}
+            src={chunks[safeCursor]}
+            controls
+            preload="metadata"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="h-8 w-full"
+          />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">
+              Chunk {safeCursor + 1}
+            </span>
+            <button
+              type="button"
+              onClick={() => void downloadOne(safeCursor)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="ml-auto flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10"
+            >
+              <Download className="h-3 w-3" /> This one
+            </button>
+            <button
+              type="button"
+              disabled={downloadingAll}
+              onClick={() => void downloadAll()}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10 disabled:opacity-50"
+            >
+              <DownloadCloud className="h-3 w-3" />
+              {downloadingAll ? "Downloading…" : `All (${chunks.length})`}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
