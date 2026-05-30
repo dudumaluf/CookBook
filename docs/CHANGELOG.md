@@ -10,6 +10,14 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Image Concat + Image Crop nodes (canvas)
+
+Two image-composition nodes on a shared client-side `compose-image` helper (fetch → `createImageBitmap` → `OffscreenCanvas`, so cross-origin URLs never taint the canvas). **Tests +11.**
+
+- **Image Concat** — join images into one: `row` (match height, left→right) or `column` (match width, top→bottom), with proportional scaling (no distortion). `fit` picks the shared cross-axis size (`min` default = no upscaling), plus `gap` + `background`. Ordered auto-growing `image 1..N` sockets (mirrors Video Concat) so order is explicit.
+- **Image Crop** — interactive moveable + resizable crop rectangle (drag inside to move, corners to resize) with aspect presets (1:1, 16:9, …) or custom W:H or free; the rect persists in config and drives the crop on Run.
+- Both are `compose`/`transform` nodes with `configParams` (so they expose cleanly as recipe controls). Next up (deferred): a freeform Compositor + video variants.
+
 ## 2026-05-30 — Compare node: A/B before-after wipe (image + video)
 
 New `Compare` node — wire two images or two videos into `A` / `B`, then drag across the preview: a vertical divider follows your mouse, revealing more of B to the left and A to the right (the classic before/after wipe). Videos autoplay muted + looped so motion compares too. Reactive viewer; passes B through (falls back to A) so it can sit inline. **Tests +3.**

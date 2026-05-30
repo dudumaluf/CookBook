@@ -9,6 +9,8 @@ import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
+import { imageConcatNodeSchema } from "@/components/nodes/node-image-concat";
+import { imageCropNodeSchema } from "@/components/nodes/node-image-crop";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { listNodeSchema } from "@/components/nodes/node-list";
@@ -57,6 +59,8 @@ export function registerAllNodes(): void {
   nodeRegistry.register(videoSlicerNodeSchema);
   nodeRegistry.register(frameExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);
+  nodeRegistry.register(imageConcatNodeSchema);
+  nodeRegistry.register(imageCropNodeSchema);
   nodeRegistry.register(compareNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
   nodeRegistry.register(textIteratorNodeSchema);
