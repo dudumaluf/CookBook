@@ -10,6 +10,16 @@ The `cookbook-assets` bucket still had its image-only config from before the med
 - **App caps aligned** (`import-files.ts`): video/audio import caps 100/30 MB → **500 MB** (images stay 25 MB).
 - **Caveat:** the project's *global* Storage upload limit (Dashboard → Storage → Settings) must also be ≥ 500 MB — effective limit is `min(global, bucket)`.
 
+## 2026-05-30 — Fix: Seedance via async queue (submit + poll) — videos no longer lost mid-render (ADR-0057)
+
+**Bug:** `net::ERR_NETWORK_CHANGED` / 500 with the request "cancelled" — Fal finished the video but the client never got it. Cause: the route used `fal.subscribe`, holding one HTTP connection open for the whole 1-3 min render; any network blip / tab backgrounding / function timeout dropped it.
+
+- **Submit + poll over the Fal queue.** `POST /api/fal/seedance` now SUBMITS (returns `{ requestId, endpoint }`); a new `POST /api/fal/seedance/status` polls until done. `maxDuration` 300 → 60 (every request is short now).
+- **Resilient client.** `callSeedanceVideo` submits then polls every 3s (≤10 min), riding out up to 5 consecutive network blips (the job keeps rendering on Fal) while stopping immediately on a real upstream failure. Same external contract — Seedance node + Continuity Builder unchanged.
+- Removed the old blocking `generateSeedanceVideo`. **Tests +1 (route + client suites rewritten).**
+
+All green: `npm test` (1024), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
 ## 2026-05-30 — Image Concat + Image Crop nodes (canvas)
 
 Two image-composition nodes on a shared client-side `compose-image` helper (fetch → `createImageBitmap` → `OffscreenCanvas`, so cross-origin URLs never taint the canvas). **Tests +11.**

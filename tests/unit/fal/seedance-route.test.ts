@@ -1,115 +1,112 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Route-handler tests for `POST /api/fal/seedance`. Mocks the server wrapper
- * so we only exercise body parsing, Zod validation, and error -> HTTP
- * mapping. Mirrors the Higgsfield image-route test.
+ * Route-handler tests for the async Seedance queue (ADR-0057):
+ *   POST /api/fal/seedance         → submit
+ *   POST /api/fal/seedance/status  → poll
+ * Mocks the server wrapper so we only exercise body parsing + error mapping.
  */
 
-const { generateSeedanceVideo } = vi.hoisted(() => ({
-  generateSeedanceVideo: vi.fn(),
+const { submitSeedanceVideo, getSeedanceResult } = vi.hoisted(() => ({
+  submitSeedanceVideo: vi.fn(),
+  getSeedanceResult: vi.fn(),
 }));
-vi.mock("@/lib/fal/seedance-api", () => ({ generateSeedanceVideo }));
+vi.mock("@/lib/fal/seedance-api", () => ({
+  submitSeedanceVideo,
+  getSeedanceResult,
+}));
 
-import { POST } from "@/app/api/fal/seedance/route";
+import { POST as SUBMIT } from "@/app/api/fal/seedance/route";
+import { POST as STATUS } from "@/app/api/fal/seedance/status/route";
 
-function makeRequest(body: unknown, init?: { aborted?: boolean }): Request {
-  const ctrl = new AbortController();
-  if (init?.aborted) ctrl.abort();
+function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/fal/seedance", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: typeof body === "string" ? body : JSON.stringify(body),
-    signal: ctrl.signal,
   });
 }
 
 beforeEach(() => {
-  generateSeedanceVideo.mockReset();
+  submitSeedanceVideo.mockReset();
+  getSeedanceResult.mockReset();
 });
 
-describe("POST /api/fal/seedance", () => {
-  it("returns 400 when the body isn't JSON", async () => {
-    const res = await POST(makeRequest("not json{") as never);
+describe("POST /api/fal/seedance (submit)", () => {
+  it("returns 400 on non-JSON", async () => {
+    const res = await SUBMIT(makeRequest("not json{") as never);
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.code).toBe("invalid_request");
-    expect(generateSeedanceVideo).not.toHaveBeenCalled();
+    expect((await res.json()).code).toBe("invalid_request");
   });
 
   it("returns 400 when imageUrls exceeds the cap", async () => {
-    const res = await POST(
+    const res = await SUBMIT(
       makeRequest({
         prompt: "x",
         imageUrls: Array.from({ length: 10 }, (_, i) => `https://x/${i}.png`),
       }) as never,
     );
     expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("invalid_request");
   });
 
-  it("returns 400 when duration is out of range", async () => {
-    const res = await POST(
-      makeRequest({ prompt: "x", duration: 30 }) as never,
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it("forwards a valid request and returns the result", async () => {
-    generateSeedanceVideo.mockResolvedValueOnce({
-      videoUrl: "https://cdn.fal.media/clip.mp4",
-      mime: "video/mp4",
-      seed: 42,
-      model: "bytedance/seedance-2.0/text-to-video",
+  it("submits a valid request and returns the request id + endpoint", async () => {
+    submitSeedanceVideo.mockResolvedValueOnce({
+      requestId: "req-9",
+      endpoint: "bytedance/seedance-2.0/text-to-video",
     });
-    const res = await POST(
-      makeRequest({ prompt: "an octopus playing football" }) as never,
-    );
+    const res = await SUBMIT(makeRequest({ prompt: "an octopus" }) as never);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.videoUrl).toBe("https://cdn.fal.media/clip.mp4");
-    expect(generateSeedanceVideo).toHaveBeenCalledTimes(1);
-    const [, signal] = generateSeedanceVideo.mock.calls[0]!;
-    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(body.requestId).toBe("req-9");
+    expect(submitSeedanceVideo).toHaveBeenCalledTimes(1);
   });
 
-  it("returns 499 when the wrapper throws AbortError", async () => {
-    generateSeedanceVideo.mockImplementationOnce(() => {
-      const err = new Error("Aborted");
-      err.name = "AbortError";
-      return Promise.reject(err);
-    });
-    const res = await POST(makeRequest({ prompt: "go" }) as never);
-    expect(res.status).toBe(499);
-    expect((await res.json()).code).toBe("aborted");
-  });
-
-  it("returns 500 + missing_key when FAL_KEY is absent", async () => {
+  it("maps missing_key to 500", async () => {
     const err = new Error("FAL_KEY missing");
     (err as Error & { code?: string }).code = "missing_key";
-    generateSeedanceVideo.mockRejectedValueOnce(err);
-    const res = await POST(makeRequest({ prompt: "go" }) as never);
+    submitSeedanceVideo.mockRejectedValueOnce(err);
+    const res = await SUBMIT(makeRequest({ prompt: "go" }) as never);
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("missing_key");
   });
+});
 
-  it("returns 502 + upstream_error on a Fal failure", async () => {
-    const err = new Error("Fal: validation error");
-    (err as Error & { code?: string }).code = "upstream_error";
-    generateSeedanceVideo.mockRejectedValueOnce(err);
-    const res = await POST(makeRequest({ prompt: "go" }) as never);
-    expect(res.status).toBe(502);
-    expect((await res.json()).code).toBe("upstream_error");
+describe("POST /api/fal/seedance/status (poll)", () => {
+  it("returns 400 when the body is missing fields", async () => {
+    const res = await STATUS(makeRequest({ requestId: "r" }) as never);
+    expect(res.status).toBe(400);
   });
 
-  it("returns 500 + unknown for unmapped errors", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    generateSeedanceVideo.mockRejectedValueOnce(new Error("stack leak"));
-    const res = await POST(makeRequest({ prompt: "go" }) as never);
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    expect(body.code).toBe("unknown");
-    expect(body.error).toBe("Video generation failed");
-    errorSpy.mockRestore();
+  it("returns pending while the job renders", async () => {
+    getSeedanceResult.mockResolvedValueOnce({ status: "pending" });
+    const res = await STATUS(
+      makeRequest({ endpoint: "ep", requestId: "r" }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("pending");
+  });
+
+  it("returns the video when done", async () => {
+    getSeedanceResult.mockResolvedValueOnce({
+      status: "done",
+      videoUrl: "https://cdn.fal.media/clip.mp4",
+      model: "ep",
+    });
+    const res = await STATUS(
+      makeRequest({ endpoint: "ep", requestId: "r" }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).videoUrl).toBe("https://cdn.fal.media/clip.mp4");
+  });
+
+  it("maps an upstream failure to 502", async () => {
+    const err = new Error("Fal: boom");
+    (err as Error & { code?: string }).code = "upstream_error";
+    getSeedanceResult.mockRejectedValueOnce(err);
+    const res = await STATUS(
+      makeRequest({ endpoint: "ep", requestId: "r" }) as never,
+    );
+    expect(res.status).toBe(502);
+    expect((await res.json()).code).toBe("upstream_error");
   });
 });

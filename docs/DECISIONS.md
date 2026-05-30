@@ -2463,3 +2463,23 @@ Changing `clips` → `clip-N` is a graph-shape change spanning nodes + edges. `m
 - **Switching Seedance mode drops edges** — `image`/`video`/`audio` edges dangle when you switch to an image mode (and vice-versa) because the handles change. Acceptable: the modes are genuinely different contracts.
 - **portCount lives in config** — the auto-grow writes `portCount` (a tiny config field) so `getInputs` can render the right count; it's driven by a body effect watching edges, guarded so it can't loop.
 - **Migration in two places** — persist + document both call the shared helper. Minor duplication, but cloud loads (the real path) don't go through persist, so both are needed.
+
+## ADR-0057 — Seedance via the async queue (submit + poll), not one blocking request
+
+- **Date**: 2026-05-30
+- **Status**: implemented.
+- **Context**: `/api/fal/seedance` used `fal.subscribe`, which **blocks the HTTP request until the render finishes** (1-3 min). Holding one connection open that long is fragile: the user hit `net::ERR_NETWORK_CHANGED` + a 500 with the request showing "cancelled" — Fal finished the video, but the browser→route connection died mid-wait so the client never got it ("Fal receives, we don't get the video back"). Tab backgrounding, WiFi/VPN changes, and Vercel function time limits all trigger it.
+
+### 1. Decisão: submit + poll over the Fal queue
+
+`submitSeedanceVideo` calls `fal.queue.submit` → `{ requestId, endpoint }` (fast). `getSeedanceResult` calls `fal.queue.status`; once `COMPLETED`, `fal.queue.result` → the video. Two routes: `POST /api/fal/seedance` (submit) and `POST /api/fal/seedance/status` (poll). `maxDuration` drops 300 → 60 (every request is now short).
+
+### 2. Decisão: resilient client poll
+
+`callSeedanceVideo` keeps the same external contract (returns `SeedanceVideoSuccessResponse`) but internally submits then polls every 3s up to 10 min. Crucially it **rides out transient poll failures** (network blips — the very symptom): up to 5 consecutive `network`-class poll errors are ignored (the job is still rendering on Fal), while a real `upstream_error` stops immediately. AbortSignal cancels the poll loop.
+
+### 3. Trade-offs aceitos
+
+- **Polling, not webhooks/streaming** — simplest robust option; a 3s poll is negligible and survives backgrounding. Streaming (`subscribeToStatus`) was avoided since our proxy would have to relay SSE.
+- **No mid-render cancel on Fal** — aborting stops the client poll; the job may still complete on Fal (and land in the Gallery via a future surgical fetch). Acceptable; spend already happened at submit.
+- **Two short requests instead of one long one** — slightly more chatter, vastly more reliable. The old blocking path is gone (`generateSeedanceVideo` removed).

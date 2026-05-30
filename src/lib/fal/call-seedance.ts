@@ -1,14 +1,23 @@
 import type {
   FalErrorResponse,
+  SeedanceStatusResponse,
+  SeedanceSubmitResponse,
   SeedanceVideoRequest,
   SeedanceVideoSuccessResponse,
 } from "./types";
 
 /**
- * Client wrapper around `POST /api/fal/seedance` — Slice B.
+ * Client wrapper around the async Seedance queue (ADR-0057).
  *
- * Mirrors `callHiggsfieldImage`: typed error class, 499 -> AbortError so the
- * engine routes cancellation correctly.
+ * Flow: submit (`POST /api/fal/seedance` → requestId) then poll
+ * (`POST /api/fal/seedance/status`) every few seconds until done. Each
+ * request is short, so a network blip / tab backgrounding / function timeout
+ * no longer kills an in-flight render — the job keeps running on Fal and the
+ * next poll picks up the result. A handful of consecutive poll failures are
+ * tolerated (the render isn't lost) before giving up.
+ *
+ * External contract is unchanged: callers still get a
+ * `SeedanceVideoSuccessResponse` (or an error / AbortError).
  */
 
 export class FalCallError extends Error {
@@ -27,39 +36,55 @@ export interface CallSeedanceArgs extends SeedanceVideoRequest {
   signal: AbortSignal;
 }
 
-/** Hard ceiling so a hung request can't pin the engine's isRunning forever. */
-const VIDEO_TIMEOUT_MS = 5 * 60_000;
+/** How often to poll, the overall ceiling, and how many poll blips to ride out. */
+const POLL_INTERVAL_MS = 3_000;
+const MAX_WAIT_MS = 10 * 60_000;
+const MAX_CONSECUTIVE_POLL_ERRORS = 5;
 
-export async function callSeedanceVideo(
-  args: CallSeedanceArgs,
-): Promise<SeedanceVideoSuccessResponse> {
-  const { signal, ...body } = args;
-  // Engine abort + a timeout ceiling (video is slow — 5 min). Either firing
-  // settles the request so the run completes and Run buttons un-grey.
-  const combined = AbortSignal.any([
-    signal,
-    AbortSignal.timeout(VIDEO_TIMEOUT_MS),
-  ]);
+function abortError(message = "Request cancelled"): Error {
+  const e = new Error(message);
+  e.name = "AbortError";
+  return e;
+}
 
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(t);
+      reject(abortError());
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** POST JSON; throws FalCallError("network") on a transport failure, the
+ *  server's error on a non-OK response, and AbortError when the signal fires. */
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<T> {
   let res: Response;
   try {
-    res = await fetch("/api/fal/seedance", {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: combined,
+      signal,
     });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;
-    throw new FalCallError(
-      "Could not reach the Seedance endpoint. Is the dev server running?",
-      "network",
-    );
+    throw new FalCallError("network error", "network");
   }
-
-  if (res.ok) {
-    return (await res.json()) as SeedanceVideoSuccessResponse;
-  }
+  if (res.ok) return (await res.json()) as T;
 
   let payload: FalErrorResponse | null = null;
   try {
@@ -67,14 +92,76 @@ export async function callSeedanceVideo(
   } catch {
     payload = null;
   }
-  const message =
-    payload?.error ?? `Seedance call failed with HTTP ${res.status}`;
+  const message = payload?.error ?? `HTTP ${res.status}`;
   const code = payload?.code ?? "unknown";
-
-  if (res.status === 499) {
-    const abortErr = new Error(message);
-    abortErr.name = "AbortError";
-    throw abortErr;
-  }
+  if (res.status === 499) throw abortError(message);
   throw new FalCallError(message, code);
+}
+
+export async function callSeedanceVideo(
+  args: CallSeedanceArgs,
+): Promise<SeedanceVideoSuccessResponse> {
+  const { signal, ...body } = args;
+
+  // 1. Submit — short request. A failure here means no job was created, so
+  // it's safe to surface as a normal error (the user can retry).
+  let submit: SeedanceSubmitResponse;
+  try {
+    submit = await postJson<SeedanceSubmitResponse>(
+      "/api/fal/seedance",
+      body,
+      signal,
+    );
+  } catch (err) {
+    if (err instanceof FalCallError && err.code === "network") {
+      throw new FalCallError(
+        "Could not reach the Seedance endpoint. Is the dev server running?",
+        "network",
+      );
+    }
+    throw err;
+  }
+
+  // 2. Poll until done. Ride out transient poll failures — the render is
+  // already queued on Fal, so a dropped poll must NOT lose it.
+  const deadline = Date.now() + MAX_WAIT_MS;
+  let consecutiveErrors = 0;
+  for (;;) {
+    if (signal.aborted) throw abortError();
+    await delay(POLL_INTERVAL_MS, signal);
+
+    let status: SeedanceStatusResponse;
+    try {
+      status = await postJson<SeedanceStatusResponse>(
+        "/api/fal/seedance/status",
+        { endpoint: submit.endpoint, requestId: submit.requestId },
+        signal,
+      );
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") throw err;
+      // A real upstream failure (the job errored) — stop. Transient network
+      // blips (the symptom we're fixing) are tolerated below.
+      if (err instanceof FalCallError && err.code !== "network") throw err;
+      if (++consecutiveErrors > MAX_CONSECUTIVE_POLL_ERRORS) {
+        throw new FalCallError(
+          "Lost connection while waiting for the video. It may still finish on Fal — check the Gallery shortly.",
+          "network",
+        );
+      }
+      continue;
+    }
+
+    consecutiveErrors = 0;
+    if (status.status === "done") {
+      return {
+        videoUrl: status.videoUrl,
+        mime: status.mime,
+        seed: status.seed,
+        model: status.model,
+      };
+    }
+    if (Date.now() > deadline) {
+      throw new FalCallError("Seedance timed out waiting for the video.", "timeout");
+    }
+  }
 }

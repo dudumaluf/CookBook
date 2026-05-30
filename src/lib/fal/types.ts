@@ -74,6 +74,31 @@ export interface SeedanceVideoSuccessResponse {
   model: string;
 }
 
+/**
+ * Async queue flow (ADR-0057). Submitting returns a request id + the endpoint
+ * it was queued on; the client then polls the status route until done. This
+ * replaces the old single blocking request, which a network blip / tab
+ * backgrounding / function timeout would kill mid-render (Fal finishes, the
+ * client never gets the video).
+ */
+export interface SeedanceSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const seedanceStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type SeedanceStatusRequest = z.infer<typeof seedanceStatusRequestSchema>;
+
+export type SeedanceStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & SeedanceVideoSuccessResponse);
+
 export type FalErrorCode =
   | "invalid_request"
   | "missing_key"

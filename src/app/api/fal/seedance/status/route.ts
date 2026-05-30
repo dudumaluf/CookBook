@@ -1,25 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { submitSeedanceVideo } from "@/lib/fal/seedance-api";
+import { getSeedanceResult } from "@/lib/fal/seedance-api";
 import {
   type FalErrorResponse,
-  seedanceVideoRequestSchema,
+  seedanceStatusRequestSchema,
 } from "@/lib/fal/types";
 
 /**
- * POST /api/fal/seedance — SUBMIT a Seedance 2.0 job to Fal's queue (ADR-0057).
+ * POST /api/fal/seedance/status — poll a queued Seedance job (ADR-0057).
  *
- * Keeps FAL_KEY server-only. Returns a `{ requestId, endpoint }` fast (no
- * render wait); the client polls `/api/fal/seedance/status` until done. This
- * replaced the old blocking request that a network blip / tab backgrounding
- * / function timeout would kill mid-render.
+ * Body: { endpoint, requestId }. Returns `{ status: "pending" }` while it's
+ * still rendering, or `{ status: "done", videoUrl, ... }` once complete. Each
+ * call is short, so it survives network blips / tab backgrounding that would
+ * kill a single long-held request.
  *
- * Returns:
- *   200 -> SeedanceSubmitResponse ({ requestId, endpoint })
+ *   200 -> SeedanceStatusResponse
  *   400 -> { code: "invalid_request" }
  *   499 -> { code: "aborted" }
  *   500 -> { code: "missing_key" | "unknown" }
- *   502 -> { code: "upstream_error" | "timeout" }
+ *   502 -> { code: "upstream_error" }
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,18 +32,17 @@ export async function POST(req: NextRequest) {
     return errorResponse(400, "invalid_request", "Body must be JSON");
   }
 
-  const parsed = seedanceVideoRequestSchema.safeParse(json);
+  const parsed = seedanceStatusRequestSchema.safeParse(json);
   if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const path = issue?.path?.length ? issue.path.join(".") : "request";
-    const message = issue
-      ? `${path}: ${issue.message}`
-      : "Invalid request payload";
-    return errorResponse(400, "invalid_request", message);
+    return errorResponse(400, "invalid_request", "Invalid status payload");
   }
 
   try {
-    const result = await submitSeedanceVideo(parsed.data, req.signal);
+    const result = await getSeedanceResult(
+      parsed.data.endpoint,
+      parsed.data.requestId,
+      req.signal,
+    );
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     return mapErrorToResponse(err);
@@ -59,14 +57,11 @@ function mapErrorToResponse(err: unknown): NextResponse<FalErrorResponse> {
   if (e?.code === "missing_key") {
     return errorResponse(500, "missing_key", e.message);
   }
-  if (e?.code === "timeout") {
-    return errorResponse(502, "timeout", e.message);
-  }
   if (e?.code === "upstream_error") {
     return errorResponse(502, "upstream_error", e.message);
   }
-  console.error("[api/fal/seedance] unexpected failure:", e);
-  return errorResponse(500, "unknown", "Video generation failed");
+  console.error("[api/fal/seedance/status] unexpected failure:", e);
+  return errorResponse(500, "unknown", "Status check failed");
 }
 
 function errorResponse(

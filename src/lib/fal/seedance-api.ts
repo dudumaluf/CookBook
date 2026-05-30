@@ -4,18 +4,19 @@ import { fal } from "@fal-ai/client";
 
 import {
   describeFalError,
+  type SeedanceStatusResponse,
+  type SeedanceSubmitResponse,
   type SeedanceVideoRequest,
-  type SeedanceVideoSuccessResponse,
 } from "./types";
 
 /**
  * Server-only Seedance video wrapper — Slice B (multimodal media arc).
  *
  * Keeps FAL_KEY out of the browser bundle. Dispatches to the right
- * `bytedance/seedance-2.0/*` endpoint based on which references are present,
- * and uses `@fal-ai/client`'s `subscribe` to handle queue submission +
- * polling natively (no hand-rolled poll loop — the difference from the
- * Higgsfield wrapper, which predates our use of the Fal client).
+ * `bytedance/seedance-2.0/*` endpoint based on which references are present.
+ * Uses the Fal QUEUE (submit + poll, ADR-0057) rather than the blocking
+ * `subscribe`, so a minutes-long render is never tied to one fragile HTTP
+ * connection (a network blip / tab backgrounding would drop it mid-render).
  *
  * Endpoint dispatch:
  *   - startImageUrl present        -> image-to-video (literal first frame +
@@ -108,44 +109,77 @@ interface SeedanceRawOutput {
   seed?: number;
 }
 
-export async function generateSeedanceVideo(
+function isAbort(err: unknown, signal: AbortSignal): boolean {
+  return (err as Error)?.name === "AbortError" || signal.aborted;
+}
+
+/**
+ * Submit a Seedance job to Fal's QUEUE and return its request id + endpoint.
+ * Fast (no render wait) — the client then polls `getSeedanceResult`. This is
+ * what makes long renders robust: no minutes-long held connection to drop.
+ */
+export async function submitSeedanceVideo(
   req: SeedanceVideoRequest,
   signal: AbortSignal,
-): Promise<SeedanceVideoSuccessResponse> {
+): Promise<SeedanceSubmitResponse> {
   ensureConfigured();
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
-
   const endpoint = pickEndpoint(req);
   const input = buildInput(req);
-
-  let result: { data: SeedanceRawOutput };
   try {
-    result = (await fal.subscribe(endpoint, {
-      input,
-      abortSignal: signal,
-    })) as { data: SeedanceRawOutput };
+    const res = await fal.queue.submit(endpoint, { input });
+    return { requestId: res.request_id, endpoint };
   } catch (err) {
-    if ((err as Error)?.name === "AbortError" || signal.aborted) {
+    if (isAbort(err, signal)) {
       throw annotate(new Error("Request cancelled"), "aborted");
     }
-    // Surface Fal's validation detail (which field is unprocessable).
     throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
   }
+}
 
-  const url = result.data.video?.url;
-  if (!url) {
-    throw annotate(
-      new Error("Seedance returned no video URL"),
-      "upstream_error",
-    );
+/**
+ * Poll a queued job. Returns `{ status: "pending" }` while it's queued /
+ * rendering, or the finished video once `COMPLETED`. Throws (annotated) if
+ * the job failed upstream.
+ */
+export async function getSeedanceResult(
+  endpoint: string,
+  requestId: string,
+  signal: AbortSignal,
+): Promise<SeedanceStatusResponse> {
+  ensureConfigured();
+  if (signal.aborted) {
+    throw annotate(new Error("Request cancelled"), "aborted");
   }
-
-  return {
-    videoUrl: url,
-    mime: result.data.video?.content_type ?? "video/mp4",
-    seed: result.data.seed,
-    model: endpoint,
-  };
+  try {
+    const st = await fal.queue.status(endpoint, { requestId, abortSignal: signal });
+    if (st.status !== "COMPLETED") return { status: "pending" };
+    const result = (await fal.queue.result(endpoint, {
+      requestId,
+      abortSignal: signal,
+    })) as { data: SeedanceRawOutput };
+    const url = result.data.video?.url;
+    if (!url) {
+      throw annotate(
+        new Error("Seedance returned no video URL"),
+        "upstream_error",
+      );
+    }
+    return {
+      status: "done",
+      videoUrl: url,
+      mime: result.data.video?.content_type ?? "video/mp4",
+      seed: result.data.seed,
+      model: endpoint,
+    };
+  } catch (err) {
+    if (isAbort(err, signal)) {
+      throw annotate(new Error("Request cancelled"), "aborted");
+    }
+    // Already-annotated errors (e.g. "no video URL") pass through.
+    if ((err as { code?: string }).code) throw err;
+    throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
+  }
 }
