@@ -2,6 +2,62 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-29 — Dynamic handles + title cleanup: Seedance frame sockets, Video Concat ordered ports (ADR-0056)
+
+UX polish from testing the modular recipe. **Tests 1000 → 1006 (+6).** (Note: the new nodes only appear in a deployed build — these are local until the next deploy.)
+
+- **No more duplicate titles** — node bodies (Seedance, Video Concat, Audio/Video Slicer, Frame Extract) showed the icon + name again under the chrome header. Removed; kept the useful config chips.
+- **Seedance shows frame sockets in image-to-video mode** — `getInputs(config)` swaps the reference `image/video/audio` handles for dedicated `start frame` (+ `end frame`) sockets when Mode = first-frame / first+last. The contract is visible on the node, not hidden in settings.
+- **Video Concat: ordered, auto-growing input ports** — the single `clips` multi-handle became numbered `clip-1..N` sockets so join ORDER is explicit; wiring the last socket reveals the next (no button). `execute` joins in socket order.
+- **Migration** — `migrateVideoConcatClips` rewrites legacy `clips` edges → `clip-N` from both the workflow-store persist funnel (**v9 → v10**) and `applyProjectDocument` (cloud/file loads). The seeded "Singer Performance (modular)" recipe updated in place (file + DB).
+
+All green: `npm test` (1006), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
+## 2026-05-29 — Durable results: generated outputs never lost until node deletion (ADR-0055)
+
+**Bug:** images/text generated before closing (or switching) a project were gone on reopen. Two causes, both fixed; the policy is now **"if you generated it, it persists until you delete the node"** (or a future explicit clear).
+
+- **`project-sync` flushes on the way out** — teardown (project switch / unmount) and `visibilitychange→hidden` / `pagehide` persist any pending change instead of dropping the debounce timer. Previously the last ~1s of work (usually your most recent generation) was discarded. Confirmed against the live DB: the last-generated `fal-image` node had no saved `executionState`.
+- **Runs never wipe records — full Run now ACCUMULATES history.** `launchRun` keeps prior records for both full and partial runs (was: full Run reset everything to an empty map). `onProgress` appends on `done`, so global Run piles up history like Run-here instead of resetting it. (Reverses the old "full-run resets history" behavior — answers the "Higgsfield node has no history" report.)
+- **Serialization falls back to the last good history entry** — a node re-run into an `error`/idle state keeps its previously-generated result in the document (and on screen via history) rather than being erased on the next save.
+- **Orphan records pruned** — only nodes still in the graph persist, so the document can't grow unbounded (the audited project had 18 stored entries for 10 live nodes).
+- Tests +3 (teardown-flush, orphan-prune, error-keeps-last-good) + 1 updated (full-run accumulates). **997 → 1000.**
+
+All green: `npm test` (1000), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
+## 2026-05-29 — "Singer Performance (modular)" recipe: the unroll, assembled + proven
+
+Answers "can the flow be built from nodes?" — **yes**. Ships the performance-video pipeline spelled out as a 2-chunk DAG unroll (the modular, inspectable counterpart of the Continuity Builder black box). **Tests 996 → 997 (+1 integration test).**
+
+- **Integration test** (`tests/integration/recipe-singer-performance.test.ts`) assembles the full graph via the store API and runs it end-to-end (mocked Seedance/media): proves each chunk's Seedance call gets the right per-chunk audio + video slice, that chunk 0's **last frame chains** into chunk 1's image refs (continuity), and that both clips concat in order. This is the validated graph we ship.
+- **System recipe** `Singer Performance (modular)` (`supabase/migrations/20260529_singer_performance_modular_recipe.sql`, seeded to the CookBook DB): `text + image + audio + video → Audio/Video Slicer → List(0/1) → Seedance → Frame Extract → Seedance → Video Concat`. Self-contained (prompt + character fan out to both chunks, which a single exposed input can't do), exposes the final `video`. Add it, **unpack** to reveal every node, point the Audio/Image/Video nodes at your song + character + performance, Run.
+- The **hard loop stays in the Continuity Builder** (dynamic N); this fixed unroll is for *seeing and tuning* the steps and validating continuity cheaply before committing to a Loop primitive.
+
+All green: `npm test` (997), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
+## 2026-05-29 — Modular media nodes: Audio Slicer, Video Slicer, Frame Extract
+
+Decomposes the Continuity Builder's inline media steps into standalone, reusable nodes — the "no-regret" building blocks that serve any loop strategy (manual unroll, List-driven run-to-run, or a future Loop primitive). **Tests 985 → 996 (+11).** Pure node wrappers over existing `lib/media` ops (mediabunny); no engine changes.
+
+- **Audio Slicer** (`node-audio-slicer.tsx`) — song → array of audio chunks (default 15s windows, Seedance's per-chunk cap; configurable window + min-tail fold). Feed a `List` (mode: increment) to pick one chunk per run.
+- **Video Slicer** (`node-video-slicer.tsx`) — reference performance video → array of video chunks (motion refs; audio dropped). Downscale picker (720p default / 480p / source) to fit Seedance's ~720p reference cap.
+- **Frame Extract** (`node-frame-extract.tsx`) — video → first/last frame as an image. The modular block for frame-chaining continuity (last frame → next chunk's start frame / reference).
+- All three are **non-reactive** (heavy WebCodecs ops; run on demand) and emit progress via `fanOut` while uploading slices. Registered in `all-nodes.ts` under the `transform` category.
+- **The `List` node already is the "media switcher"** — `mode: increment` advances the index every run, so `Slicer → List(increment) → Seedance` drives one chunk per run today. The only missing piece for full run-to-run looping is a cross-run accumulator; that (or a Loop primitive) is the open architecture decision.
+
+All green: `npm test` (996), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
+## 2026-05-29 — Seedance image-to-video mode (first/last frame) (ADR-0054)
+
+Exposes Fal's **distinct** `image-to-video` model — literal first frame + optional end frame — as a mode on the Seedance node. **Tests 981 → 985 (+4).** Verified against the official Fal `bytedance/seedance-2.0/image-to-video` docs.
+
+- **`Mode` selector** (Seedance settings): `reference` (default, unchanged) · `first frame` (animate the wired image as the start frame) · `first + last` (start → end transition; wire two images).
+- **`image-to-video` routing** — `startImageUrl` on the request switches `pickEndpoint` to `bytedance/seedance-2.0/image-to-video` (+ `/fast/`); `buildInput` emits `image_url`/`end_image_url` and **omits** reference arrays (that endpoint rejects them).
+- **720p clamp** — image-to-video caps at 720p (no 1080p), so the fast-tier clamp now also fires in image mode — no mid-run 422 from a stale 1080p config.
+- Why distinct from reference-to-video: image-to-video gives *literal* frame control (no soft references, no motion/video ref). Right tool for still-to-motion, morph, or exact-frame starts; the singer pipeline (needs motion from the performance video) stays on reference-to-video.
+
+All green: `npm test` (985), `npm run lint`, `npx tsc --noEmit`, `npm run docs:check`.
+
 ## 2026-05-29 — Reference performance video in the Continuity Builder (singer pipeline)
 
 Unblocks the "singer performance" pipeline end-to-end. **Tests 980 → 981 (+1).** Validated against the official Fal Seedance 2.0 reference-to-video docs.

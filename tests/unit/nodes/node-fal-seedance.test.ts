@@ -68,6 +68,77 @@ describe("seedance-video node execute", () => {
     expect(arg.audioUrls).toEqual(["https://x/slice.mp3"]);
   });
 
+  it("first-frame mode sends the wired start frame as startImageUrl (image-to-video)", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "she turns to camera" },
+          start: { type: "image", value: { url: "https://x/start.png" } },
+        },
+        { mode: "first-frame" },
+      ) as Cfg,
+    );
+    const arg = callSeedanceVideo.mock.calls[0]![0];
+    expect(arg.startImageUrl).toBe("https://x/start.png");
+    expect(arg.endImageUrl).toBeUndefined();
+    // image-to-video must not carry reference arrays.
+    expect(arg.imageUrls).toBeUndefined();
+    expect(arg.videoUrls).toBeUndefined();
+    expect(arg.audioUrls).toBeUndefined();
+  });
+
+  it("first-last mode sends start + end frames", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "day to night" },
+          start: { type: "image", value: { url: "https://x/day.png" } },
+          end: { type: "image", value: { url: "https://x/night.png" } },
+        },
+        { mode: "first-last" },
+      ) as Cfg,
+    );
+    const arg = callSeedanceVideo.mock.calls[0]![0];
+    expect(arg.startImageUrl).toBe("https://x/day.png");
+    expect(arg.endImageUrl).toBe("https://x/night.png");
+  });
+
+  it("image-to-video mode exposes start/(end) frame sockets via getInputs", () => {
+    const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
+    expect(ref.map((h) => h.id)).toEqual(["prompt", "image", "video", "audio"]);
+    const ff = seedanceVideoNodeSchema.getInputs!({ mode: "first-frame" });
+    expect(ff.map((h) => h.id)).toEqual(["prompt", "start"]);
+    const fl = seedanceVideoNodeSchema.getInputs!({ mode: "first-last" });
+    expect(fl.map((h) => h.id)).toEqual(["prompt", "start", "end"]);
+  });
+
+  it("first-frame mode requires a start frame", async () => {
+    await expect(
+      seedanceVideoNodeSchema.execute!(
+        ctx(
+          { prompt: { type: "text", value: "x" } },
+          { mode: "first-frame" },
+        ) as Cfg,
+      ),
+    ).rejects.toThrow(/start frame/);
+    expect(callSeedanceVideo).not.toHaveBeenCalled();
+  });
+
+  it("first-last mode requires an end frame", async () => {
+    await expect(
+      seedanceVideoNodeSchema.execute!(
+        ctx(
+          {
+            prompt: { type: "text", value: "x" },
+            start: { type: "image", value: { url: "https://x/only.png" } },
+          },
+          { mode: "first-last" },
+        ) as Cfg,
+      ),
+    ).rejects.toThrow(/end frame/);
+    expect(callSeedanceVideo).not.toHaveBeenCalled();
+  });
+
   it("rejects an out-of-range duration before calling the API", async () => {
     await expect(
       seedanceVideoNodeSchema.execute!(

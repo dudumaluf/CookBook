@@ -18,7 +18,9 @@ import {
  * Higgsfield wrapper, which predates our use of the Fal client).
  *
  * Endpoint dispatch:
- *   - any reference video present  -> reference-to-video (most capable:
+ *   - startImageUrl present        -> image-to-video (literal first frame +
+ *     optional end frame; a DISTINCT model — no video/audio refs, caps 720p)
+ *   - else any reference video     -> reference-to-video (most capable:
  *     up to 9 images + 3 videos + 3 audios; powers continuity + lipsync)
  *   - else any reference image     -> reference-to-video (image refs +
  *     optional audio; the agency reference-gen path)
@@ -59,31 +61,42 @@ function ensureConfigured(): void {
 }
 
 function pickEndpoint(req: SeedanceVideoRequest): string {
+  const hasStartImage = Boolean(req.startImageUrl);
   const hasVideo = (req.videoUrls?.length ?? 0) > 0;
   const hasImage = (req.imageUrls?.length ?? 0) > 0;
-  const base =
-    hasVideo || hasImage
+  const base = hasStartImage
+    ? "bytedance/seedance-2.0/image-to-video"
+    : hasVideo || hasImage
       ? "bytedance/seedance-2.0/reference-to-video"
       : "bytedance/seedance-2.0/text-to-video";
   return req.fast ? base.replace("seedance-2.0/", "seedance-2.0/fast/") : base;
 }
 
-/** Shape Fal's reference/text-to-video endpoints accept. */
+/** Shape Fal's image/reference/text-to-video endpoints accept. */
 function buildInput(req: SeedanceVideoRequest): Record<string, unknown> {
   const input: Record<string, unknown> = { prompt: req.prompt };
-  if (req.imageUrls?.length) input.image_urls = req.imageUrls;
-  if (req.videoUrls?.length) input.video_urls = req.videoUrls;
-  if (req.audioUrls?.length) input.audio_urls = req.audioUrls;
+  const isImageToVideo = Boolean(req.startImageUrl);
+  if (isImageToVideo) {
+    // image-to-video: literal start (+ optional end) frame. It does NOT
+    // accept reference arrays — keep them out so a stray value can't 422.
+    input.image_url = req.startImageUrl;
+    if (req.endImageUrl) input.end_image_url = req.endImageUrl;
+  } else {
+    if (req.imageUrls?.length) input.image_urls = req.imageUrls;
+    if (req.videoUrls?.length) input.video_urls = req.videoUrls;
+    if (req.audioUrls?.length) input.audio_urls = req.audioUrls;
+  }
   if (req.duration !== undefined) {
     input.duration =
       typeof req.duration === "number" ? String(req.duration) : req.duration;
   }
   if (req.aspectRatio !== undefined) input.aspect_ratio = req.aspectRatio;
   if (req.resolution !== undefined) {
-    // The fast tier caps output at 720p (no 1080p) — clamp so a fast run
-    // never 422s mid-pipeline on an unsupported resolution.
+    // The fast tier AND image-to-video both cap output at 720p (no 1080p) —
+    // clamp so a run never 422s mid-pipeline on an unsupported resolution.
+    const capsAt720 = req.fast || isImageToVideo;
     input.resolution =
-      req.fast && req.resolution === "1080p" ? "720p" : req.resolution;
+      capsAt720 && req.resolution === "1080p" ? "720p" : req.resolution;
   }
   if (req.generateAudio !== undefined) input.generate_audio = req.generateAudio;
   if (req.seed !== undefined) input.seed = req.seed;

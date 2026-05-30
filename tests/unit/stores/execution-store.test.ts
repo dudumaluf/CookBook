@@ -228,9 +228,15 @@ describe("execution-store", () => {
       useWorkflowStore.getState().updateNodeConfig(textId, { text: "v1" });
       await useExecutionStore.getState().startRun();
       rec = useExecutionStore.getState().getRecord(textId);
-      // startRun replaces records — so the second run starts from an
-      // empty history. That's intentional: full-run resets history.
-      expect(rec?.history).toHaveLength(1);
+      // A full Run now ACCUMULATES history (never wipes results) — so the
+      // second run appends rather than resetting.
+      expect(rec?.history).toHaveLength(2);
+      const vals = rec!.history!.map((h) =>
+        !Array.isArray(h.output) && h.output.type === "text"
+          ? h.output.value
+          : null,
+      );
+      expect(vals).toEqual(["v0", "v1"]);
     });
 
     it("Run-here preserves history across runs (no records reset)", async () => {

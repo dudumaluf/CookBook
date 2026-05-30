@@ -198,6 +198,39 @@ describe("startAutoSave", () => {
     vi.useRealTimers();
   });
 
+  it("flushes a pending change on teardown (close/switch inside the debounce window)", async () => {
+    repoMocks.save.mockResolvedValue(FAKE_PROJECT);
+    // Long debounce so the timer would NOT fire on its own before teardown.
+    const unsub = startAutoSave({
+      projectId: "proj-1",
+      ownerId: FAKE_USER_ID,
+      debounceMs: 10_000,
+    });
+
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "fresh",
+          kind: "text",
+          position: { x: 0, y: 0 },
+          config: { text: "just generated" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+
+    // The debounce hasn't elapsed — but tearing down must still persist.
+    expect(repoMocks.save).not.toHaveBeenCalled();
+    unsub();
+    await vi.waitFor(() => expect(repoMocks.save).toHaveBeenCalledTimes(1));
+    const callArg = repoMocks.save.mock.calls[0]?.[0] as {
+      state: { workflow: { nodes: { id: string }[] } };
+    };
+    expect(callArg.state.workflow.nodes[0]?.id).toBe("fresh");
+  });
+
   it("unsubscribe stops scheduling further saves", async () => {
     vi.useFakeTimers();
     repoMocks.save.mockResolvedValue(FAKE_PROJECT);

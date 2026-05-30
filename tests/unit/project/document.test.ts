@@ -66,6 +66,17 @@ describe("serializeExecutionState", () => {
       ["bad", { status: "error", error: "boom" }],
     ]);
     useExecutionStore.setState({ records });
+    // All record keys must exist as live nodes (else they're pruned as orphans).
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "gen", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
+        { id: "pending", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
+        { id: "bad", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
 
     const state = serializeExecutionState();
     expect(Object.keys(state)).toEqual(["gen"]);
@@ -77,6 +88,58 @@ describe("serializeExecutionState", () => {
     expect(
       (state.gen as unknown as Record<string, unknown>).hash,
     ).toBeUndefined();
+  });
+
+  it("never loses a result: keeps the last good output even when the node later errors", () => {
+    useExecutionStore.setState({
+      records: new Map<string, ExecutionRecord>([
+        // Re-run errored, but a prior good generation lives in history.
+        [
+          "gen",
+          {
+            status: "error",
+            error: "Fal hiccup",
+            history: [
+              { output: img("good.png"), usage: { model: "m" }, runId: 1, timestamp: 1 },
+            ],
+          },
+        ],
+      ]),
+    });
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "gen", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+
+    const state = serializeExecutionState();
+    // Persisted from the last history entry, not dropped.
+    expect(state.gen!.output).toEqual(img("good.png"));
+    expect(state.gen!.history).toHaveLength(1);
+  });
+
+  it("prunes orphan records left by deleted nodes (bounds growth)", () => {
+    useExecutionStore.setState({
+      records: new Map<string, ExecutionRecord>([
+        ["live", { status: "done", output: img("live.png") }],
+        ["orphan", { status: "cached", output: img("orphan.png") }],
+      ]),
+    });
+    // Only `live` is still in the graph; `orphan` was deleted.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "live", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+
+    const state = serializeExecutionState();
+    expect(Object.keys(state)).toEqual(["live"]);
   });
 });
 
@@ -101,6 +164,7 @@ describe("serializeProject / applyProjectDocument round-trip", () => {
     useWorkflowStore.setState({
       nodes: [
         { id: "t1", kind: "text", position: { x: 0, y: 0 }, config: { text: "hi" } },
+        { id: "g1", kind: "fal-image", position: { x: 0, y: 0 }, config: {} },
       ],
       edges: [],
       selectedNodeIds: [],
@@ -121,7 +185,7 @@ describe("serializeProject / applyProjectDocument round-trip", () => {
 
     const doc = serializeProject();
     expect(doc.projectName).toBe("My Project");
-    expect(doc.workflow.nodes).toHaveLength(1);
+    expect(doc.workflow.nodes).toHaveLength(2);
     expect(doc.executionState?.g1?.output).toEqual(img("r.png"));
 
     // Wipe everything, then re-apply the document.
@@ -136,7 +200,7 @@ describe("serializeProject / applyProjectDocument round-trip", () => {
 
     applyProjectDocument(doc);
 
-    expect(useWorkflowStore.getState().nodes).toHaveLength(1);
+    expect(useWorkflowStore.getState().nodes).toHaveLength(2);
     expect(useLayoutStore.getState().queueOpen).toBe(true);
     expect(useProjectStore.getState().name).toBe("My Project");
     const rec = useExecutionStore.getState().getRecord("g1");

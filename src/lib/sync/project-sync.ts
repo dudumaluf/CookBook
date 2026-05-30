@@ -159,6 +159,9 @@ export function startAutoSave({
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: Promise<unknown> | null = null;
   let pendingDuringInFlight = false;
+  // True when a store change has been scheduled but not yet persisted. Lets
+  // teardown / page-hide know there's unsaved work to flush.
+  let dirty = false;
 
   async function flush() {
     timer = null;
@@ -169,6 +172,7 @@ export function startAutoSave({
       pendingDuringInFlight = true;
       return;
     }
+    dirty = false;
     const state = snapshotStores();
     const payload: SaveProjectInput = {
       id: projectId,
@@ -195,8 +199,35 @@ export function startAutoSave({
   }
 
   function schedule() {
+    dirty = true;
     if (timer) clearTimeout(timer);
     timer = setTimeout(flush, debounceMs);
+  }
+
+  // Persist NOW (skip the debounce). Used on teardown (project switch /
+  // unmount) and when the tab is hidden / closing, so the last generation
+  // before leaving is never dropped with the pending timer. Without this, a
+  // result produced inside the debounce window vanishes on reload — exactly
+  // the "my generated image is gone after reopening" bug.
+  function flushNow() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (dirty || pendingDuringInFlight) void flush();
+  }
+
+  // A hidden / closing tab is the common "I generated then closed" path.
+  // `visibilitychange → hidden` fires reliably (incl. before pagehide) and
+  // the PATCH usually completes since the page isn't discarded yet.
+  function onVisibility() {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      flushNow();
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flushNow);
   }
 
   // Subscribe to every store. Zustand's `subscribe` fires on any mutation;
@@ -213,7 +244,14 @@ export function startAutoSave({
   ];
 
   return () => {
-    if (timer) clearTimeout(timer);
+    // Flush any pending change BEFORE dropping the timer — otherwise a
+    // result generated in the last debounce window is lost on project
+    // switch / unmount.
+    flushNow();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flushNow);
+    }
     for (const u of unsubs) u();
   };
 }

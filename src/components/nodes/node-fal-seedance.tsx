@@ -47,7 +47,18 @@ import { IteratorCursor } from "./iterator-cursor";
 
 export type SeedanceDuration = number | "auto";
 
+/**
+ * How the node uses its wired media (ADR-0054):
+ *   - "reference"   — references (images/videos/audio) -> reference/text-to-video
+ *   - "first-frame" — first wired image is the literal START frame -> image-to-video
+ *   - "first-last"  — first wired image = start, second = end -> image-to-video
+ * image-to-video is a DISTINCT Fal model: literal frame control, no video/
+ * audio refs, caps at 720p.
+ */
+export type SeedanceMode = "reference" | "first-frame" | "first-last";
+
 export interface SeedanceVideoNodeConfig {
+  mode?: SeedanceMode;
   duration?: SeedanceDuration;
   aspectRatio?: (typeof SEEDANCE_ASPECT_RATIOS)[number];
   resolution?: (typeof SEEDANCE_RESOLUTIONS)[number];
@@ -58,9 +69,11 @@ export interface SeedanceVideoNodeConfig {
 
 const DEFAULT_ASPECT = "auto" as const;
 const DEFAULT_RESOLUTION = "720p" as const;
+const DEFAULT_MODE: SeedanceMode = "reference";
 
 function hasSeedanceOverrides(config: SeedanceVideoNodeConfig): boolean {
   return (
+    (config.mode !== undefined && config.mode !== DEFAULT_MODE) ||
     config.duration !== undefined ||
     (config.aspectRatio !== undefined && config.aspectRatio !== DEFAULT_ASPECT) ||
     (config.resolution !== undefined &&
@@ -120,12 +133,17 @@ function SeedanceVideoNodeBody({
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
-        <Clapperboard className="h-3 w-3 text-accent" />
-        <span className="font-medium">Seedance 2.0</span>
-        <span className="text-muted-foreground/60">·</span>
         <span>{config.aspectRatio ?? DEFAULT_ASPECT}</span>
         <span className="text-muted-foreground/60">·</span>
         <span>{config.resolution ?? DEFAULT_RESOLUTION}</span>
+        {config.mode && config.mode !== DEFAULT_MODE ? (
+          <>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="text-accent">
+              {config.mode === "first-last" ? "first+last" : "first frame"}
+            </span>
+          </>
+        ) : null}
         {config.fast ? (
           <>
             <span className="text-muted-foreground/60">·</span>
@@ -196,13 +214,43 @@ function SeedanceVideoSettingsContent({
   config,
   updateConfig,
 }: NodeBodyProps<SeedanceVideoNodeConfig>) {
+  const modeId = useId();
   const durationId = useId();
   const aspectId = useId();
   const resolutionId = useId();
   const seedId = useId();
 
+  const mode = config.mode ?? DEFAULT_MODE;
+  const isImageMode = mode !== "reference";
+
   return (
     <div className="flex flex-col gap-3 text-xs">
+      {/* Mode */}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={modeId} className="font-medium text-foreground/90">
+          Mode
+        </label>
+        <select
+          id={modeId}
+          value={mode}
+          onChange={(e) =>
+            updateConfig({ mode: e.target.value as SeedanceMode })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="reference">reference (images / videos / audio)</option>
+          <option value="first-frame">first frame (animate start image)</option>
+          <option value="first-last">first + last frame (start → end)</option>
+        </select>
+        {isImageMode ? (
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            image-to-video: uses the wired{" "}
+            {mode === "first-last" ? "images as start + end frame" : "image as the start frame"}
+            . Ignores video/audio refs; caps at 720p.
+          </p>
+        ) : null}
+      </div>
+
       {/* Duration */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={durationId} className="font-medium text-foreground/90">
@@ -337,7 +385,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Wire a prompt; add reference images (identity/frames), videos (motion/continuity), and audio (lip-sync) to drive it. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio (identity, motion, lip-sync). Or switch to image-to-video mode (settings) to animate a literal first frame, optionally to an end frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: [
     { id: "prompt", label: "prompt", dataType: "text" },
@@ -345,6 +393,32 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     { id: "video", label: "video", dataType: "video", multiple: true },
     { id: "audio", label: "audio", dataType: "audio", multiple: true },
   ],
+  // Handles follow the mode (ADR-0054): image-to-video shows literal
+  // start/(end) frame sockets instead of the reference image/video/audio set,
+  // so the first/last-frame contract is visible on the node, not hidden in
+  // settings.
+  getInputs: (config) => {
+    const mode = config.mode ?? DEFAULT_MODE;
+    if (mode === "first-frame") {
+      return [
+        { id: "prompt", label: "prompt", dataType: "text" },
+        { id: "start", label: "start frame", dataType: "image" },
+      ];
+    }
+    if (mode === "first-last") {
+      return [
+        { id: "prompt", label: "prompt", dataType: "text" },
+        { id: "start", label: "start frame", dataType: "image" },
+        { id: "end", label: "end frame", dataType: "image" },
+      ];
+    }
+    return [
+      { id: "prompt", label: "prompt", dataType: "text" },
+      { id: "image", label: "image", dataType: "image", multiple: true },
+      { id: "video", label: "video", dataType: "video", multiple: true },
+      { id: "audio", label: "audio", dataType: "audio", multiple: true },
+    ];
+  },
   outputs: [{ id: "out", label: "out", dataType: "video" }],
   defaultConfig: {
     generateAudio: true,
@@ -355,45 +429,12 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   // seed === -1 (or unset) -> random each run -> bust the cache.
   isCacheBusting: (config) => isRandomSeed(config.seed),
   execute: async ({ config, inputs, signal }) => {
+    const mode = config.mode ?? DEFAULT_MODE;
     const prompt = (
       extractInputByType(inputs, "prompt", "text") ?? ""
     ).trim();
-    const imageUrls = extractInputArrayByType(inputs, "image", "image")
-      .map((r) => r.url)
-      .filter(Boolean);
-    const videoUrls = extractInputArrayByType(inputs, "video", "video")
-      .map((r) => r.url)
-      .filter(Boolean);
-    const audioUrls = extractInputArrayByType(inputs, "audio", "audio")
-      .map((r) => r.url)
-      .filter(Boolean);
 
-    const hasRefs =
-      imageUrls.length > 0 || videoUrls.length > 0 || audioUrls.length > 0;
-    if (prompt.length === 0 && !hasRefs) {
-      throw new Error(
-        "Nothing to generate — wire a prompt (or reference media) into the node.",
-      );
-    }
-
-    // Client-side constraint check before spending (Slice A helpers).
-    const durationSec =
-      typeof config.duration === "number" ? config.duration : undefined;
-    const violations = validateSeedanceRequest({
-      durationSec,
-      imageCount: imageUrls.length,
-      videoCount: videoUrls.length,
-      audioCount: audioUrls.length,
-    });
-    if (violations.length > 0) {
-      throw new Error(violations.map((v) => v.message).join(" "));
-    }
-
-    const request: SeedanceVideoRequest = {
-      prompt,
-      ...(imageUrls.length ? { imageUrls } : {}),
-      ...(videoUrls.length ? { videoUrls } : {}),
-      ...(audioUrls.length ? { audioUrls } : {}),
+    const common = {
       ...(config.duration !== undefined ? { duration: config.duration } : {}),
       ...(config.aspectRatio ? { aspectRatio: config.aspectRatio } : {}),
       ...(config.resolution ? { resolution: config.resolution } : {}),
@@ -403,7 +444,71 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
       // Resolve -1 / unset to a concrete random seed each run.
       seed: resolveSeed(config.seed),
       ...(config.fast ? { fast: true } : {}),
-    };
+    } as const;
+
+    let request: SeedanceVideoRequest;
+    if (mode === "first-frame" || mode === "first-last") {
+      // image-to-video: dedicated start/(end) frame sockets (ADR-0054).
+      const startImageUrl = extractInputByType(inputs, "start", "image")?.url;
+      if (!startImageUrl) {
+        throw new Error(
+          "image-to-video needs a start frame — wire an image into the `start frame` socket.",
+        );
+      }
+      const endImageUrl =
+        mode === "first-last"
+          ? extractInputByType(inputs, "end", "image")?.url
+          : undefined;
+      if (mode === "first-last" && !endImageUrl) {
+        throw new Error(
+          "First + last mode needs an `end frame` wired too.",
+        );
+      }
+      request = {
+        prompt,
+        startImageUrl,
+        ...(endImageUrl ? { endImageUrl } : {}),
+        ...common,
+      };
+    } else {
+      const imageUrls = extractInputArrayByType(inputs, "image", "image")
+        .map((r) => r.url)
+        .filter(Boolean);
+      const videoUrls = extractInputArrayByType(inputs, "video", "video")
+        .map((r) => r.url)
+        .filter(Boolean);
+      const audioUrls = extractInputArrayByType(inputs, "audio", "audio")
+        .map((r) => r.url)
+        .filter(Boolean);
+      const hasRefs =
+        imageUrls.length > 0 || videoUrls.length > 0 || audioUrls.length > 0;
+      if (prompt.length === 0 && !hasRefs) {
+        throw new Error(
+          "Nothing to generate — wire a prompt (or reference media) into the node.",
+        );
+      }
+
+      // Client-side constraint check before spending (Slice A helpers).
+      const durationSec =
+        typeof config.duration === "number" ? config.duration : undefined;
+      const violations = validateSeedanceRequest({
+        durationSec,
+        imageCount: imageUrls.length,
+        videoCount: videoUrls.length,
+        audioCount: audioUrls.length,
+      });
+      if (violations.length > 0) {
+        throw new Error(violations.map((v) => v.message).join(" "));
+      }
+
+      request = {
+        prompt,
+        ...(imageUrls.length ? { imageUrls } : {}),
+        ...(videoUrls.length ? { videoUrls } : {}),
+        ...(audioUrls.length ? { audioUrls } : {}),
+        ...common,
+      };
+    }
 
     const result = await callSeedanceVideo({ ...request, signal });
 

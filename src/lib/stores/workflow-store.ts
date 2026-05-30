@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
+import { migrateVideoConcatClips } from "@/lib/engine/migrate-graph";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useAssetStore } from "@/lib/stores/asset-store";
 
@@ -302,7 +303,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 9,
+      version: 10,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -575,7 +576,14 @@ export const useWorkflowStore = create<WorkflowState>()(
             ? persistedEdges.filter((e) => !orphanEdgeIds.has(e.id))
             : (state.edges ?? []);
 
-        return { ...state, nodes: v8Nodes, edges: v8Edges };
+        // v10 (ADR-0056): Video Concat `clips` multi-handle → ordered
+        // `clip-N` sockets.
+        const v10 = migrateVideoConcatClips(
+          v8Nodes as NodeInstance[],
+          v8Edges as WorkflowEdge[],
+        );
+
+        return { ...state, nodes: v10.nodes, edges: v10.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

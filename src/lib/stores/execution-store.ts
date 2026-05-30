@@ -211,14 +211,16 @@ async function launchRun({
 
   const { nodes, edges } = useWorkflowStore.getState();
 
-  // Full run wipes records (matches pre-Slice-5.8 behavior). Run-here
-  // PRESERVES records of unrelated nodes — the engine's
-  // `computeAncestorSubgraph` already keeps them out of the run, so we
-  // simply don't clear them here.
+  // Never wipe records — a generated result persists until the node is
+  // deleted (or an explicit future "clear"). Both full and partial runs
+  // PRESERVE prior records: onProgress overwrites each node as it runs and
+  // appends to its history on `done`, so a full Run now ACCUMULATES history
+  // instead of resetting it. Nodes not touched by the run keep their last
+  // result on screen.
   set({
     runId,
     isRunning: true,
-    records: endAtNodeId === undefined ? new Map() : get().records,
+    records: get().records,
   });
 
   try {

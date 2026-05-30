@@ -41,6 +41,15 @@ export const seedanceVideoRequestSchema = z
     videoUrls: z.array(z.string().url()).max(3).optional(),
     /** Reference audio (@Audio1..@Audio3) — lip-sync / rhythm. */
     audioUrls: z.array(z.string().url()).max(3).optional(),
+    /**
+     * image-to-video: the starting frame the model animates FROM. Its
+     * presence switches the endpoint to `image-to-video` (a distinct model
+     * from reference-to-video — literal first/last frame control instead of
+     * soft references). Mutually exclusive with the reference arrays.
+     */
+    startImageUrl: z.string().url().optional(),
+    /** image-to-video: optional ending frame (start→end transition). */
+    endImageUrl: z.string().url().optional(),
     /** 4-15s, or "auto" to let the model decide. */
     duration: z
       .union([z.literal("auto"), z.number().int().min(4).max(15)])

@@ -1,10 +1,12 @@
 import { arrayNodeSchema } from "@/components/nodes/node-array";
 import { audioNodeSchema } from "@/components/nodes/node-audio";
+import { audioSlicerNodeSchema } from "@/components/nodes/node-audio-slicer";
 import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { continuityBuilderNodeSchema } from "@/components/nodes/node-continuity-builder";
 import { exportNodeSchema } from "@/components/nodes/node-export";
 import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
+import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
@@ -17,6 +19,7 @@ import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
 import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
+import { videoSlicerNodeSchema } from "@/components/nodes/node-video-slicer";
 
 import { nodeRegistry } from "./registry";
 
@@ -49,6 +52,9 @@ export function registerAllNodes(): void {
   nodeRegistry.register(falImageNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);
+  nodeRegistry.register(audioSlicerNodeSchema);
+  nodeRegistry.register(videoSlicerNodeSchema);
+  nodeRegistry.register(frameExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);
   nodeRegistry.register(textIteratorNodeSchema);

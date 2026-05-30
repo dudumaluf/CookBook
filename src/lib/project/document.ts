@@ -18,6 +18,7 @@
  * playbook as the workflow-store's local migrations.
  */
 
+import { migrateVideoConcatClips } from "@/lib/engine/migrate-graph";
 import { PROJECT_STATE_VERSION } from "@/lib/repositories/project-repository";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import {
@@ -30,8 +31,10 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type {
   ExecutionHistoryEntry,
   ExecutionRecord,
+  NodeInstance,
   NodeUsage,
   StandardizedOutput,
+  WorkflowEdge,
 } from "@/types/node";
 
 /** One node's persisted execution result (only URLs/text — never bytes). */
@@ -100,15 +103,44 @@ export function emptyProjectDocument(
  */
 export function serializeExecutionState(): SerializedExecutionState {
   const out: SerializedExecutionState = {};
+  // Only persist results for nodes still in the graph — drop orphan records
+  // left behind by deleted nodes so executionState can't grow unbounded
+  // across saves (rehydrate → re-serialize would otherwise re-save them).
+  const liveNodeIds = new Set(
+    useWorkflowStore.getState().nodes.map((n) => n.id),
+  );
   for (const [nodeId, rec] of useExecutionStore.getState().records) {
-    if (rec.output === undefined) continue;
-    if (rec.status !== "done" && rec.status !== "cached") continue;
-    const entry: SerializedNodeExecution = { output: rec.output };
-    if (rec.usage) entry.usage = rec.usage;
-    if (rec.elapsedMs !== undefined) entry.elapsedMs = rec.elapsedMs;
-    if (rec.history && rec.history.length > 0) {
-      entry.history = rec.history.slice(-HISTORY_CAP);
+    if (!liveNodeIds.has(nodeId)) continue;
+
+    const history =
+      rec.history && rec.history.length > 0
+        ? rec.history.slice(-HISTORY_CAP)
+        : undefined;
+
+    // Persist the current output for a settled record; otherwise fall back
+    // to the most recent history entry. This guarantees a result is NEVER
+    // lost just because the node was later re-run into an error / idle
+    // state — a generation only disappears when the node is deleted.
+    let output: StandardizedOutput | StandardizedOutput[] | undefined;
+    let usage = rec.usage;
+    let elapsedMs = rec.elapsedMs;
+    if (
+      (rec.status === "done" || rec.status === "cached") &&
+      rec.output !== undefined
+    ) {
+      output = rec.output;
+    } else if (history) {
+      const last = history[history.length - 1]!;
+      output = last.output;
+      usage = last.usage;
+      elapsedMs = last.elapsedMs;
     }
+    if (output === undefined) continue;
+
+    const entry: SerializedNodeExecution = { output };
+    if (usage) entry.usage = usage;
+    if (elapsedMs !== undefined) entry.elapsedMs = elapsedMs;
+    if (history) entry.history = history;
     out[nodeId] = entry;
   }
   return out;
@@ -181,9 +213,15 @@ export function applyProjectDocument(
     useAssetStore.setState({ assets: doc.assets as never });
   }
   if (doc.workflow) {
+    // Cloud/file loads bypass the workflow-store persist migrate, so run the
+    // graph-level forward-port here too (ADR-0056: Video Concat clips → clip-N).
+    const migrated = migrateVideoConcatClips(
+      (doc.workflow.nodes ?? []) as NodeInstance[],
+      (doc.workflow.edges ?? []) as WorkflowEdge[],
+    );
     useWorkflowStore.setState({
-      nodes: doc.workflow.nodes as never,
-      edges: doc.workflow.edges as never,
+      nodes: migrated.nodes as never,
+      edges: migrated.edges as never,
     });
   }
   if (doc.layout) {

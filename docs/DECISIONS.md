@@ -2388,3 +2388,78 @@ Per the user's pick, phase 1 renders attachment/mention chips in a row ABOVE the
 - **No rich contenteditable yet** — chips live above the input, not in the text flow. Lower risk; revisit if the visual isn't enough.
 - **Attachments always hit the Library** — no "ephemeral, chat-only" file. Simpler + makes them wireable; the user can delete from the Library if unwanted.
 - **References are a context note, not structured tool args** — the assistant reads ids/urls from the note. A typed "referenced_assets" tool input could come later if it needs stricter wiring.
+
+## ADR-0054 — Seedance image-to-video as a node mode (distinct from reference-to-video)
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: the Seedance node only ever routed to `reference-to-video` (or `text-to-video`). A single wired image became a *soft reference*, never the literal first frame. But Fal ships a **distinct** model — `bytedance/seedance-2.0/image-to-video` — with `image_url` = literal start frame + optional `end_image_url` = last frame (start→end transition). It does **not** accept video/audio refs and caps at 720p. Conflating the two hid real first/last-frame control the user wanted for tight continuity / still-to-motion / morph.
+
+### 1. Decisão: a `mode` on the existing Seedance node (not a separate node)
+
+Per the user's pick: one node, `config.mode ∈ { "reference" | "first-frame" | "first-last" }` (default `reference` = today's behavior).
+- `first-frame` — the first wired `image` becomes `startImageUrl` → `image-to-video`.
+- `first-last` — first wired image = start, second = end (`endImageUrl`).
+Reference/text routing is unchanged; the mode just picks which contract the node emits.
+
+### 2. Decisão: a data-driven wire contract (no `mode` field on the request)
+
+`SeedanceVideoRequest` gains `startImageUrl?` + `endImageUrl?`. The server `pickEndpoint` keys off `startImageUrl` presence → `image-to-video` (+ `/fast/`), and `buildInput` emits `image_url`/`end_image_url` while **omitting** the reference arrays (they'd 422 on that endpoint). Keeps the API contract describable by data, not a flag.
+
+### 3. Decisão: clamp 1080p→720p for image-to-video too
+
+`image-to-video` (like the fast tier) maxes at 720p. The existing fast-tier clamp now also fires when `startImageUrl` is set, so a stale 1080p config never 422s mid-run.
+
+### 4. Trade-offs aceitos
+
+- **Mode over a separate node** — the user values not multiplying nodes; one picker keeps the canvas clean. A dedicated node could come later if the modes diverge further.
+- **Image refs reused as frames** — `first-frame`/`first-last` reuse the existing `image` input (1st = start, 2nd = end) rather than adding dedicated handles. Fewer handles; order is the contract.
+- **No motion ref in image mode** — image-to-video can't take the performance video, so the singer pipeline stays on `reference-to-video`; image mode is for still-to-motion / morph / exact-frame starts.
+
+## ADR-0055 — Generated results are durable: never lost until the node is deleted
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: a user reported nano-banana images + Higgsfield history vanishing after closing/reopening a project. Two causes: (1) `project-sync` teardown discarded the pending debounced save (results from the last ~1s before leaving were never persisted); (2) by prior design a *full* Run wiped all execution records (`new Map()`), resetting history — and any node that then errored or didn't complete lost its previously-good output, which the next auto-save then erased. The user's principle: **"if we generated something in a project we should never lose it, unless we delete the node (or, later, an explicit clear)."**
+
+### 1. Decisão: persistence flushes on the way out
+
+`startAutoSave` now flushes the pending save on teardown (project switch / unmount) and on `visibilitychange→hidden` / `pagehide`. In-app paths (switch, navigation) are fully covered; a hard tab-close is best-effort (the async PATCH may not finish). Generated results no longer fall into the debounce gap.
+
+### 2. Decisão: runs never wipe records — full Run accumulates history
+
+`launchRun` keeps the existing records for BOTH full and partial runs (previously only Run-here preserved them). `onProgress` overwrites each node as it runs and appends to history on `done`, so a full Run now ACCUMULATES history instead of resetting it. Nodes not touched by a run keep their last result on screen. (Reverses the "full-run resets history" note in the Slice 5.8 tests.)
+
+### 3. Decisão: serialization falls back to the last good history entry
+
+`serializeExecutionState` persists the current output for a settled (`done`/`cached`) record, else the most recent history entry's output. So a node re-run into an `error`/idle state never erases the previously-generated result — it stays in the document (and on screen via history) until the node is deleted. Orphan records (node no longer in the graph) are pruned so the document can't grow unbounded.
+
+### 4. Trade-offs aceitos
+
+- **Durability over a clean slate** — a full Run no longer gives every node a fresh empty history; results pile up (capped at `HISTORY_CAP`). A future explicit "clear current / clear history" affordance is the sanctioned way to drop results (the only other path besides deleting the node).
+- **Hard tab-close is best-effort** — without `sendBeacon`/`keepalive` on the Supabase client, a literal kill mid-PATCH can still miss the very last change; the visibility/pagehide flush covers the overwhelming majority.
+- **Stale-on-screen during a run** — preserving records means a node shows its prior result (not a blank/idle state) until its new output lands. Considered better UX than flashing empty.
+
+## ADR-0056 — Dynamic node handles: Seedance frame sockets + Video Concat ordered ports
+
+- **Date**: 2026-05-29
+- **Status**: implemented.
+- **Context**: two UX gaps surfaced when the user instantiated the modular recipe. (1) The Seedance image-to-video contract (first / first+last frame) lived only in the `⋯` settings, reusing the generic `image` input — invisible. (2) Video Concat had a single `clips` multi-handle, so join ORDER was invisible (it followed hidden edge-insertion order). Both are solved with **`getInputs(config)`** (already powering composite nodes), which drives BOTH canvas rendering and the engine's input resolution (`getNodeInputs`).
+
+### 1. Decisão: Seedance handles follow the mode
+
+`getInputs(config)` returns the reference set (`prompt, image×N, video×N, audio×N`) in reference mode, and dedicated `start frame` (+ `end frame`) image sockets in `first-frame` / `first-last`. `execute` reads `start`/`end` in image mode. The first/last-frame contract is now visible on the node, not buried in settings.
+
+### 2. Decisão: Video Concat auto-growing ordered ports
+
+`clips` (one multi-handle) → numbered `clip-0..N` sockets via `getInputs`. The body watches incoming edges and keeps exactly one empty trailing socket (`desired = maxWired + 2`), so wiring the last one reveals the next — **no "add port" button**, matching the user's "smart" preference. `execute` reads sockets in index order, so the visible top-to-bottom order IS the join order.
+
+### 3. Decisão: graph-level migration runs from both load paths
+
+Changing `clips` → `clip-N` is a graph-shape change spanning nodes + edges. `migrateVideoConcatClips` (pure, registry-free, `src/lib/engine/migrate-graph.ts`) rewrites legacy `clips` edges to indexed sockets and sets `portCount`. It runs from the workflow-store persist `migrate` (bumped **v9 → v10**) AND from `applyProjectDocument` (cloud / file loads bypass persist). `execute` also keeps a `clips` read as belt-and-suspenders. The seeded "Singer Performance (modular)" recipe was updated in place (file + DB).
+
+### 4. Trade-offs aceitos
+
+- **Switching Seedance mode drops edges** — `image`/`video`/`audio` edges dangle when you switch to an image mode (and vice-versa) because the handles change. Acceptable: the modes are genuinely different contracts.
+- **portCount lives in config** — the auto-grow writes `portCount` (a tiny config field) so `getInputs` can render the right count; it's driven by a body effect watching edges, guarded so it can't loop.
+- **Migration in two places** — persist + document both call the shared helper. Minor duplication, but cloud loads (the real path) don't go through persist, so both are needed.

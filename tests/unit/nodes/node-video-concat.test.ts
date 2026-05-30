@@ -68,11 +68,42 @@ describe("video-concat node", () => {
     });
   });
 
+  it("joins ordered clip-N sockets in index order (ADR-0056)", async () => {
+    const result = await videoConcatNodeSchema.execute!(
+      {
+        nodeId: "n1",
+        config: { portCount: 3 },
+        inputs: {
+          "clip-0": { type: "video", value: { url: "https://x/a.mp4" } },
+          "clip-1": { type: "video", value: { url: "https://x/b.mp4" } },
+          "clip-2": { type: "video", value: { url: "https://x/c.mp4" } },
+        },
+        signal: new AbortController().signal,
+      } as never,
+    );
+    expect(concatVideos).toHaveBeenCalledWith([
+      "https://x/a.mp4",
+      "https://x/b.mp4",
+      "https://x/c.mp4",
+    ]);
+    const out = (result as { output: StandardizedOutput }).output;
+    expect(out.type).toBe("video");
+  });
+
+  it("getInputs grows the socket list with portCount", () => {
+    expect(videoConcatNodeSchema.getInputs!({}).map((h) => h.id)).toEqual([
+      "clip-0",
+      "clip-1",
+    ]);
+    expect(
+      videoConcatNodeSchema.getInputs!({ portCount: 4 }).map((h) => h.id),
+    ).toEqual(["clip-0", "clip-1", "clip-2", "clip-3"]);
+  });
+
   it("is a non-reactive compose node outputting video", () => {
     expect(videoConcatNodeSchema.kind).toBe("video-concat");
     expect(videoConcatNodeSchema.category).toBe("compose");
     expect(videoConcatNodeSchema.reactive).toBe(false);
     expect(videoConcatNodeSchema.outputs[0]?.dataType).toBe("video");
-    expect(videoConcatNodeSchema.inputs[0]?.multiple).toBe(true);
   });
 });

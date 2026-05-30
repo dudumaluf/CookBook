@@ -104,11 +104,12 @@
 ### Media core (both use cases)
 | Candidate node | Backed by | Notes |
 |---|---|---|
-| **Video Gen (Seedance)** | `bytedance/seedance-2.0/*` | One node, mode = text/image/reference-to-video. Handles swap + lipsync + native audio + extension. |
-| **Extract Frame** | ffmpeg-style util (server) | Pull first/last frame of a video → image. Lynchpin for frame-chaining continuity. |
-| **Video Concat / Stitch** | server util | Join clips into one. |
-| **Audio Slice** | server util | Split a song into 15s windows for per-chunk lipsync. |
-| **Media Normalize** | server util | Fit Seedance's resolution/size/format limits. |
+| **Video Gen (Seedance)** | `bytedance/seedance-2.0/*` | ✅ Shipped (`seedance-video`). One node, mode = reference/text + image-to-video (first/last frame, ADR-0054). Handles swap + lipsync + native audio + extension. |
+| **Frame Extract** | mediabunny (client WebCodecs) | ✅ Shipped (`frame-extract`). Pull first/last frame of a video → image. Lynchpin for frame-chaining continuity. |
+| **Video Concat / Stitch** | mediabunny (client) | ✅ Shipped (`video-concat`). Join clips into one (remux, no re-encode). |
+| **Audio Slicer** | mediabunny (client) | ✅ Shipped (`audio-slicer`). Split a song into 15s windows → audio[] for per-chunk lipsync. |
+| **Video Slicer** | mediabunny (client) | ✅ Shipped (`video-slicer`). Split a reference performance into 15s windows → video[] (motion refs, ~720p cap). |
+| **Media Normalize** | mediabunny `Conversion` | Deferred util — fit Seedance's resolution/size/format limits (slicers already downscale). |
 | **Video Upscale** | `seedvr/upscale/video` / Topaz | Final-pass quality. |
 | **Subtitles** | `veed/subtitles` | Optional post. |
 
