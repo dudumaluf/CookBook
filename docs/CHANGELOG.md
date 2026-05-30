@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Audio Isolation: per-run history navigator
+
+**Audio Isolation** now shows the same history arrows as Seedance / Fal Image — browse past isolations without losing earlier results. New runs auto-jump to the latest.
+
 ## 2026-05-30 — Audio Isolation node (ElevenLabs via Fal)
 
 New **Audio Isolation** node (`fal-audio-isolation`): wire audio or video → Run → isolated vocals as audio output. Uses `fal-ai/elevenlabs/audio-isolation` via async submit + poll (`/api/fal/audio-isolation` + `/status`). Audio input wins when both are wired. ~$0.10/min on Fal. **Tests +8.**

@@ -1,12 +1,15 @@
 "use client";
 
 import { Loader2, Mic2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { callAudioIsolation } from "@/lib/fal/call-audio-isolation";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
+
+import { IteratorCursor } from "./iterator-cursor";
 
 /**
  * ElevenLabs Audio Isolation (via Fal) — isolate vocals from audio or video.
@@ -15,14 +18,41 @@ import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
  * audio. Non-reactive (Fal billing). Uses async submit + poll (ADR-0057).
  */
 
+function audioUrlFromOutput(
+  output: StandardizedOutput | StandardizedOutput[] | undefined,
+): string | null {
+  if (!output) return null;
+  if (!Array.isArray(output) && output.type === "audio") return output.value.url;
+  if (Array.isArray(output)) {
+    const hit = output.find(
+      (o): o is StandardizedOutput & { type: "audio" } => o.type === "audio",
+    );
+    return hit?.value.url ?? null;
+  }
+  return null;
+}
+
 function AudioIsolationBody({ nodeId }: NodeBodyProps) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
-  const output = record?.output;
-  const url =
-    output && !Array.isArray(output) && output.type === "audio"
-      ? output.value.url
-      : null;
+  const history = record?.history ?? [];
+
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  const prevHistoryLen = useRef(history.length);
+  useEffect(() => {
+    if (history.length > prevHistoryLen.current) setHistoryCursor(null);
+    prevHistoryLen.current = history.length;
+  }, [history.length]);
+  const effectiveCursor =
+    history.length === 0
+      ? 0
+      : historyCursor === null || historyCursor >= history.length
+        ? history.length - 1
+        : Math.max(0, historyCursor);
+
+  const activeOutput =
+    history.length > 0 ? history[effectiveCursor]?.output : record?.output;
+  const url = audioUrlFromOutput(activeOutput);
 
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
@@ -30,32 +60,51 @@ function AudioIsolationBody({ nodeId }: NodeBodyProps) {
         <Mic2 className="h-3 w-3 text-accent" />
         <span className="font-medium">ElevenLabs · voice isolation</span>
       </div>
-      {status === "error" && record?.error ? (
-        <p
-          role="alert"
-          className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] leading-snug text-destructive"
-        >
-          {record.error}
-        </p>
-      ) : status === "running" ? (
-        <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Isolating audio…</span>
-        </div>
-      ) : url ? (
-        <audio
-          src={url}
-          controls
-          preload="metadata"
-          onPointerDown={(e) => e.stopPropagation()}
-          className="w-full"
-        />
-      ) : (
-        <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
-          <Mic2 className="h-3 w-3" />
-          <span>Wire audio or video, then Run</span>
-        </div>
-      )}
+
+      <div className="relative">
+        {history.length > 1 ? (
+          <div
+            data-testid="audio-isolation-history-cursor"
+            className="absolute right-1 top-1 z-10"
+          >
+            <IteratorCursor
+              count={history.length}
+              cursor={effectiveCursor}
+              onCursorChange={(next) => setHistoryCursor(next)}
+              ariaLabelPrefix="Isolation"
+              className="bg-background/75 shadow-sm backdrop-blur-sm"
+            />
+          </div>
+        ) : null}
+
+        {status === "error" && record?.error ? (
+          <p
+            role="alert"
+            className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] leading-snug text-destructive"
+          >
+            {record.error}
+          </p>
+        ) : status === "running" ? (
+          <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>Isolating audio…</span>
+          </div>
+        ) : url ? (
+          <audio
+            data-testid="audio-isolation-result"
+            src={url}
+            controls
+            preload="metadata"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="w-full"
+          />
+        ) : (
+          <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
+            <Mic2 className="h-3 w-3" />
+            <span>Wire audio or video, then Run</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
