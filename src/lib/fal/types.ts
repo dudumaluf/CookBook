@@ -456,3 +456,66 @@ export type MarlinStatusRequest = z.infer<typeof marlinStatusRequestSchema>;
 export type MarlinStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & MarlinSuccessResponse);
+
+/* ──────────────────── HeyGen Lipsync Precision ──────────────────── */
+
+/** Fal `fal-ai/heygen/v3/lipsync/precision` — replace/dub audio on a video with avatar lipsync. */
+export const HEYGEN_LIPSYNC_ENDPOINT = "fal-ai/heygen/v3/lipsync/precision";
+
+export const heygenLipsyncRequestSchema = z
+  .object({
+    videoUrl: z.string().url(),
+    audioUrl: z.string().url(),
+    title: z.string().max(200).optional(),
+    enableCaption: z.boolean().optional(),
+    /** Default true — let HeyGen stretch/trim video to fit new audio. */
+    enableDynamicDuration: z.boolean().optional(),
+    disableMusicTrack: z.boolean().optional(),
+    enableSpeechEnhancement: z.boolean().optional(),
+    /** Partial-lipsync window. Both must be set (or neither). */
+    startTime: z.number().nonnegative().optional(),
+    endTime: z.number().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      (v.startTime === undefined && v.endTime === undefined) ||
+      (v.startTime !== undefined &&
+        v.endTime !== undefined &&
+        v.endTime > v.startTime),
+    {
+      message:
+        "startTime and endTime must both be set, with endTime > startTime",
+      path: ["endTime"],
+    },
+  );
+
+export type HeygenLipsyncRequest = z.infer<typeof heygenLipsyncRequestSchema>;
+
+export interface HeygenLipsyncSuccessResponse {
+  videoUrl: string;
+  /** Optional caption file when `enableCaption` is true and HeyGen returns one. */
+  captionUrl?: string;
+  mime?: string;
+  model: string;
+}
+
+export interface HeygenLipsyncSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const heygenLipsyncStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type HeygenLipsyncStatusRequest = z.infer<
+  typeof heygenLipsyncStatusRequestSchema
+>;
+
+export type HeygenLipsyncStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & HeygenLipsyncSuccessResponse);

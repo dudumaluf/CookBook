@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — HeyGen Lipsync Precision: video + audio → dubbed clip
+
+New **HeyGen Lipsync** node (`fal-heygen-lipsync`): wire a source video + a replacement audio track → Run → a high-accuracy avatar-inference lip-synced video back. Settings cover an optional title, captions toggle, **dynamic duration** (default on per Fal — stretches/trims video to fit the new audio), source-music muting, speech enhancement, and an optional **partial-lipsync window** (start–end seconds). Output is `video` so the dubbed clip flows into Frame Extract / Video Concat / Marlin / Export. Uses `fal-ai/heygen/v3/lipsync/precision` via async submit + poll (`/api/fal/heygen-lipsync` + `/status`, 5s interval, 20-min ceiling). Lands in the Gallery alongside Seedance renders. Per-run history navigator. ~$0.10 per second of source video. **Tests +16.**
+
 ## 2026-05-30 — Marlin: video → scene + time-ranged events caption node
 
 New **Marlin** node (`fal-marlin`): wire a video → Run → a 2B video-VLM caption back. Output is a single `text` so it slots into LLM Text / Export / anywhere text flows; the node body also renders the structured **scene** paragraph + a scrollable list of `[mm:ss–mm:ss]` events for at-a-glance review. Optional `prompt` text input overrides the (pre-filled, canonical training) prompt — Marlin's docs warn that overriding usually degrades output quality, so the settings popover gives a one-click reset to default. Settings also expose `max_tokens` (64–4096), greedy-vs-sample toggle, `temperature` and `top_p`. Uses `fal-ai/marlin` via async submit + poll (`/api/fal/marlin` + `/status`). Per-run history navigator like the other Fal generators. ~$0.015 per 1k tokens (typical 2k caption ≈ $0.03). **Tests +14.**

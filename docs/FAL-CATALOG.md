@@ -89,6 +89,7 @@
 |---|---|---|
 | `fal-ai/elevenlabs/audio-isolation` | Isolate vocals from audio or video. ~$0.10/min. | ✅ |
 | `fal-ai/marlin` | 2B video VLM. Caption a clip with scene + time-ranged events. ~$0.015/1k tokens. | ✅ |
+| `fal-ai/heygen/v3/lipsync/precision` | Replace/dub a video's audio with high-accuracy avatar lipsync. ~$0.10/sec of video. | ✅ |
 | `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` | Image-to-3D mesh (GLB + OBJ + thumbnail). $0.375/render (+$0.15 each PBR / multi-view / custom face count). | ✅ |
 | ElevenLabs (via Fal) | Voice generation + voice clone. | 🔎 |
 
@@ -113,6 +114,7 @@
 | **Audio Slicer** | mediabunny (client) | ✅ Shipped (`audio-slicer`). Split a song into 15s windows → audio[] for per-chunk lipsync. |
 | **Audio Isolation** | `fal-ai/elevenlabs/audio-isolation` | ✅ Shipped (`fal-audio-isolation`). Isolate vocals from audio or video (Fal queue). |
 | **Marlin (video VLM)** | `fal-ai/marlin` | ✅ Shipped (`fal-marlin`). Caption a clip → scene description + time-ranged events; emits text for downstream LLMs / Export (Fal queue). |
+| **HeyGen Lipsync** | `fal-ai/heygen/v3/lipsync/precision` | ✅ Shipped (`fal-heygen-lipsync`). Replace/dub a video's audio with avatar-inference lipsync; in-node video preview, partial-window option, captions toggle (Fal queue). |
 | **Image to 3D Mesh** | `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` | ✅ Shipped (`fal-hunyuan-3d`). Front + optional multi-view images → GLB mesh; in-node viewer with orbit/pan/zoom (Fal queue). |
 | **Video Slicer** | mediabunny (client) | ✅ Shipped (`video-slicer`). Split a reference performance into 15s windows → video[] (motion refs, ~720p cap). |
 | **Media Normalize** | mediabunny `Conversion` | Deferred util — fit Seedance's resolution/size/format limits (slicers already downscale). |
