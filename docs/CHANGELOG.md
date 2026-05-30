@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Marlin: video → scene + time-ranged events caption node
+
+New **Marlin** node (`fal-marlin`): wire a video → Run → a 2B video-VLM caption back. Output is a single `text` so it slots into LLM Text / Export / anywhere text flows; the node body also renders the structured **scene** paragraph + a scrollable list of `[mm:ss–mm:ss]` events for at-a-glance review. Optional `prompt` text input overrides the (pre-filled, canonical training) prompt — Marlin's docs warn that overriding usually degrades output quality, so the settings popover gives a one-click reset to default. Settings also expose `max_tokens` (64–4096), greedy-vs-sample toggle, `temperature` and `top_p`. Uses `fal-ai/marlin` via async submit + poll (`/api/fal/marlin` + `/status`). Per-run history navigator like the other Fal generators. ~$0.015 per 1k tokens (typical 2k caption ≈ $0.03). **Tests +14.**
+
 ## 2026-05-30 — Hunyuan 3D Pro: image-to-3D mesh node
 
 New **Hunyuan 3D Pro** node (`fal-hunyuan-3d`): wire a front-view image (required) and any optional multi-view inputs (back, left/right, top/bottom, 3-4 angles) → Run → a GLB mesh you can **orbit, pan and zoom** right inside the node body via a built-in `<model-viewer>` preview. Output is a new `mesh` data type carrying GLB url + optional sibling OBJ + thumbnail. Settings let you pick generate type (Normal / Geometry), toggle PBR materials, and tune face count (40k–1.5M). Uses `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` via async submit + poll (`/api/fal/hunyuan-3d` + `/status`). Per-run history navigator like the other Fal generators. ~$0.375 per render on Fal (+$0.15 each for PBR / multi-view / custom face count). **Tests +11.**

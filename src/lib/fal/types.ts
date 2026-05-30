@@ -386,3 +386,73 @@ export type Hunyuan3dStatusRequest = z.infer<typeof hunyuan3dStatusRequestSchema
 export type Hunyuan3dStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & Hunyuan3dSuccessResponse);
+
+/* ───────────────────────── Marlin video VLM ──────────────────────────── */
+
+/** Fal `fal-ai/marlin` — 2B video VLM. Captions a clip with scene + events. */
+export const MARLIN_ENDPOINT = "fal-ai/marlin";
+
+/**
+ * Marlin's canonical training prompt. The docs explicitly warn that
+ * overriding usually degrades output quality, so the node defaults to
+ * this and treats it as a knob, not a required field.
+ */
+export const MARLIN_DEFAULT_PROMPT =
+  "Provide a spatial description of this clip followed by time-ranged events.\nFor each event, give the time range as <start - end> and a short description.";
+
+export const MARLIN_MAX_TOKENS_MIN = 64;
+export const MARLIN_MAX_TOKENS_MAX = 4_096;
+export const MARLIN_MAX_TOKENS_DEFAULT = 2_048;
+
+export const marlinRequestSchema = z
+  .object({
+    videoUrl: z.string().url(),
+    prompt: z.string().min(1).default(MARLIN_DEFAULT_PROMPT),
+    maxTokens: z
+      .number()
+      .int()
+      .min(MARLIN_MAX_TOKENS_MIN)
+      .max(MARLIN_MAX_TOKENS_MAX)
+      .optional(),
+    doSample: z.boolean().optional(),
+    /** Only used when doSample = true. */
+    temperature: z.number().min(0).max(2).optional(),
+    topP: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+
+export type MarlinRequest = z.infer<typeof marlinRequestSchema>;
+
+export interface MarlinEventSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface MarlinSuccessResponse {
+  /** Spatial description of the clip. */
+  scene: string;
+  /** Time-ranged events. */
+  events: MarlinEventSegment[];
+  /** Full post-thinking caption text (Scene + Events) — the canonical text output. */
+  text: string;
+  model: string;
+}
+
+export interface MarlinSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const marlinStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type MarlinStatusRequest = z.infer<typeof marlinStatusRequestSchema>;
+
+export type MarlinStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & MarlinSuccessResponse);

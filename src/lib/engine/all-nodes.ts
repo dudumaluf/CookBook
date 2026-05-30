@@ -8,6 +8,7 @@ import { exportNodeSchema } from "@/components/nodes/node-export";
 import { falAudioIsolationNodeSchema } from "@/components/nodes/node-fal-audio-isolation";
 import { hunyuan3dNodeSchema } from "@/components/nodes/node-fal-hunyuan-3d";
 import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
+import { marlinNodeSchema } from "@/components/nodes/node-fal-marlin";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
@@ -58,6 +59,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(falImageNodeSchema);
   nodeRegistry.register(falAudioIsolationNodeSchema);
   nodeRegistry.register(hunyuan3dNodeSchema);
+  nodeRegistry.register(marlinNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);
   nodeRegistry.register(audioSlicerNodeSchema);
