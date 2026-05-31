@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Text node: `@variable` references → auto-derived input sockets
+
+The Text node body is now a **template**: type `@name` anywhere in the body and a labeled `name` input socket auto-appears on the node. Wire any text upstream into it and every `@name` in the body is substituted on output. So a body of `@variable1 Morning` with a Text node saying `good` wired into the `variable1` socket renders `good Morning`. Unwired references stay **literal** in the output (`@audience` survives) so it's easy to spot what's still missing — no silent string holes. Repeat the same `@name` as many times as you want; each occurrence gets the wired value.
+
+Names follow `[a-zA-Z][a-zA-Z0-9_-]*` so `@v1`, `@product-name`, `@user_id_42` all work; `@.` and `@123` don't (so common punctuation isn't accidentally captured). A regex lookbehind keeps mid-word `@`s out of the match — `support@example.com` doesn't get clobbered into a substitution. The fast path bails out early when the body has no `@`s, so the existing "just type some text" use case incurs zero overhead.
+
+Sockets are derived live via `getInputs(config.text)` — no port-count config to manage, no manual "add variable" button. Type `@foo`, the `foo` socket appears; delete the last `@foo`, the socket goes away. Backward-compatible: existing canvases load unchanged because no current Text node bodies contain `@names`. **Tests +27** (parsing dedup / order / boundary / email-safe / digit-prefix rejection / hyphen + underscore names; rendering literal-on-unwired / repeat-substitution / empty-substitute; schema getInputs paths; execute fast path + type-mismatch tolerance).
+
 ## 2026-05-30 — Text Concat: join text chunks into one (reactive, smart inputs)
 
 New **Text Concat** node (`text-concat`, *Compose* category): wire two or more text upstreams (Text / LLM Text / List / Array / anywhere a `text` socket emits) → output is the joined string. Reactive — no Run button, output recomputes whenever any wired upstream changes. Same auto-growing socket pattern as Image Concat / Video Concat / LLM Text smart inputs: numbered `text 1..N` ports that grow to "connected + 1" as you wire (cap = 8) so there's always one empty trailing slot for the next plug.
