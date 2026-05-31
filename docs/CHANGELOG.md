@@ -2,6 +2,15 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Copy / paste / duplicate nodes + viewport-center spawn
+
+**Two related canvas UX fixes the user flagged together.**
+
+- **⌘C / ⌘V / ⌘D on selected nodes.** Pure keyboard-driven clipboard — copies the current selection (deep-cloned config + label + size + any *internal* edges) into a per-tab buffer, paste re-instantiates with fresh ids and re-anchored edges, ⌘D duplicates in place at +30/+30 so the copy peeks out from underneath the original. Best-effort system-clipboard mirror on copy (silent failures, in-memory buffer is canonical). Editable-target-aware (skips when typing in inputs / textareas / contentEditable) and ignores ⌘⇧C / ⌘⌥V to leave OS shortcuts alone.
+- **Add Node menu now spawns at the viewport center.** `AddNodeButton` was hard-coded to `{ 200 + nodeCount*36, 160 + nodeCount*36 }` — fine on a fresh canvas, miles away from where the user was actually looking once they panned. New `spawn-position` registry: `CanvasFlowInner` registers a getter that translates the screen-center to flow coords via `screenToFlowPosition`; the popover and the clipboard paste path both consume it, so picking from the list / pasting / dropping a recipe all land where you can see them. Small per-spawn jitter (`(nodeCount % 5) * 24`) so consecutive picks of the same kind don't perfectly stack.
+
+`tryHandleClipboardKey` mirrors `tryHandleDeleteKey`'s shape (pure DOM-event-only, exported for unit tests). **Tests +34** (clipboard payload / re-anchor / centroid math / pasteOffset / keyboard dispatch + spawn-position fallback / NaN-guard / re-registration).
+
 ## 2026-05-30 — Fix: history cursor now flows downstream (per-entry, cache-aware)
 
 Reported by the user: with multiple history entries on a node (e.g. Seedance with 6 takes), navigating the in-node cursor to entry 5/6 while wiring it into a downstream HeyGen Lipsync ran HeyGen against entry 6/6 anyway. The cursor was body-local React state — invisible to the engine. The fix hoists `cursorIndex` into the execution store as canonical state via a new `setHistoryCursor(nodeId, index)` action that mirrors the selected entry's `output` / `usage` onto the record so reactive consumers + surgical "Run this node" seeding both see the user's selection. To avoid downstream cache aliasing across two upstream runs that share the same config (cache-busting nodes like Seedance with `seed=-1`), the engine now accepts an explicit per-entry `hash` on seeded ancestors keyed `${nodeId}::run-${runId}` for non-latest selections — picking entry 4 then entry 5 produces distinct downstream cache keys, so each yields the correct result. New shared `useNodeHistoryCursor` hook replaces the per-body cursor `useState` / `useEffect` / `useRef` boilerplate across all eight history-using nodes (Seedance, HeyGen Lipsync, Marlin, Hunyuan 3D, Audio Isolation, Fal Image, Higgsfield, LLM Text). Cursor selection is also persisted in ProjectDocument so reloads restore the user's view. **Tests +3** (regression covers cursor-flow downstream + cache-distinction across selections).

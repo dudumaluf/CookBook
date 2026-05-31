@@ -18,6 +18,7 @@ import { useRecipes } from "@/lib/hooks/use-recipes";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { getSpawnPosition } from "@/lib/canvas/spawn-position";
 import type { NodeCategory, NodeSchema } from "@/types/node";
 
 /**
@@ -59,15 +60,23 @@ export function AddNodeButton() {
   function handlePickRecipe(recipeId: string) {
     const recipe = recipes.find((r) => r.id === recipeId);
     if (!recipe) return;
-    const offset = nodeCount * 36;
-    addWorkflowNode("composite", { x: 200 + offset, y: 160 + offset }, {
-      recipeId: recipe.id,
-      recipeName: recipe.name,
-      subgraph: recipe.subgraph,
-      exposedInputs: recipe.subgraph.exposedInputs ?? [],
-      exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
-      exposedParams: recipe.subgraph.exposedParams ?? [],
-    });
+    // Spawn at the current viewport center (in flow coords) with a small
+    // diagonal jitter per existing node so consecutive picks of the same
+    // recipe don't perfectly stack.
+    const center = getSpawnPosition();
+    const jitter = (nodeCount % 5) * 24;
+    addWorkflowNode(
+      "composite",
+      { x: center.x + jitter, y: center.y + jitter },
+      {
+        recipeId: recipe.id,
+        recipeName: recipe.name,
+        subgraph: recipe.subgraph,
+        exposedInputs: recipe.subgraph.exposedInputs ?? [],
+        exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
+        exposedParams: recipe.subgraph.exposedParams ?? [],
+      },
+    );
     setAddNodePopoverOpen(false);
     setQuery("");
   }
@@ -105,11 +114,16 @@ export function AddNodeButton() {
   }, [allSchemas, query]);
 
   function handlePick(schema: NodeSchema) {
-    // Cascade placement based on current node count so newcomers are visible
-    // and predictable. Slice 2/3 will drop at the actual click coords via the
-    // canvas-context-menu hand-off.
-    const offset = nodeCount * 36;
-    addWorkflowNode(schema.kind, { x: 200 + offset, y: 160 + offset });
+    // Spawn at the current viewport center (in flow coords) with a small
+    // diagonal jitter so consecutive picks of the same kind don't stack
+    // perfectly. Right-click "Add node…" can hand off explicit click coords
+    // here in a follow-up slice.
+    const center = getSpawnPosition();
+    const jitter = (nodeCount % 5) * 24;
+    addWorkflowNode(schema.kind, {
+      x: center.x + jitter,
+      y: center.y + jitter,
+    });
     setAddNodePopoverOpen(false);
     setQuery("");
   }

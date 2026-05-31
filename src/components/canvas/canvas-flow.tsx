@@ -41,6 +41,8 @@ import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
 import { instantiateRecipeOnCanvas } from "@/lib/recipes/instantiate";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
+import { setSpawnPositionGetter } from "@/lib/canvas/spawn-position";
+import { tryHandleClipboardKey } from "@/lib/canvas/clipboard";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 import { BaseNode } from "@/components/nodes/base-node";
@@ -337,6 +339,19 @@ function CanvasFlowInner() {
   const setSelectedEdgeIds = useWorkflowStore((s) => s.setSelectedEdgeIds);
   const { screenToFlowPosition } = useReactFlow();
 
+  // Expose a viewport-aware spawn-position getter so consumers outside the
+  // ReactFlowProvider (the Add Node popover, the clipboard paste path) can
+  // place nodes at the current viewport center instead of a fixed coord.
+  // Registered on mount, cleared on unmount — see `spawn-position.ts`.
+  useEffect(() => {
+    setSpawnPositionGetter(() => {
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      return screenToFlowPosition({ x: cx, y: cy });
+    });
+    return () => setSpawnPositionGetter(null);
+  }, [screenToFlowPosition]);
+
   const selectedNodeIdSet = useMemo(
     () => new Set(selectedNodeIds),
     [selectedNodeIds],
@@ -538,6 +553,34 @@ function CanvasFlowInner() {
       ) {
         event.preventDefault();
       }
+    }
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // Clipboard shortcuts — ⌘C / ⌘V (and ⌘D = duplicate) act on the current
+  // node selection. The handler is editable-aware (skips when the user is
+  // typing in an input / textarea / contentEditable) so plain text copy in
+  // the prompt bar / node textareas keeps working.
+  //
+  // The keyboard plumbing is exported as `tryHandleClipboardKey` for
+  // unit testing; the React layer just dispatches store mutations + reads
+  // the current selection.
+  useEffect(() => {
+    function handler(event: KeyboardEvent) {
+      void tryHandleClipboardKey(event, () => {
+        const s = useWorkflowStore.getState();
+        return {
+          nodes: s.nodes,
+          edges: s.edges,
+          selectedNodeIds: s.selectedNodeIds,
+          addNode: s.addNode,
+          addEdge: s.addEdge,
+          renameNode: s.renameNode,
+          resizeNode: s.resizeNode,
+          setSelectedNodeIds: s.setSelectedNodeIds,
+        };
+      });
     }
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
