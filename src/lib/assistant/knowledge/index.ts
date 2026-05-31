@@ -4,6 +4,7 @@ import { buildIdentityKnowledge } from "./identity";
 import { buildLibraryKnowledge } from "./library";
 import { buildNodeCatalogKnowledge } from "./node-catalog";
 import { buildRecipeCatalogKnowledge } from "./recipes";
+import { buildSelectionKnowledge } from "./selection";
 import { buildVocabularyKnowledge } from "./vocabulary";
 import { getToolDefinitions } from "@/lib/assistant/tools";
 import type { ChatMessage } from "@/lib/llm/types";
@@ -49,6 +50,14 @@ export interface KnowledgeBundleOptions {
     recipes?: boolean;
     nodeCatalog?: boolean;
     conversation?: boolean;
+    /**
+     * Skip the focused selection block (defaults: included whenever
+     * `selectedNodeIds.length >= 2`). The block is auto-skipped on
+     * 0/1-node selections — flip this to `true` to also skip
+     * multi-node selections (used by tests + cost-sensitive recursive
+     * tool calls).
+     */
+    selection?: boolean;
   };
 }
 
@@ -76,6 +85,11 @@ export async function buildKnowledgeBundle(
   if (!skip.nodeCatalog) sections.push(buildNodeCatalogKnowledge());
   if (recipeMd) sections.push(recipeMd);
   if (!skip.canvas) sections.push(buildCanvasKnowledge());
+  // Selection block lives RIGHT after canvas — same scope, more focused.
+  // Returns null when the user has 0/1 nodes selected, so we just skip
+  // the push instead of branching on selection size here.
+  const selectionMd = buildSelectionKnowledge({ skip: skip.selection });
+  if (selectionMd) sections.push(selectionMd);
   if (!skip.library) sections.push(buildLibraryKnowledge());
   if (galleryMd) sections.push(galleryMd);
   // Tool surface description — auto-generated from the registry. Empty

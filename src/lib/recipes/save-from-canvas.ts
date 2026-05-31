@@ -1,3 +1,4 @@
+import { sliceSelectionSubgraph } from "@/lib/recipes/slice-selection-subgraph";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import type {
   RecipeExposedHandle,
@@ -66,24 +67,18 @@ export async function saveSelectionAsRecipe(
   const allEdges = ws.edges;
   const selectedSet = new Set(input.selectedNodeIds);
 
-  const selectedNodes = allNodes.filter((n) => selectedSet.has(n.id));
+  // Single source of truth for "what's inside vs outside the selection".
+  // The slicer also produces topological order + kind counts which we
+  // don't need here, but the assistant's analyze flow does — same helper,
+  // same answers.
+  const slice = sliceSelectionSubgraph(allNodes, allEdges, input.selectedNodeIds);
+  const selectedNodes = slice.nodes;
   if (selectedNodes.length === 0) {
     throw new Error("Cannot save empty selection as recipe");
   }
-
-  // Edges inside the selection — these go INTO the recipe's subgraph.
-  const internalEdges = allEdges.filter(
-    (e) => selectedSet.has(e.source) && selectedSet.has(e.target),
-  );
-
-  // Edges that crossed the selection boundary — these need re-wiring
-  // when we collapse to a composite. Capture before mutation.
-  const incomingEdges = allEdges.filter(
-    (e) => !selectedSet.has(e.source) && selectedSet.has(e.target),
-  );
-  const outgoingEdges = allEdges.filter(
-    (e) => selectedSet.has(e.source) && !selectedSet.has(e.target),
-  );
+  const internalEdges = slice.internalEdges;
+  const incomingEdges = slice.boundaryIncoming;
+  const outgoingEdges = slice.boundaryOutgoing;
 
   // Anchor the spawned composite at the selection centroid so the user
   // doesn't lose visual context.

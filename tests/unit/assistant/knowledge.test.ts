@@ -283,4 +283,58 @@ describe("buildKnowledgeBundle", () => {
     expect(bundle.system).toContain("COOKBOOK");
     expect(bundle.system).toContain("VOCABULARY");
   });
+
+  it("auto-attaches the SELECTION block when 2+ nodes are selected", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: { text: "hi" } },
+        { id: "b", kind: "text", position: { x: 0, y: 0 }, config: { text: "yo" } },
+      ],
+      edges: [
+        { id: "e1", source: "a", sourceHandle: "out", target: "b", targetHandle: "user" },
+      ],
+      selectedNodeIds: ["a", "b"],
+      selectedEdgeIds: [],
+    });
+    const bundle = await buildKnowledgeBundle({
+      ownerId: "user-1",
+      projectId: "p1",
+    });
+    expect(bundle.system).toContain("## SELECTION");
+    expect(bundle.system).toContain("a.out → b.user");
+  });
+
+  it("does NOT emit a SELECTION block on a single-node selection", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: ["a"],
+      selectedEdgeIds: [],
+    });
+    const bundle = await buildKnowledgeBundle({
+      ownerId: "user-1",
+      projectId: "p1",
+    });
+    expect(bundle.system).not.toContain("## SELECTION");
+  });
+
+  it("honors skip.selection even when 2+ nodes are selected", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "b", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: ["a", "b"],
+      selectedEdgeIds: [],
+    });
+    const bundle = await buildKnowledgeBundle({
+      ownerId: "user-1",
+      projectId: "p1",
+      skip: { selection: true },
+    });
+    expect(bundle.system).not.toContain("## SELECTION");
+  });
 });
