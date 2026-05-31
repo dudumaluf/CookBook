@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Recipe save dialog: header / footer pin, body scrolls
+
+Reported by the user: saving a 14-node selection as a recipe produced a confirmation dialog with 12 inputs + 2 outputs + N controls — the dialog grew taller than the viewport and **clipped the Save / Cancel buttons** off the bottom edge. No way to commit without zooming the browser out.
+
+**Defensive fix at the primitive layer.** `<DialogContent />` (`src/components/ui/dialog.tsx`) now declares `max-h-[calc(100dvh-2rem)]` + `flex flex-col` + `overflow-hidden` instead of `grid`. Every dialog in the app now caps to viewport height regardless of content, and any dialog body that opts in (`flex-1 min-h-0 overflow-y-auto` on the middle wrapper) scrolls inside while header / footer stay pinned. `dvh` (dynamic viewport height) over `vh` so iOS Safari's address-bar collapse doesn't leave the dialog taller than the visible area.
+
+**Save Recipe dialog** restructured into the canonical three-row pattern: pinned `DialogHeader`, scrollable middle (`-mx-4 px-4 flex-1 min-h-0 overflow-y-auto` — the negative-margin trick keeps the scroll bar flush with the rounded corners while padding stays inside), pinned `DialogFooter`. Selection size is no longer a UX failure mode — Save / Cancel are always one click away.
+
+**Bonus cleanup:** dropped the inner `max-h-48 overflow-y-auto` on the `RecipeParamsEditor` candidates list. With the outer dialog now scrolling, nested scroll regions just confused pointer-wheel routing — the user couldn't tell which scroll their wheel was about to drive. Single source of truth wins.
+
+**Tests +1:** new regression test pins the layout structure (DialogContent has `flex-col` + viewport-relative `max-h` + `overflow-hidden`; footer is a direct child of the dialog so it stays anchored; the body wrapper has `flex-1 min-h-0 overflow-y-auto`).
+
 ## 2026-05-31 — Media previews: aspect-faithful + standardized resize
 
 The user reported the Fal Image preview cropping outputs to a square ("the running placeholder is square, then the result lands at 16:9 and the silhouette jumps") and asked for a unified resize standard across nodes ("some only horizontal, others both, some proportional"). Both fixed.

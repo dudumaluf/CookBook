@@ -82,4 +82,38 @@ describe("<SaveRecipeDialog />", () => {
     ) as HTMLInputElement;
     expect(optionsInput.value).toContain("16:9");
   });
+
+  it("caps height to viewport and scrolls the middle so footer stays visible", () => {
+    // Regression: a 14-node selection produced 12+ inputs; without a max-h
+    // on DialogContent the dialog grew past the viewport and clipped the
+    // Save / Cancel buttons. The fix: dialog is a flex column with a
+    // viewport-relative max-h, the middle wrapper is the only scroll
+    // region, and header / footer stay pinned.
+    render(
+      <SaveRecipeDialog open onOpenChange={vi.fn()} selectedNodeIds={["n1"]} />,
+    );
+    const dialog = screen.getByTestId("save-recipe-dialog");
+    // The dialog content itself caps height + uses flex column layout
+    // (the global guard in `<DialogContent />`).
+    expect(dialog.className).toContain("flex");
+    expect(dialog.className).toContain("flex-col");
+    expect(dialog.className).toMatch(/max-h-\[calc\(100dvh/);
+    expect(dialog.className).toContain("overflow-hidden");
+
+    // The Save / Cancel footer remains a direct child of the dialog so it
+    // can stay pinned at the bottom regardless of body length.
+    const submit = screen.getByTestId("save-recipe-submit");
+    const footer = submit.closest("[data-slot='dialog-footer']");
+    expect(footer).not.toBeNull();
+    expect(footer?.parentElement).toBe(dialog);
+
+    // The middle scroll region exists and is configured for "shrink-and-scroll"
+    // (`flex-1 min-h-0 overflow-y-auto`) so a long inputs / outputs list
+    // never pushes the footer off-screen.
+    const nameInput = screen.getByTestId("save-recipe-name");
+    const scrollWrapper = nameInput.closest("[class*='overflow-y-auto']");
+    expect(scrollWrapper).not.toBeNull();
+    expect(scrollWrapper?.className).toContain("flex-1");
+    expect(scrollWrapper?.className).toContain("min-h-0");
+  });
 });

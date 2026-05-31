@@ -148,6 +148,15 @@ export function SaveRecipeDialog({
         data-testid="save-recipe-dialog"
         className="sm:max-w-[520px]"
       >
+        {/*
+          Three-row layout: pinned header, scrollable middle, pinned footer.
+          When the inputs / outputs / controls lists grow (a 14-node selection
+          can produce 12+ inputs), only the middle scrolls — Cancel / Save
+          stay anchored at the bottom of the viewport instead of getting
+          clipped off-screen. `flex-1 min-h-0` is the canonical "let me
+          scroll inside a flex column" pattern; without `min-h-0` the body
+          would refuse to shrink below its content height.
+        */}
         <DialogHeader>
           <DialogTitle>Save selection as recipe</DialogTitle>
           <DialogDescription>
@@ -158,7 +167,7 @@ export function SaveRecipeDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 py-2">
+        <div className="-mx-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-1">
           <div className="flex flex-col gap-1.5">
             <label htmlFor="recipe-name" className="text-xs">
               Name
@@ -389,7 +398,14 @@ function RecipeParamsEditor({
         Pick inner settings to surface on the recipe node, so they can be
         changed without opening it.
       </p>
-      <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
+      {/*
+        No inner scroll — the parent dialog body already scrolls when the
+        selection produces too many candidates. Nested scroll regions
+        confuse pointer-wheel routing and split the user's mental model
+        of "where does scrolling go". Let the outer dialog be the single
+        source of truth.
+      */}
+      <ul className="flex flex-col gap-1">
         {candidates.map((c) => {
           const exposed = find(c);
           return (
