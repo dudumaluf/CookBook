@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Text node: inline contenteditable editor with variable chips
+
+Replaced the textarea + separate-preview split with a **single contenteditable editor**: variables render inline as **non-editable colored chips** in the text-data-type blue (matching the socket dots) and the plain text *between* them is fully editable, multi-line, with native paste / select / undo. Edit your prompt naturally with the variables visible right where they belong. Chip identity / sockets / wires are unchanged on toggle — only the chip's label swaps.
+
+**Toggle in the corner** (`content / names`) controls what each chip displays:
+- `content` (default) — chip shows the wired upstream's text inline; unwired/empty upstreams fall back to a **dashed-italic placeholder** with the variable name so missing wires are visible at a glance.
+- `names` — chip shows the `@name` token itself so you can read the template structure with the variable boundaries highlighted.
+
+Chips materialise from plain `@name` text on a delimiter (space / enter / tab) or on blur — typing `@v` → `@va` → `@vari` → `@variable` mid-keystroke would flicker through different chips and feel jittery. The variable **socket** appears immediately though (parsed from `config.text` on every keystroke), so you can wire while still typing.
+
+`config.text` remains the source of truth as `"@variable1 Morning"` — only the rendered DOM is rich. Stable serialised signature of incoming `var-*` edges + memoised values map keeps re-renders narrow; the effect skips when the editor already matches the text (our own input). Cursor position is preserved across all reconciliations using a plain-text-offset round-trip helper. `<br>` for Enter (forced via Range API) keeps round-tripping clean. Plain-text paste only — no rogue HTML / chip duplicates from clipboard.
+
+**Edge case worth knowing:** `@a@b` with no separator only chips the first one — the regex lookbehind that protects emails (`support@example.com`) refuses to match a `@` after a word char. Type a space (`@a @b`) and both chip up.
+
+**Tests +2** (10 inline-editor tests replace the old 8 split-preview tests; net +2 covering chip rendering, content/names mode, unwired fallback, empty-string upstream as unwired, multi-variable independent wiring, toggle dispatch + aria accessibility).
+
 ## 2026-05-31 — Text node: live preview with colored variable chips + content/names toggle
 
 Building on yesterday's `@variable` references for the Text node. The body now has a **live preview region** under the textarea (only when the body contains `@variables`) that renders the template with **colored chips** in the text-data-type blue (matching the variable socket dots). Wired chips show the upstream's text inline; **unwired or empty-string upstreams fall back to the variable name in a dashed-italic placeholder** — so missing wires are visible at a glance instead of silently going through as literal `@names`.

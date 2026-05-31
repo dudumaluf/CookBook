@@ -1,7 +1,7 @@
 "use client";
 
 import { Type } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
@@ -13,59 +13,57 @@ import type { NodeBodyProps, NodeIO } from "@/types/node";
  * Text — a snippet of text. Plug into any text input.
  *
  * Supports `@variable` references in the body. Type `@audience` anywhere
- * in the body and a labeled `audience` input socket auto-appears on the
- * node — wire any text upstream into it and every `@audience` in the
- * body is substituted with the wired text on output. Unwired references
- * stay literal (`@audience` survives in the output) so it's easy to
- * spot what's still missing.
+ * and a labeled `audience` input socket auto-appears on the left edge of
+ * the node — wire any text upstream into it and every `@audience` in
+ * the body is substituted with the wired text on output. Unwired
+ * references stay literal in the SUBSTITUTED OUTPUT (`@audience`
+ * survives) so downstream nodes see exactly what's missing.
  *
- * The body has a **live preview** under the textarea (only when
- * variables exist) showing the rendered text with colored chips for
- * each `@variable`. The preview has a `content / names` toggle:
- *   • `content` (default) — chips show the wired upstream text;
+ * The body is a **single contenteditable editor** (not a textarea +
+ * preview split). Variables render inline as **non-editable colored
+ * chips**; the plain text between chips is fully editable, so you can
+ * write your prompt naturally with the variables visible in place. A
+ * tiny `content / names` toggle in the corner swaps what the chips
+ * display:
+ *   • `content` (default) — chips show the wired upstream's text;
  *     unwired/empty variables fall back to the variable name in a
- *     dashed-italic placeholder so missing wires are visible at a
- *     glance.
- *   • `names` — chips show the `@name` token itself (still colored)
- *     so you can read the template structure with the variable
- *     boundaries highlighted.
+ *     dashed-italic placeholder.
+ *   • `names` — chips show the `@name` token itself so you can read
+ *     the template structure with the variable boundaries highlighted.
+ *
+ * Chips are **converted from plain text on a delimiter** (space / enter
+ * / tab) or on blur, not on every keystroke — typing `@v`, `@va`, …,
+ * `@vari` mid-word would flicker through different chips and feel
+ * jittery. The variable SOCKET appears immediately though (parsed from
+ * `config.text`), so you can wire while still typing.
  *
  * Names follow `[a-zA-Z][a-zA-Z0-9_-]*` (so `@product-name`,
  * `@user_id_42`, `@variable1` all work; `@.` and `@123foo` don't). A
  * lookbehind keeps mid-word `@`s from accidentally matching, so emails
  * like `support@example.com` aren't clobbered into a substitution.
+ *
+ * **Edge case:** `@a@b` with no separator only chips the first one —
+ * the lookbehind that protects emails refuses to match a `@` after a
+ * word char. Type a space (`@a @b`) and both chip up.
  */
 
 export interface TextNodeConfig {
   text: string;
   /**
-   * Preview render mode. `content` (default) shows wired upstream
-   * values inline; `names` shows the `@name` tokens as chips. Same
-   * color highlighting in both. Unwired variables ALWAYS fall back to
-   * the variable name (so the user sees what's still missing) — the
-   * mode only controls how WIRED variables render.
+   * Chip render mode. `content` (default) shows wired upstream values;
+   * `names` shows the `@name` tokens. Same colour family in both;
+   * unwired variables ALWAYS fall back to the variable name in a
+   * dashed-italic placeholder so missing wires are visible at a glance.
    */
   previewMode?: "content" | "names";
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
-/* Template parsing + rendering                                           */
+/* Template parsing + rendering (same as before)                          */
 /* ────────────────────────────────────────────────────────────────────── */
 
-/**
- * `(?<=^|\W)` — lookbehind requiring start-of-string OR a non-word char
- * before the `@`. `\W` = `[^A-Za-z0-9_]`, which includes whitespace,
- * punctuation, and `\n`, so `@name` at the start of a line, after a
- * space, or after punctuation all match — but `email@example.com`
- * (the `@` follows the `l` word-char) does NOT.
- *
- * The character class permits letters, digits, underscores and hyphens
- * after the leading letter. Greedy match, naturally stops at the first
- * non-class char (so `@name.suffix` captures only `name`).
- */
 const VAR_PATTERN = /(?<=^|\W)@([a-zA-Z][a-zA-Z0-9_-]*)/g;
 
-/** Returns unique variable names in first-appearance order. */
 export function parseVariables(text: string): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -87,11 +85,6 @@ function variableInputs(text: string): NodeIO[] {
   }));
 }
 
-/**
- * Substitute `@name` tokens with their wired values. Tokens whose name
- * has no value in `values` are left literal so the user can see at a
- * glance what's still unwired in the rendered output.
- */
 export function renderTemplate(
   template: string,
   values: Record<string, string | undefined>,
@@ -103,25 +96,13 @@ export function renderTemplate(
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
-/* Live preview — variable values from upstream                           */
+/* Live variable values from upstream                                     */
 /* ────────────────────────────────────────────────────────────────────── */
 
-/**
- * Resolve wired variable values from the workflow + execution stores.
- * Returns a map of variable name → upstream's text. Empty strings are
- * filtered (treated as "unwired") so the preview falls back to the
- * placeholder, matching the spec ("when text field filling the variable
- * is empty, show the standard name").
- *
- * The selectors return STABLE PRIMITIVES (a serialized signature for
- * incoming edges, the records map ref) so this hook only re-renders
- * when something actually changed. The map itself is rebuilt via
- * `useMemo` against those stable inputs.
- */
 function useVariableValues(nodeId: string): Record<string, string> {
-  // Stable signature of incoming `var-*` edges. The selector returns a
-  // string, so referential equality is automatic — body re-renders only
-  // when wires change.
+  // Stable string signature of incoming `var-*` edges. The selector
+  // returns a primitive so referential equality is automatic — body
+  // re-renders only when wires change, not on every store mutation.
   const incomingKey = useWorkflowStore((s) => {
     let result = "";
     for (const e of s.edges) {
@@ -132,11 +113,11 @@ function useVariableValues(nodeId: string): Record<string, string> {
     return result;
   });
 
-  // Subscribe to the records map; reference changes whenever any node's
-  // record updates, which is what we want for live preview when any
-  // upstream output changes. Slight over-render across unrelated nodes
-  // is acceptable here — the cost is parsing a small string + rebuilding
-  // a tiny map. Optimise only if a profile shows it matters.
+  // Subscribing to the records map ref re-renders this body whenever
+  // any node's record changes — slight over-render but keeps the
+  // resolver simple. `useMemo` against stable inputs (incomingKey +
+  // records) keeps the values map reference stable across no-op
+  // re-renders.
   const records = useExecutionStore((s) => s.records);
 
   return useMemo<Record<string, string>>(() => {
@@ -146,7 +127,7 @@ function useVariableValues(nodeId: string): Record<string, string> {
       if (!entry) continue;
       const [target, source] = entry.split("<-");
       if (!target || !source) continue;
-      const name = target.slice(4); // strip "var-"
+      const name = target.slice(4);
       const record = records.get(source);
       const out = record?.output;
       if (!out || Array.isArray(out)) continue;
@@ -163,85 +144,256 @@ function useVariableValues(nodeId: string): Record<string, string> {
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
-/* Preview render — colored variable chips                                */
+/* Editor DOM helpers — chips, render, serialize, cursor                  */
 /* ────────────────────────────────────────────────────────────────────── */
 
-/**
- * Walk the template once, splitting into plain-text spans and
- * variable chips. We construct a new RegExp each call to reset the
- * `lastIndex` state of the global `/g` flag (otherwise consecutive
- * renders on the same template can skip matches).
- */
-function renderPreviewParts(
-  template: string,
+const CHIP_DATA_ATTR = "data-var-name";
+
+function chipDisplayText(
+  name: string,
   values: Record<string, string>,
   mode: "content" | "names",
-): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
+): { label: string; isWired: boolean } {
+  const value = values[name];
+  const isWired = typeof value === "string" && value.length > 0;
+  if (mode === "names") return { label: `@${name}`, isWired };
+  return { label: isWired ? value! : name, isWired };
+}
+
+/**
+ * Build a `<span>` chip element for a variable. The chip is
+ * `contentEditable=false` so the browser treats it as an atomic unit:
+ * caret skips over it, backspace deletes the whole chip, drag selects
+ * it as a single token. We stash the variable NAME on a data-attribute
+ * so serialization can recover the underlying `@name` regardless of
+ * what the chip displays.
+ */
+function buildChipElement(
+  name: string,
+  values: Record<string, string>,
+  mode: "content" | "names",
+): HTMLSpanElement {
+  const { label, isWired } = chipDisplayText(name, values, mode);
+  const span = document.createElement("span");
+  span.setAttribute(CHIP_DATA_ATTR, name);
+  span.contentEditable = "false";
+  span.textContent = label;
+  // Tooltip with the FULL value (chip text may be truncated for long
+  // values) so the user can still inspect what's wired in.
+  span.title = isWired ? `@${name}: ${values[name]}` : `@${name} (unwired)`;
+
+  // Inline styles keep the chip self-contained so the editor div
+  // doesn't need any extra CSS injected. `var(--datatype-text)` aligns
+  // chip colour with the text-data-type socket dot. `color-mix` gives
+  // us tinted bg + dashed-border placeholders without bloating the
+  // design tokens.
+  Object.assign(span.style, {
+    padding: "0 6px",
+    borderRadius: "3px",
+    fontWeight: "500",
+    display: "inline-block",
+    verticalAlign: "baseline",
+    maxWidth: "200px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    userSelect: "all",
+    cursor: "default",
+    margin: "0 1px",
+  } as Partial<CSSStyleDeclaration>);
+
+  if (isWired) {
+    span.style.color = "var(--datatype-text)";
+    span.style.backgroundColor =
+      "color-mix(in oklch, var(--datatype-text) 14%, transparent)";
+  } else {
+    span.style.color =
+      "color-mix(in oklch, var(--datatype-text) 70%, transparent)";
+    span.style.backgroundColor =
+      "color-mix(in oklch, var(--datatype-text) 6%, transparent)";
+    span.style.border = "1px dashed";
+    span.style.borderColor =
+      "color-mix(in oklch, var(--datatype-text) 38%, transparent)";
+    span.style.fontStyle = "italic";
+    span.style.padding = "0 5px";
+  }
+
+  return span;
+}
+
+/**
+ * Render `text` into `editor`, replacing any existing children. `@name`
+ * tokens become chips; the rest are plain text nodes. Newlines are
+ * encoded as `<br>` so the browser line-breaks them (no whitespace
+ * collapsing surprises with our `whitespace: pre-wrap` styling).
+ */
+function renderEditor(
+  editor: HTMLElement,
+  text: string,
+  values: Record<string, string>,
+  mode: "content" | "names",
+): void {
+  while (editor.firstChild) editor.removeChild(editor.firstChild);
+  if (!text) return;
+
+  // Helper to flush a chunk of plain text honouring newlines as <br>.
+  const appendText = (chunk: string) => {
+    if (!chunk) return;
+    const segments = chunk.split("\n");
+    segments.forEach((seg, i) => {
+      if (seg) editor.appendChild(document.createTextNode(seg));
+      if (i < segments.length - 1) {
+        editor.appendChild(document.createElement("br"));
+      }
+    });
+  };
+
+  // Fresh regex per call — `/g` regexes carry `lastIndex` state across
+  // calls, which would skip matches when the same pattern is reused.
   const regex = new RegExp(VAR_PATTERN.source, "g");
+  let lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(template)) !== null) {
+  while ((match = regex.exec(text)) !== null) {
     const start = match.index;
     const end = start + match[0].length;
     const name = match[1]!;
-
-    if (start > lastIndex) {
-      parts.push(
-        <span key={`t-${key++}`}>{template.slice(lastIndex, start)}</span>,
-      );
-    }
-
-    const wired = values[name];
-    const hasValue = typeof wired === "string" && wired.length > 0;
-
-    // Wired chip: solid blue text on a faint blue tint background.
-    // Unwired chip: dashed-border ghost with the name as the label —
-    // it's the same colour family so the user sees "this is a text
-    // variable that's missing a wire", not "this is broken".
-    const wiredStyle: React.CSSProperties = {
-      color: "var(--datatype-text)",
-      backgroundColor:
-        "color-mix(in oklch, var(--datatype-text) 14%, transparent)",
-    };
-    const unwiredStyle: React.CSSProperties = {
-      color:
-        "color-mix(in oklch, var(--datatype-text) 70%, transparent)",
-      borderColor:
-        "color-mix(in oklch, var(--datatype-text) 38%, transparent)",
-      backgroundColor:
-        "color-mix(in oklch, var(--datatype-text) 6%, transparent)",
-    };
-
-    if (hasValue) {
-      const label = mode === "names" ? `@${name}` : wired;
-      parts.push(
-        <span
-          key={`v-${key++}`}
-          className="rounded px-1 py-px font-medium"
-          style={wiredStyle}
-        >
-          {label}
-        </span>,
-      );
-    } else {
-      parts.push(
-        <span
-          key={`v-${key++}`}
-          className="rounded border border-dashed px-1 py-px italic"
-          style={unwiredStyle}
-        >
-          {mode === "names" ? `@${name}` : name}
-        </span>,
-      );
-    }
+    if (start > lastIndex) appendText(text.slice(lastIndex, start));
+    editor.appendChild(buildChipElement(name, values, mode));
     lastIndex = end;
   }
-  if (lastIndex < template.length) {
-    parts.push(<span key={`t-${key++}`}>{template.slice(lastIndex)}</span>);
+  if (lastIndex < text.length) appendText(text.slice(lastIndex));
+}
+
+/**
+ * Walk the editor's direct children and recover the underlying
+ * `@variable`-tokenized text. Chips serialize via the `data-var-name`
+ * attr so we recover `@name` regardless of what the chip displays.
+ * `<br>` becomes `\n`. `<div>` (Firefox/legacy paste) is treated as a
+ * line wrapper.
+ */
+function serializeEditor(editor: HTMLElement): string {
+  let result = "";
+  for (const child of Array.from(editor.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      result += child.textContent ?? "";
+    } else if (child instanceof HTMLElement) {
+      const varName = child.getAttribute(CHIP_DATA_ATTR);
+      if (varName) {
+        result += `@${varName}`;
+      } else if (child.tagName === "BR") {
+        result += "\n";
+      } else if (child.tagName === "DIV") {
+        // Some browsers wrap on Enter — treat the wrapper as a leading
+        // newline if it isn't the first child.
+        if (result.length > 0 && !result.endsWith("\n")) result += "\n";
+        result += child.textContent ?? "";
+      } else {
+        result += child.textContent ?? "";
+      }
+    }
   }
-  return parts;
+  return result;
+}
+
+/**
+ * Convert a DOM caret position into a plain-text offset. Treats each
+ * chip as `@name`.length characters — matching what the user "sees"
+ * for the underlying token.
+ */
+function getCursorOffset(editor: HTMLElement): number | null {
+  const sel = typeof window !== "undefined" ? window.getSelection() : null;
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!editor.contains(range.endContainer)) return null;
+
+  let offset = 0;
+  for (const child of Array.from(editor.childNodes)) {
+    if (child === range.endContainer) {
+      if (child.nodeType === Node.TEXT_NODE) offset += range.endOffset;
+      return offset;
+    }
+    if (child.contains(range.endContainer)) {
+      // Caret somehow lives inside a chip (shouldn't happen with
+      // contenteditable=false but be defensive). Treat as end-of-chip.
+      if (child instanceof HTMLElement) {
+        const varName = child.getAttribute(CHIP_DATA_ATTR);
+        if (varName) offset += varName.length + 1;
+      }
+      return offset;
+    }
+    if (child.nodeType === Node.TEXT_NODE) {
+      offset += child.textContent?.length ?? 0;
+    } else if (child instanceof HTMLElement) {
+      const varName = child.getAttribute(CHIP_DATA_ATTR);
+      if (varName) offset += varName.length + 1;
+      else if (child.tagName === "BR") offset += 1;
+    }
+  }
+  return offset;
+}
+
+function setCursorOffset(editor: HTMLElement, offset: number): void {
+  const sel = typeof window !== "undefined" ? window.getSelection() : null;
+  if (!sel) return;
+
+  let remaining = offset;
+  for (const child of Array.from(editor.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      const len = child.textContent?.length ?? 0;
+      if (remaining <= len) {
+        const range = document.createRange();
+        range.setStart(child, remaining);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      remaining -= len;
+    } else if (child instanceof HTMLElement) {
+      const varName = child.getAttribute(CHIP_DATA_ATTR);
+      if (varName) {
+        const len = varName.length + 1;
+        if (remaining <= len) {
+          const range = document.createRange();
+          range.setStartAfter(child);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+        remaining -= len;
+      } else if (child.tagName === "BR") {
+        if (remaining === 0) {
+          const range = document.createRange();
+          range.setStartBefore(child);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+        remaining -= 1;
+      }
+    }
+  }
+  // Clamp past-the-end → caret at end.
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function reconcileEditor(
+  editor: HTMLElement,
+  values: Record<string, string>,
+  mode: "content" | "names",
+): void {
+  const text = serializeEditor(editor);
+  const wasFocused =
+    typeof document !== "undefined" && document.activeElement === editor;
+  const offset = wasFocused ? getCursorOffset(editor) : null;
+  renderEditor(editor, text, values, mode);
+  if (offset !== null) setCursorOffset(editor, offset);
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
@@ -254,89 +406,192 @@ function TextNodeBody({
   updateConfig,
 }: NodeBodyProps<TextNodeConfig>) {
   const text = config.text ?? "";
-  const variables = parseVariables(text);
-  const hasVariables = variables.length > 0;
   const previewMode: "content" | "names" =
     config.previewMode === "names" ? "names" : "content";
+  const variables = parseVariables(text);
+  const hasVariables = variables.length > 0;
 
   const values = useVariableValues(nodeId);
 
-  return (
-    // `flex-col` so textarea + preview stack inside the resizable card.
-    // `min-h-0` lets the textarea actually shrink when the preview takes
-    // space — without it the card overflows on small heights (ADR-0028).
-    <div className="flex w-full min-h-0 flex-1 flex-col">
-      {/* Editable textarea — always present so you can edit any time.
-          When variables exist we tighten the bottom padding and drop
-          the rounded-bottom-corner since the preview takes that role. */}
-      <textarea
-        value={text}
-        onChange={(e) => updateConfig({ text: e.target.value })}
-        placeholder="Type anything…  use @name for a variable socket"
-        rows={hasVariables ? 3 : 4}
-        aria-label="Text content"
-        className={
-          hasVariables
-            ? "nowheel block min-h-[60px] w-full flex-1 resize-none border-0 bg-transparent px-3 pb-1.5 pt-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60 focus:bg-foreground/5"
-            : "nowheel block min-h-0 w-full flex-1 resize-none rounded-b-xl border-0 bg-transparent px-3 pb-2.5 pt-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60 focus:bg-foreground/5"
-        }
-        // React Flow drags from any element; we don't want dragging while typing.
-        onPointerDown={(e) => e.stopPropagation()}
-        onWheelCapture={(e) => e.stopPropagation()}
-      />
+  const editorRef = useRef<HTMLDivElement>(null);
+  // Tracks the last text WE serialized — lets us skip re-rendering on
+  // our own changes and avoid a re-render-loop while the user types.
+  const lastSerializedRef = useRef<string>("");
+  const [isEmpty, setIsEmpty] = useState(text.length === 0);
 
+  // Stable signature of values so the effect only runs when the actual
+  // variable values for THIS node change (not when any unrelated node's
+  // record updates).
+  const valuesKey = useMemo(() => {
+    const keys = Object.keys(values).sort();
+    return keys.map((k) => `${k}=${values[k]}`).join("\u0000");
+  }, [values]);
+
+  // Sync the editor DOM with the desired text/values/mode. Skips when
+  // the editor already matches `text` (our own input) AND values/mode
+  // haven't changed — the re-render is driven by valuesKey/previewMode
+  // entering the dep array.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const wasFocused =
+      typeof document !== "undefined" && document.activeElement === editor;
+    const offset = wasFocused ? getCursorOffset(editor) : null;
+    renderEditor(editor, text, values, previewMode);
+    if (offset !== null) {
+      setCursorOffset(
+        editor,
+        // If text shrank externally (e.g. external set), clamp to len.
+        Math.min(offset, text.length),
+      );
+    }
+    lastSerializedRef.current = text;
+    setIsEmpty(text.length === 0);
+    // We intentionally re-render when ANY of these change — even if
+    // text matches, valuesKey or previewMode flipping should refresh
+    // chip labels. Callers' typing path bypasses this via
+    // lastSerializedRef short-circuit in handleInput.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, valuesKey, previewMode]);
+
+  function handleInput() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const serialized = serializeEditor(editor);
+    setIsEmpty(serialized.length === 0);
+    if (serialized !== lastSerializedRef.current) {
+      lastSerializedRef.current = serialized;
+      updateConfig({ text: serialized });
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // Force `<br>` for Enter so the serialized text gets a clean `\n`
+    // (browsers default to `<div>` wrappers in some flows, which makes
+    // round-tripping more annoying).
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const br = document.createElement("br");
+      range.insertNode(br);
+      // Place caret AFTER the <br>. We add a zero-width text node so
+      // the caret lands on the new line in browsers that otherwise
+      // glue it to the BR.
+      const zwsp = document.createTextNode("\u200B");
+      br.after(zwsp);
+      const r = document.createRange();
+      r.setStartAfter(zwsp);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      handleInput();
+    }
+  }
+
+  function handleKeyUp(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== " " && e.key !== "Enter" && e.key !== "Tab") return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    reconcileEditor(editor, values, previewMode);
+  }
+
+  function handleBlur() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    reconcileEditor(editor, values, previewMode);
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    // Paste plain text only — we don't want pasted HTML / chip
+    // duplicates / arbitrary inline styles.
+    e.preventDefault();
+    const pasted = e.clipboardData.getData("text/plain");
+    if (!pasted) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode(pasted);
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    handleInput();
+    // Reconcile post-paste so any pasted `@names` get chipped up.
+    const editor = editorRef.current;
+    if (editor) reconcileEditor(editor, values, previewMode);
+  }
+
+  return (
+    <div className="relative flex w-full min-h-0 flex-1 flex-col">
       {hasVariables && (
-        // Preview region. `aria-live="polite"` so screen readers
-        // announce changes without interrupting (mirrors how settings
-        // toggle hints work elsewhere). `nowheel` keeps inner scroll
-        // independent of canvas zoom.
         <div
-          className="nowheel flex flex-col gap-1 rounded-b-xl border-t border-border/40 bg-foreground/[0.025] px-3 pb-2 pt-1.5"
-          aria-live="polite"
-          onWheelCapture={(e) => e.stopPropagation()}
+          className="absolute right-2 top-1.5 z-10 inline-flex overflow-hidden rounded-md border border-border/50 bg-background/85 text-[10px] backdrop-blur-sm"
+          role="tablist"
+          aria-label="Variable display mode"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center justify-between gap-2 text-[9.5px] uppercase tracking-[0.08em] text-muted-foreground/80">
-            <span>preview</span>
-            <div
-              className="inline-flex overflow-hidden rounded-md border border-border/50 text-[10px]"
-              role="tablist"
-              aria-label="Preview mode"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={previewMode === "content"}
-                onClick={() => updateConfig({ previewMode: "content" })}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={
-                  previewMode === "content"
-                    ? "bg-foreground/10 px-2 py-0.5 text-foreground"
-                    : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
-                }
-              >
-                content
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={previewMode === "names"}
-                onClick={() => updateConfig({ previewMode: "names" })}
-                onPointerDown={(e) => e.stopPropagation()}
-                className={
-                  previewMode === "names"
-                    ? "bg-foreground/10 px-2 py-0.5 text-foreground"
-                    : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
-                }
-              >
-                names
-              </button>
-            </div>
-          </div>
-          <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed text-foreground/90">
-            {renderPreviewParts(text, values, previewMode)}
-          </p>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={previewMode === "content"}
+            onClick={() => updateConfig({ previewMode: "content" })}
+            className={
+              previewMode === "content"
+                ? "bg-foreground/10 px-2 py-0.5 text-foreground"
+                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
+            }
+          >
+            content
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={previewMode === "names"}
+            onClick={() => updateConfig({ previewMode: "names" })}
+            className={
+              previewMode === "names"
+                ? "bg-foreground/10 px-2 py-0.5 text-foreground"
+                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
+            }
+          >
+            names
+          </button>
         </div>
       )}
+
+      {isEmpty && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-3 top-1 select-none text-sm leading-relaxed text-muted-foreground/60"
+        >
+          Type anything…  use @name for a variable socket
+        </span>
+      )}
+
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck
+        role="textbox"
+        aria-multiline="true"
+        aria-label="Text content"
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        onBlur={handleBlur}
+        onPaste={handlePaste}
+        // React Flow drags from any element; opt out so typing /
+        // selection works inside the editor without panning the canvas.
+        onPointerDown={(e) => e.stopPropagation()}
+        onWheelCapture={(e) => e.stopPropagation()}
+        className="nowheel block min-h-[60px] w-full flex-1 resize-none whitespace-pre-wrap break-words rounded-b-xl border-0 bg-transparent px-3 pb-2.5 pt-1 text-sm leading-relaxed text-foreground outline-none focus:bg-foreground/5"
+      />
     </div>
   );
 }
@@ -350,11 +605,8 @@ export const textNodeSchema = defineNode<TextNodeConfig>({
   category: "input",
   title: "Text",
   description:
-    "A snippet of text. Plug into any text input. Type `@name` in the body to add a labeled variable input socket — wire text into it and every `@name` in the body is substituted on output. Live preview below the textarea (toggle: content / names) shows what downstream nodes will see.",
+    "A snippet of text. Plug into any text input. Type `@name` in the body to add a labeled variable input socket — wire text into it and every `@name` is substituted on output. Inline editor renders variables as colored chips with a `content / names` toggle.",
   icon: Type,
-  // Static `inputs` is empty — fresh nodes have no `@names` yet so no
-  // sockets. `getInputs(config)` is the live truth, parsing the body
-  // every render to derive the labeled var-N sockets.
   inputs: [],
   getInputs: (config) => variableInputs(config.text ?? ""),
   outputs: [{ id: "out", label: "out", dataType: "text" }],
@@ -364,7 +616,6 @@ export const textNodeSchema = defineNode<TextNodeConfig>({
     const text = config.text ?? "";
     const vars = parseVariables(text);
     if (vars.length === 0) {
-      // Fast path — no template logic, no input lookups, no allocations.
       return { type: "text", value: text };
     }
     const values: Record<string, string | undefined> = {};
@@ -377,13 +628,6 @@ export const textNodeSchema = defineNode<TextNodeConfig>({
     };
   },
   Body: TextNodeBody,
-  // Size contract (ADR-0028). `defaultWidth: 240` matches the legacy
-  // `min-w-[240px]` so existing canvases visually unchanged. `maxWidth:
-  // 520` caps the silhouette so a long prompt can't stretch the node
-  // across the canvas; `maxHeight: 480` (bumped from 420) gives the
-  // preview a little more room when variables stack up. `resizable:
-  // "both"` for the bottom-right drag handle so authors can pop the
-  // box bigger when drafting a long prompt.
   size: {
     defaultWidth: 240,
     minWidth: 200,
@@ -394,11 +638,15 @@ export const textNodeSchema = defineNode<TextNodeConfig>({
   },
 });
 
-// Exported for unit tests so the parsing / substitution can be exercised
-// without spinning up the engine + store.
+// Exported for unit + component tests so the parsing / substitution /
+// editor DOM helpers can be exercised without spinning up the full
+// engine + store.
 export const __testHooks = {
   parseVariables,
   renderTemplate,
   variableInputs,
-  renderPreviewParts,
+  buildChipElement,
+  renderEditor,
+  serializeEditor,
+  reconcileEditor,
 };

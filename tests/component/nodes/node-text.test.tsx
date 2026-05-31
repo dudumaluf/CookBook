@@ -16,7 +16,7 @@ describe("textNodeSchema", () => {
     expect(textNodeSchema.outputs[0]?.dataType).toBe("text");
   });
 
-  it("renders the body with the supplied config and calls updateConfig on change", () => {
+  it("renders the body with the supplied text and updateConfig fires on user input", () => {
     const updateConfig = vi.fn();
     const Body = textNodeSchema.Body;
 
@@ -29,10 +29,16 @@ describe("textNodeSchema", () => {
       />,
     );
 
-    const textarea = screen.getByLabelText("Text content") as HTMLTextAreaElement;
-    expect(textarea.value).toBe("hi");
+    const editor = screen.getByLabelText("Text content") as HTMLDivElement;
+    expect(editor.textContent).toBe("hi");
 
-    fireEvent.change(textarea, { target: { value: "bye" } });
+    // Simulate the user typing into the contenteditable. innerText
+    // mutation + a synthetic `input` event matches what the browser
+    // dispatches on real keystrokes; our handleInput reads from
+    // `serializeEditor(editor)`, so it picks up the new text directly.
+    editor.innerText = "bye";
+    fireEvent.input(editor);
+
     expect(updateConfig).toHaveBeenCalledWith({ text: "bye" });
   });
 
@@ -69,10 +75,10 @@ describe("textNodeSchema", () => {
 });
 
 /* ──────────────────────────────────────────────────────────────────── */
-/* Body — live preview when `@variables` exist                          */
+/* Body — inline contenteditable editor with variable chips             */
 /* ──────────────────────────────────────────────────────────────────── */
 
-describe("textNodeSchema body — live preview with chips + toggle", () => {
+describe("textNodeSchema body — inline editor with variable chips + toggle", () => {
   beforeEach(() => {
     _resetExecutionForTests();
     useWorkflowStore.getState().clear();
@@ -82,7 +88,9 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
     nodeId: string;
     text: string;
     previewMode?: "content" | "names";
-    updateConfig?: (patch: Partial<{ text: string; previewMode: "content" | "names" }>) => void;
+    updateConfig?: (
+      patch: Partial<{ text: string; previewMode: "content" | "names" }>,
+    ) => void;
   }) {
     const Body = textNodeSchema.Body;
     return render(
@@ -95,94 +103,64 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
     );
   }
 
-  it("does NOT render the preview region when the body has no `@variables`", () => {
+  function getChip(editor: HTMLElement, name: string): HTMLElement | null {
+    return editor.querySelector(`[data-var-name="${name}"]`);
+  }
+
+  it("does NOT render the toggle when the body has no `@variables`", () => {
     renderBody({ nodeId: "t1", text: "just plain text" });
-    expect(screen.queryByText("preview")).toBeNull();
     expect(screen.queryByRole("tab", { name: "content" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "names" })).toBeNull();
   });
 
-  it("renders the preview region with the toggle when the body has `@variables`", () => {
+  it("renders the toggle when the body has at least one `@variable`", () => {
     renderBody({ nodeId: "t2", text: "@variable1 Morning" });
-    expect(screen.getByText("preview")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "content" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "names" })).toBeInTheDocument();
   });
 
-  it("content mode falls back to the variable NAME when the upstream is unwired", () => {
-    renderBody({
-      nodeId: "t3",
-      text: "@variable1 Morning",
-      previewMode: "content",
-    });
-    // No edges, no upstream record — chip shows the variable name as
-    // a placeholder, NOT the literal "@variable1" with the @ sign.
-    const preview = screen.getByText("preview").closest("div")
-      ?.parentElement as HTMLElement;
-    // The placeholder chip's text content is the bare name "variable1".
-    expect(preview).toHaveTextContent("variable1 Morning");
-    // …but it must NOT show the wired-style chip — there's no upstream.
-    // The preview shouldn't show "good" or any value.
-    expect(preview).not.toHaveTextContent("good");
+  it("renders the variable as an inline non-editable chip in the editor", () => {
+    renderBody({ nodeId: "t3", text: "@variable1 Morning" });
+    const editor = screen.getByLabelText("Text content");
+    const chip = getChip(editor, "variable1");
+    expect(chip).not.toBeNull();
+    // contenteditable=false makes the chip atomic — the user's caret
+    // skips over it and backspace deletes it as a single unit.
+    expect(chip!.getAttribute("contenteditable")).toBe("false");
+    // Trailing plain text remains editable around the chip.
+    expect(editor.textContent).toContain("Morning");
   });
 
-  it("content mode shows the WIRED upstream value when an edge connects a Text source", () => {
-    // Set up: upstream Text node `src` is wired into `t4`'s `var-variable1`
-    // socket and has produced output "good".
-    act(() => {
-      useWorkflowStore.setState({
-        nodes: [
-          {
-            id: "src",
-            kind: "text",
-            position: { x: 0, y: 0 },
-            config: { text: "good" },
-          },
-          {
-            id: "t4",
-            kind: "text",
-            position: { x: 200, y: 0 },
-            config: { text: "@variable1 Morning" },
-          },
-        ],
-        edges: [
-          {
-            id: "e1",
-            source: "src",
-            sourceHandle: "out",
-            target: "t4",
-            targetHandle: "var-variable1",
-          },
-        ],
-      } as unknown as never);
-      useExecutionStore.setState((s) => ({
-        records: new Map(s.records).set("src", {
-          status: "success",
-          output: { type: "text", value: "good" },
-        }),
-      }));
-    });
-
+  it("content mode falls back to the variable NAME when the upstream is unwired", () => {
     renderBody({
       nodeId: "t4",
       text: "@variable1 Morning",
       previewMode: "content",
     });
-
-    const preview = screen.getByText("preview").closest("div")
-      ?.parentElement as HTMLElement;
-    // The wired chip renders "good" (the upstream's value), and the
-    // trailing " Morning" stays as-is. So the preview reads "good Morning".
-    expect(preview).toHaveTextContent("good Morning");
-    // The variable-name placeholder shouldn't appear when the chip is wired.
-    expect(preview).not.toHaveTextContent(/^variable1 Morning$/);
+    const editor = screen.getByLabelText("Text content");
+    const chip = getChip(editor, "variable1")!;
+    // No edges, no upstream → chip displays the bare name as a
+    // dashed-italic placeholder.
+    expect(chip.textContent).toBe("variable1");
+    expect(chip.style.fontStyle).toBe("italic");
   });
 
-  it("names mode shows the `@name` token as a chip even when the upstream is wired", () => {
+  it("content mode shows the WIRED upstream value when an edge connects a Text source", () => {
     act(() => {
       useWorkflowStore.setState({
         nodes: [
-          { id: "src5", kind: "text", position: { x: 0, y: 0 }, config: { text: "good" } },
-          { id: "t5", kind: "text", position: { x: 200, y: 0 }, config: { text: "@variable1 Morning" } },
+          {
+            id: "src5",
+            kind: "text",
+            position: { x: 0, y: 0 },
+            config: { text: "good" },
+          },
+          {
+            id: "t5",
+            kind: "text",
+            position: { x: 200, y: 0 },
+            config: { text: "@variable1 Morning" },
+          },
         ],
         edges: [
           {
@@ -196,7 +174,7 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
       } as unknown as never);
       useExecutionStore.setState((s) => ({
         records: new Map(s.records).set("src5", {
-          status: "success",
+          status: "done",
           output: { type: "text", value: "good" },
         }),
       }));
@@ -205,21 +183,23 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
     renderBody({
       nodeId: "t5",
       text: "@variable1 Morning",
-      previewMode: "names",
+      previewMode: "content",
     });
 
-    const preview = screen.getByText("preview").closest("div")
-      ?.parentElement as HTMLElement;
-    // Names mode: the chip is "@variable1", not "good". " Morning" follows.
-    expect(preview).toHaveTextContent("@variable1 Morning");
-    expect(preview).not.toHaveTextContent(/good/);
+    const editor = screen.getByLabelText("Text content");
+    const chip = getChip(editor, "variable1")!;
+    // Wired chip displays the upstream value, not the name and not "@variable1".
+    expect(chip.textContent).toBe("good");
+    expect(chip.style.fontStyle).not.toBe("italic");
+    // Trailing " Morning" stays as plain editable text after the chip.
+    expect(editor.textContent).toBe("good Morning");
   });
 
-  it("treats an EMPTY-string upstream as unwired (per spec — fall back to name)", () => {
+  it("names mode shows the `@name` token even when the upstream is wired", () => {
     act(() => {
       useWorkflowStore.setState({
         nodes: [
-          { id: "src6", kind: "text", position: { x: 0, y: 0 }, config: { text: "" } },
+          { id: "src6", kind: "text", position: { x: 0, y: 0 }, config: { text: "good" } },
           { id: "t6", kind: "text", position: { x: 200, y: 0 }, config: { text: "@variable1 Morning" } },
         ],
         edges: [
@@ -234,8 +214,8 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
       } as unknown as never);
       useExecutionStore.setState((s) => ({
         records: new Map(s.records).set("src6", {
-          status: "success",
-          output: { type: "text", value: "" },
+          status: "done",
+          output: { type: "text", value: "good" },
         }),
       }));
     });
@@ -243,19 +223,57 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
     renderBody({
       nodeId: "t6",
       text: "@variable1 Morning",
+      previewMode: "names",
+    });
+
+    const editor = screen.getByLabelText("Text content");
+    const chip = getChip(editor, "variable1")!;
+    // Names mode shows `@variable1` regardless of upstream wiring.
+    expect(chip.textContent).toBe("@variable1");
+    expect(editor.textContent).toBe("@variable1 Morning");
+  });
+
+  it("treats an EMPTY-string upstream as unwired (per spec — fall back to name)", () => {
+    act(() => {
+      useWorkflowStore.setState({
+        nodes: [
+          { id: "src7", kind: "text", position: { x: 0, y: 0 }, config: { text: "" } },
+          { id: "t7", kind: "text", position: { x: 200, y: 0 }, config: { text: "@variable1 Morning" } },
+        ],
+        edges: [
+          {
+            id: "e1",
+            source: "src7",
+            sourceHandle: "out",
+            target: "t7",
+            targetHandle: "var-variable1",
+          },
+        ],
+      } as unknown as never);
+      useExecutionStore.setState((s) => ({
+        records: new Map(s.records).set("src7", {
+          status: "done",
+          output: { type: "text", value: "" },
+        }),
+      }));
+    });
+
+    renderBody({
+      nodeId: "t7",
+      text: "@variable1 Morning",
       previewMode: "content",
     });
 
-    const preview = screen.getByText("preview").closest("div")
-      ?.parentElement as HTMLElement;
-    // Empty-string upstream → placeholder name shown.
-    expect(preview).toHaveTextContent("variable1 Morning");
+    const editor = screen.getByLabelText("Text content");
+    const chip = getChip(editor, "variable1")!;
+    expect(chip.textContent).toBe("variable1");
+    expect(chip.style.fontStyle).toBe("italic");
   });
 
-  it("calling the toggle dispatches updateConfig with the new previewMode", () => {
+  it("clicking the toggle dispatches updateConfig with the new previewMode", () => {
     const updateConfig = vi.fn();
     renderBody({
-      nodeId: "t7",
+      nodeId: "t8",
       text: "@variable1 Morning",
       previewMode: "content",
       updateConfig,
@@ -270,7 +288,7 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
 
   it("aria-selected on the toggle reflects the active mode for accessibility", () => {
     const { rerender } = renderBody({
-      nodeId: "t8",
+      nodeId: "t9",
       text: "@variable1 Morning",
       previewMode: "content",
     });
@@ -286,7 +304,7 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
     const Body = textNodeSchema.Body;
     rerender(
       <Body
-        nodeId="t8"
+        nodeId="t9"
         config={{ text: "@variable1 Morning", previewMode: "names" }}
         updateConfig={vi.fn()}
         selected={false}
@@ -300,5 +318,50 @@ describe("textNodeSchema body — live preview with chips + toggle", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("renders multiple variables as separate chips, each independently wired", () => {
+    act(() => {
+      useWorkflowStore.setState({
+        nodes: [
+          { id: "src10a", kind: "text", position: { x: 0, y: 0 }, config: { text: "Hello" } },
+          { id: "t10", kind: "text", position: { x: 200, y: 0 }, config: { text: "@greeting @audience!" } },
+        ],
+        edges: [
+          {
+            id: "e1",
+            source: "src10a",
+            sourceHandle: "out",
+            target: "t10",
+            targetHandle: "var-greeting",
+          },
+        ],
+      } as unknown as never);
+      useExecutionStore.setState((s) => ({
+        records: new Map(s.records).set("src10a", {
+          status: "done",
+          output: { type: "text", value: "Hello" },
+        }),
+      }));
+    });
+
+    renderBody({
+      nodeId: "t10",
+      text: "@greeting @audience!",
+      previewMode: "content",
+    });
+
+    const editor = screen.getByLabelText("Text content");
+    const greeting = getChip(editor, "greeting")!;
+    const audience = getChip(editor, "audience")!;
+    expect(greeting).not.toBeNull();
+    expect(audience).not.toBeNull();
+    // First chip is wired → shows value `Hello`.
+    expect(greeting.textContent).toBe("Hello");
+    expect(greeting.style.fontStyle).not.toBe("italic");
+    // Second chip is unwired → falls back to the variable name in
+    // dashed-italic placeholder style.
+    expect(audience.textContent).toBe("audience");
+    expect(audience.style.fontStyle).toBe("italic");
   });
 });
