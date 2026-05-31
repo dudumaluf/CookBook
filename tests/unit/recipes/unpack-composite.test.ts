@@ -100,7 +100,7 @@ describe("unpackComposite", () => {
               exposedInputs: [
                 {
                   internalNodeId: "internal-llm",
-                  internalHandleId: "user",
+                  internalHandleId: "user-0",
                   label: "user",
                   dataType: "text",
                 },
@@ -110,7 +110,7 @@ describe("unpackComposite", () => {
             exposedInputs: [
               {
                 internalNodeId: "internal-llm",
-                internalHandleId: "user",
+                internalHandleId: "user-0",
                 label: "user",
                 dataType: "text",
               },
@@ -125,6 +125,11 @@ describe("unpackComposite", () => {
           source: "upstream",
           sourceHandle: "out",
           target: "comp-1",
+          // External edge targets the COMPOSITE's exposed handle, which is
+          // keyed by the exposed input's `label` ("user") — not by the
+          // internal node's handle id ("user-0"). After unpack, this edge
+          // gets re-anchored onto the internal node + its internal handle
+          // ("user-0").
           targetHandle: "user",
         },
       ],
@@ -141,7 +146,7 @@ describe("unpackComposite", () => {
     const rewired = ws.edges.find((e) => e.source === "upstream");
     expect(rewired).toBeDefined();
     expect(rewired!.target).toBe(llmNode!.id);
-    expect(rewired!.targetHandle).toBe("user");
+    expect(rewired!.targetHandle).toBe("user-0");
   });
 
   it("does nothing when the target node id isn't a composite", () => {

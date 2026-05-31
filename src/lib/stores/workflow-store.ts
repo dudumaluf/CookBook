@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import {
+  migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
 } from "@/lib/engine/migrate-graph";
@@ -306,7 +307,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 11,
+      version: 12,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -581,14 +582,17 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // v10 (ADR-0056): Video Concat `clips` multi-handle → ordered
         // `clip-N` sockets. v11 (ADR-0058): Seedance reference image/video/
-        // audio multi-handles → numbered per-type sockets.
+        // audio multi-handles → numbered per-type sockets. v12: LLM Text
+        // `user` + `image` multi-handles → numbered `user-N` / `image-N`
+        // smart-input sockets that auto-grow as the user wires them.
         const v10 = migrateVideoConcatClips(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
         );
         const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
+        const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
 
-        return { ...state, nodes: v11.nodes, edges: v11.edges };
+        return { ...state, nodes: v12.nodes, edges: v12.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

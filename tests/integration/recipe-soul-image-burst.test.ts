@@ -128,7 +128,7 @@ describe("LLM-callable recipe path — minimal Text → LLM Text", () => {
       source: promptId,
       sourceHandle: "out",
       target: llmId,
-      targetHandle: "user",
+      targetHandle: "user-0",
     });
 
     const { result, records } = await runFromStore();
@@ -411,7 +411,7 @@ describe("workflow introspection for an LLM", () => {
       source: a,
       sourceHandle: "out",
       target: b,
-      targetHandle: "user",
+      targetHandle: "user-0",
     });
 
     const { nodes, edges } = useWorkflowStore.getState();

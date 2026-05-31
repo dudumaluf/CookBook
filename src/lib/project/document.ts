@@ -19,6 +19,7 @@
  */
 
 import {
+  migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
 } from "@/lib/engine/migrate-graph";
@@ -249,12 +250,14 @@ export function applyProjectDocument(
   }
   if (doc.workflow) {
     // Cloud/file loads bypass the workflow-store persist migrate, so run the
-    // graph-level forward-port here too (ADR-0056: Video Concat clips → clip-N).
+    // graph-level forward-ports here too (ADR-0056: Video Concat clips →
+    // clip-N; ADR-0058: Seedance reference handles; LLM Text smart inputs).
     const m1 = migrateVideoConcatClips(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
-    const migrated = migrateSeedanceRefHandles(m1.nodes, m1.edges);
+    const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
+    const migrated = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
     useWorkflowStore.setState({
       nodes: migrated.nodes as never,
       edges: migrated.edges as never,

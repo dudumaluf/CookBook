@@ -141,7 +141,7 @@ describe("buildCanvasKnowledge", () => {
           source: "n1",
           sourceHandle: "out",
           target: "n2",
-          targetHandle: "user",
+          targetHandle: "user-0",
         },
       ],
       selectedNodeIds: ["n2"],

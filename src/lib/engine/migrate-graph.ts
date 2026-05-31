@@ -108,3 +108,63 @@ export function migrateSeedanceRefHandles(
   });
   return { nodes: nextNodes, edges: nextEdges };
 }
+
+const LLM_TEXT_PORT_CAPS = { user: 8, image: 9 } as const;
+const LLM_TEXT_PORT_KEY = {
+  user: "userPorts",
+  image: "imagePorts",
+} as const;
+
+/**
+ * LLM Text moved from `user` (multi) + `image` (multi) to numbered
+ * `user-0..N` / `image-0..N` sockets that auto-grow as you wire (smart
+ * inputs). Rewrite legacy edges to the indexed sockets (in edge order,
+ * capped per type) and set the node's `userPorts` / `imagePorts` so the
+ * sockets render at their post-migration count.
+ *
+ * `system` is intentionally untouched — it's still a single port.
+ */
+export function migrateLlmTextSmartInputs(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const llmTextIds = new Set(
+    nodes.filter((n) => n.kind === "llm-text").map((n) => n.id),
+  );
+  if (llmTextIds.size === 0) return { nodes, edges };
+
+  const counters = new Map<string, { user: number; image: number }>();
+  let changed = false;
+  const nextEdges = edges.map((e) => {
+    const base = (["user", "image"] as const).find(
+      (b) => e.targetHandle === b,
+    );
+    if (!base || !llmTextIds.has(e.target)) return e;
+    const c = counters.get(e.target) ?? { user: 0, image: 0 };
+    const i = c[base];
+    c[base] = i + 1;
+    counters.set(e.target, c);
+    if (i >= LLM_TEXT_PORT_CAPS[base]) return e; // beyond cap — leave (will be dropped)
+    changed = true;
+    return { ...e, targetHandle: `${base}-${i}` };
+  });
+  if (!changed) return { nodes, edges };
+
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "llm-text") return n;
+    const c = counters.get(n.id);
+    if (!c) return n;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = { ...cfg };
+    for (const base of ["user", "image"] as const) {
+      if (c[base] > 0) {
+        patch[LLM_TEXT_PORT_KEY[base]] = Math.min(
+          LLM_TEXT_PORT_CAPS[base],
+          c[base],
+        );
+      }
+    }
+    return { ...n, config: patch };
+  });
+  return { nodes: nextNodes, edges: nextEdges };
+}

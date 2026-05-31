@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
 } from "@/lib/engine/migrate-graph";
@@ -85,5 +86,82 @@ describe("migrateSeedanceRefHandles", () => {
     ];
     const out = migrateSeedanceRefHandles(nodes, edges);
     expect(out.edges).toBe(edges);
+  });
+});
+
+describe("migrateLlmTextSmartInputs", () => {
+  const llm = (id: string): NodeInstance => ({
+    id,
+    kind: "llm-text",
+    position: { x: 0, y: 0 },
+    config: { model: "openai/gpt-5" },
+  });
+
+  it("spreads legacy `user` + `image` edges into numbered sockets per type", () => {
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user" },
+      { id: "e2", source: "b", sourceHandle: "out", target: "l1", targetHandle: "user" },
+      { id: "e3", source: "c", sourceHandle: "out", target: "l1", targetHandle: "image" },
+      { id: "e4", source: "d", sourceHandle: "out", target: "l1", targetHandle: "system" },
+    ];
+    const out = migrateLlmTextSmartInputs(nodes, edges);
+    // user-0 / user-1 / image-0; `system` is intentionally untouched
+    // (single-port handle that didn't change shape).
+    expect(out.edges.map((e) => e.targetHandle)).toEqual([
+      "user-0",
+      "user-1",
+      "image-0",
+      "system",
+    ]);
+    const cfg = out.nodes[0]!.config as {
+      userPorts?: number;
+      imagePorts?: number;
+    };
+    expect(cfg.userPorts).toBe(2);
+    expect(cfg.imagePorts).toBe(1);
+  });
+
+  it("is a no-op for graphs with no legacy LLM Text handles", () => {
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user-0" },
+    ];
+    const out = migrateLlmTextSmartInputs(nodes, edges);
+    expect(out.edges).toBe(edges);
+  });
+
+  it("ignores graphs without an llm-text node", () => {
+    const nodes: NodeInstance[] = [
+      { id: "t", kind: "text", position: { x: 0, y: 0 }, config: {} },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "t", targetHandle: "user" },
+    ];
+    const out = migrateLlmTextSmartInputs(nodes, edges);
+    // `user` here is a different node's handle, not LLM Text — pass through.
+    expect(out.edges).toBe(edges);
+  });
+
+  it("caps user / image edges at the per-type ceiling and leaves overflow edges untouched", () => {
+    const nodes = [llm("l1")];
+    const overflow: WorkflowEdge[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `e${i}`,
+      source: `s${i}`,
+      sourceHandle: "out",
+      target: "l1",
+      targetHandle: "user" as const,
+    }));
+    const out = migrateLlmTextSmartInputs(nodes, overflow);
+    // First 8 (cap) get rewritten; the remainder stay as the legacy id so a
+    // future cleanup can decide what to do with them (we never silently
+    // drop user data).
+    expect(out.edges.slice(0, 8).map((e) => e.targetHandle)).toEqual(
+      Array.from({ length: 8 }, (_, i) => `user-${i}`),
+    );
+    expect(out.edges.slice(8).every((e) => e.targetHandle === "user")).toBe(
+      true,
+    );
+    expect((out.nodes[0]!.config as { userPorts?: number }).userPorts).toBe(8);
   });
 });

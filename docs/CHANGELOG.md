@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — LLM Text: smart-input sockets that auto-grow as you wire
+
+`user` and `image` were single multi-handles — three text upstreams meant three edges into the same dot, no visual distinction between them. Now both follow the **Seedance reference / Video Concat clip-N pattern**: numbered `user 1` / `image 1` sockets that grow to `user 2`, `user 3`, … (capped at 8) and `image 2`, `image 3`, … (capped at 9) the moment you wire the last one. `system` stays a single port (only one system prompt makes sense).
+
+Body's auto-grow effect mirrors Seedance's: subscribes to a stable `"maxUser,maxImage"` snapshot of the wired edges and bumps `userPorts` / `imagePorts` to "connected + 1" so there's always one empty trailing socket per type. `getInputs(config)` builds the dynamic list. `execute()` collects each `user-N` chunk in port order (joined with blank lines, empty / whitespace stripped) and each `image-N` ref (forwarded to the vision endpoint when ≥ 1 is present).
+
+**Migration**: workflow-store **v11 → v12** + `applyProjectDocument` both run `migrateLlmTextSmartInputs`, which rewrites legacy `user` / `image` edges to `user-0..N` / `image-0..N` (in edge order, capped per type) and seeds `userPorts` / `imagePorts` so the sockets render at their post-migration count. Existing canvases load with the new shape and connections intact. **Tests +4** (migration variants + smart-input execute paths; `node-llm-text` execute / schema / inputs assertions migrated to the new socket ids).
+
 ## 2026-05-30 — Copy / paste / duplicate nodes + viewport-center spawn
 
 **Two related canvas UX fixes the user flagged together.**

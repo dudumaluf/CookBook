@@ -53,17 +53,17 @@ describe("autoDetectExposedIO", () => {
     expect(result.outputs[0]?.internalHandleId).toBe("out");
   });
 
-  it("Text → LLM Text chain exposes LLM's `user` input + LLM's `out` output", () => {
+  it("Text → LLM Text chain exposes LLM's `user-0` input + LLM's `out` output", () => {
     const text = n("a", "text", { text: "hi" });
     const llm = n("b", "llm-text", {});
-    const edges = [e("a", "out", "b", "user")];
+    const edges = [e("a", "out", "b", "user-0")];
     const result = autoDetectExposedIO([text, llm], edges);
-    // Text.out is consumed internally by LLM.user → not exposed.
-    // LLM.user is consumed internally → not exposed.
-    // Text has no other handles. LLM has `system`, `image`, `out` etc.
+    // Text.out is consumed internally by LLM.user-0 → not exposed.
+    // LLM.user-0 is consumed internally → not exposed.
+    // Text has no other handles. LLM has `system`, `image-0`, `out` etc.
     const inputLabels = result.inputs.map((h) => h.label);
     const inputHandles = result.inputs.map((h) => h.internalHandleId);
-    expect(inputHandles).not.toContain("user"); // wired internally
+    expect(inputHandles).not.toContain("user-0"); // wired internally
     // System / image inputs of LLM are unwired — exposed.
     expect(inputLabels).toContain("system");
     // LLM.out is leaf (no outgoing edges) → exposed.
@@ -80,7 +80,7 @@ describe("autoDetectExposedIO", () => {
     // its existence is purely an edge-source target the auto-detect
     // walker sees as "outside".
     const edges = [
-      e("a", "out", "b", "user"),
+      e("a", "out", "b", "user-0"),
       e("b", "out", "c", "text"), // LLM.out -> Text.text (outside)
     ];
     const result = autoDetectExposedIO([text, llm], edges);

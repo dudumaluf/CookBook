@@ -1,17 +1,20 @@
 "use client";
 
 import { ChevronDown, RotateCcw, Sparkles } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
-import {
-  extractInputArrayByType,
-  extractInputByType,
-} from "@/lib/engine/extract-input";
+import { extractInputByType } from "@/lib/engine/extract-input";
 import { callOpenRouter } from "@/lib/llm/call-openrouter";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { cn } from "@/lib/utils";
-import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
+import type {
+  ImageRef,
+  NodeBodyProps,
+  NodeIO,
+  StandardizedOutput,
+} from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
@@ -71,6 +74,57 @@ export interface LLMTextNodeConfig {
    * provider default.
    */
   reasoning?: boolean;
+  /**
+   * Smart-input port counts (auto-grow). The body bumps these to
+   * `connectedCount + 1` so the user always has one empty trailing
+   * socket per type to wire next, capped by `MAX_USER_PORTS` /
+   * `MAX_IMAGE_PORTS`. Schema-default is `1` (one empty socket each).
+   *
+   * `system` stays a single port — only one system prompt makes sense.
+   */
+  userPorts?: number;
+  imagePorts?: number;
+}
+
+/**
+ * Caps for the smart-input pattern. Nine images mirrors the Seedance
+ * reference cap (and Anthropic / OpenAI vision payloads handle that many
+ * fine); eight user-text slots is plenty for "system / persona / context /
+ * task / examples / question" style prompts and stops the node from
+ * growing into a forest if the user wires every output on the canvas.
+ */
+export const MAX_USER_PORTS = 8;
+export const MAX_IMAGE_PORTS = 9;
+
+/**
+ * Build the dynamic input list from the (auto-growing) port counts.
+ * Order: user-0..N → system → image-0..N. Matches the original static
+ * order so visually nothing jumps when the node migrates.
+ *
+ * Labels are always indexed (`user 1`, `image 1`) — same convention as
+ * Video Concat / Seedance reference mode — so the body's "connect the
+ * last to grow another" affordance reads consistently across nodes.
+ */
+function smartInputs(config: LLMTextNodeConfig): NodeIO[] {
+  const userN = Math.min(MAX_USER_PORTS, Math.max(1, config.userPorts ?? 1));
+  const imageN = Math.min(MAX_IMAGE_PORTS, Math.max(1, config.imagePorts ?? 1));
+  const inputs: NodeIO[] = [];
+  for (let i = 0; i < userN; i++) {
+    inputs.push({
+      id: `user-${i}`,
+      label: `user ${i + 1}`,
+      dataType: "text",
+    });
+  }
+  inputs.push({ id: "system", label: "system", dataType: "text" });
+  for (let i = 0; i < imageN; i++) {
+    inputs.push({
+      id: `image-${i}`,
+      label: `image ${i + 1}`,
+      dataType: "image",
+    });
+  }
+  return inputs;
 }
 
 /**
@@ -124,6 +178,44 @@ function LLMTextNodeBody({
   // Subscribe to just this node's record so unrelated runs don't re-render.
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const history = record?.history ?? [];
+
+  // Auto-grow smart-input sockets. Track the highest connected `user-N` and
+  // `image-N` index (per type) as a STABLE string snapshot so the workflow
+  // selector's equality check stays stable (returning a fresh object would
+  // loop, React #185). Then keep one empty trailing socket up to each cap
+  // so the user always has somewhere to wire next.
+  const connectedKey = useWorkflowStore((s) => {
+    let maxUser = -1;
+    let maxImage = -1;
+    for (const e of s.edges) {
+      if (e.target !== nodeId || !e.targetHandle) continue;
+      if (e.targetHandle.startsWith("user-")) {
+        const idx = Number(e.targetHandle.slice("user-".length));
+        if (Number.isFinite(idx)) maxUser = Math.max(maxUser, idx);
+      } else if (e.targetHandle.startsWith("image-")) {
+        const idx = Number(e.targetHandle.slice("image-".length));
+        if (Number.isFinite(idx)) maxImage = Math.max(maxImage, idx);
+      }
+    }
+    return `${maxUser},${maxImage}`;
+  });
+  useEffect(() => {
+    const [mu, mi] = connectedKey.split(",").map(Number) as [number, number];
+    const wantUserPorts = Math.min(MAX_USER_PORTS, Math.max(1, mu + 2));
+    const wantImagePorts = Math.min(MAX_IMAGE_PORTS, Math.max(1, mi + 2));
+    const haveUserPorts = Math.min(
+      MAX_USER_PORTS,
+      Math.max(1, config.userPorts ?? 1),
+    );
+    const haveImagePorts = Math.min(
+      MAX_IMAGE_PORTS,
+      Math.max(1, config.imagePorts ?? 1),
+    );
+    const patch: Partial<LLMTextNodeConfig> = {};
+    if (haveUserPorts !== wantUserPorts) patch.userPorts = wantUserPorts;
+    if (haveImagePorts !== wantImagePorts) patch.imagePorts = wantImagePorts;
+    if (Object.keys(patch).length > 0) updateConfig(patch);
+  }, [connectedKey, config.userPorts, config.imagePorts, updateConfig]);
 
   // Slice 5.8 — history cursor (view-only). Defaults to the latest
   // entry; user navigates with the cursor chip below the model chip.
@@ -484,14 +576,12 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
   description:
     "Send prompts (and optional images) to an LLM via Fal OpenRouter. Wire upstream Text / Image nodes; pick the model from the chip on the node.",
   icon: Sparkles,
-  // Inputs are wire-only. user + image are multi so a prompt can be
-  // assembled from many upstreams without changing node geometry — the
-  // engine aggregates the edges into arrays automatically.
-  inputs: [
-    { id: "user", label: "user", dataType: "text", multiple: true },
-    { id: "system", label: "system", dataType: "text" },
-    { id: "image", label: "image", dataType: "image", multiple: true },
-  ],
+  // Static inputs cover the initial port counts (one user + one image) so
+  // a fresh node renders with `user 1` / `system` / `image 1`. The dynamic
+  // shape — and its auto-grow bookkeeping — lives on `getInputs` / the
+  // body's connect-watching effect.
+  inputs: smartInputs({ model: "" }),
+  getInputs: (config) => smartInputs(config),
   outputs: [{ id: "out", label: "out", dataType: "text" }],
   defaultConfig: {
     model: "anthropic/claude-sonnet-4.5",
@@ -499,11 +589,14 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
   // Executable (not reactive) — only runs when the user clicks Run.
   reactive: false,
   execute: async ({ config, inputs, signal }) => {
-    // user: array of upstream chunks joined with blank-lines (matches what
-    // most LLM chat APIs do when you concatenate context blocks).
-    const userChunks = extractInputArrayByType(inputs, "user", "text")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    // user-0..N: collect each wired socket's text in port order, drop
+    // empty/whitespace, then join with blank lines (matches what most
+    // LLM chat APIs do when concatenating context blocks).
+    const userChunks: string[] = [];
+    for (let i = 0; i < MAX_USER_PORTS; i++) {
+      const chunk = extractInputByType(inputs, `user-${i}`, "text");
+      if (chunk && chunk.trim().length > 0) userChunks.push(chunk.trim());
+    }
     const user = userChunks.join("\n\n").trim();
 
     // system: single value. We accept arrays defensively (multi-edge could
@@ -512,11 +605,18 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
       extractInputByType(inputs, "system", "text") ?? ""
     ).trim();
 
-    const imageRefs = extractInputArrayByType(inputs, "image", "image");
+    // image-0..N: collect each wired image in port order. The server
+    // routes to the vision endpoint automatically when ≥1 image is
+    // present; we just hand it an ordered URL list.
+    const imageRefs: ImageRef[] = [];
+    for (let i = 0; i < MAX_IMAGE_PORTS; i++) {
+      const ref = extractInputByType(inputs, `image-${i}`, "image");
+      if (ref) imageRefs.push(ref);
+    }
 
     if (user.length === 0) {
       throw new Error(
-        "User prompt is empty — wire a Text node into the `user` handle.",
+        "User prompt is empty — wire a Text node into a `user` socket.",
       );
     }
 
