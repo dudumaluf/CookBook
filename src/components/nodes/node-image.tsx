@@ -116,7 +116,7 @@ function ImageNodeBody({
     <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       {hasImage ? (
         <div
-          className="relative"
+          className="relative w-full overflow-hidden rounded-md bg-foreground/[0.04]"
           data-testid="image-preview"
           style={{ aspectRatio: previewCssAspect }}
         >
@@ -124,7 +124,7 @@ function ImageNodeBody({
           <img
             src={effectiveUrl}
             alt="Image source"
-            className="h-full w-full rounded-md bg-foreground/5 object-cover"
+            className="h-full w-full object-contain"
             onLoad={(e) => {
               // Measure-on-load for legacy assets that have no stored
               // width / height. Skip when we already have linked dims to
@@ -139,7 +139,7 @@ function ImageNodeBody({
               }
             }}
             onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
+              (e.target as HTMLImageElement).style.opacity = "0";
             }}
           />
           {!config.assetId && config.url ? (

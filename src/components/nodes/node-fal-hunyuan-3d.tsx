@@ -102,12 +102,17 @@ function MeshViewer({ src, poster }: MeshViewerProps) {
   // model-viewer captures pointer events for orbit/pan/zoom; React Flow
   // would otherwise interpret the drag as a node drag and pan the canvas.
   // Stop the bubble at the wrapper.
+  //
+  // Aspect-square so the viewer scales with the node's width (horizontal
+  // resize) instead of staying pinned to a fixed pixel height — matches
+  // the MediaPreview convention used by image / video nodes. Square gives
+  // the orbit camera the most usable framing for arbitrary meshes.
   return (
     <div
       ref={containerRef}
       onPointerDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
-      className="block h-[260px] w-full overflow-hidden rounded-md bg-black"
+      className="block aspect-square w-full overflow-hidden rounded-md bg-black"
     >
       {ready ? (
         <model-viewer
@@ -182,7 +187,7 @@ function Hunyuan3dBody({ nodeId, config }: NodeBodyProps<Hunyuan3dNodeConfig>) {
             {record.error}
           </p>
         ) : status === "running" ? (
-          <div className="flex h-[260px] w-full flex-col items-center justify-center gap-1.5 rounded-md bg-foreground/[0.04] text-muted-foreground">
+          <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-md bg-foreground/[0.04] text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-[10px]">Sculpting mesh — a few minutes</span>
           </div>
@@ -221,7 +226,7 @@ function Hunyuan3dBody({ nodeId, config }: NodeBodyProps<Hunyuan3dNodeConfig>) {
             </div>
           </div>
         ) : (
-          <div className="flex h-[260px] w-full items-center justify-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] text-[11px] text-muted-foreground">
+          <div className="flex aspect-square w-full items-center justify-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] text-[11px] text-muted-foreground">
             <Box className="h-4 w-4" />
             <span>Wire a front image, then Run</span>
           </div>

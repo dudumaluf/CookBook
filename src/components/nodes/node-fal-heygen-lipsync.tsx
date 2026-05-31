@@ -15,6 +15,10 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import {
+  MediaPreviewPlaceholder,
+  MediaPreviewVideo,
+} from "./media-preview";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
@@ -105,22 +109,23 @@ function HeygenLipsyncBody({ nodeId }: NodeBodyProps<HeygenLipsyncNodeConfig>) {
             {record.error}
           </p>
         ) : status === "running" ? (
-          <div
-            data-testid="heygen-lipsync-running"
-            className="flex w-full aspect-video flex-col items-center justify-center gap-1.5 rounded-md bg-foreground/[0.04] text-muted-foreground"
+          <MediaPreviewPlaceholder
+            aspectRatio="16 / 9"
+            testId="heygen-lipsync-running"
+            className="flex-col gap-1.5"
           >
             <Loader2 className="h-5 w-5 animate-spin" />
             <span className="text-[10px]">Dubbing — up to several minutes</span>
-          </div>
+          </MediaPreviewPlaceholder>
         ) : video ? (
-          <video
-            data-testid="heygen-lipsync-result"
-            src={video.url}
-            controls
+          <MediaPreviewVideo
+            url={video.url}
+            // No config-driven aspect — output mirrors source video's intrinsic
+            // dimensions. 16:9 is the default fallback; `object-contain` lets a
+            // 9:16 vertical video letterbox cleanly inside the box without crop.
             loop
-            playsInline
-            onPointerDown={(e) => e.stopPropagation()}
-            className="block w-full overflow-hidden rounded-md bg-black"
+            testId="heygen-lipsync-result"
+            className="bg-black"
           />
         ) : (
           <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">

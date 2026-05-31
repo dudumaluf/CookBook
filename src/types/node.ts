@@ -306,6 +306,38 @@ export type NodeResizable = "none" | "horizontal" | "vertical" | "both";
  * `default*` is the initial size when the user has never resized. Once the
  * user drags the resize handle, `NodeInstance.size` overrides it for that
  * instance only.
+ *
+ * ## House-style resize convention
+ *
+ * Pick the resize affordance from the node's primary content type so the
+ * canvas behaves predictably across kinds:
+ *
+ *   - **Media nodes** (images, videos, 3D meshes, audio waveforms) use
+ *     `resizable: "horizontal"`. Width is user-controlled; height is
+ *     **always derived from content aspect ratio** (config-driven for
+ *     generators, asset-metadata-driven for inputs). The MediaPreview
+ *     primitives in `src/components/nodes/media-preview.tsx` apply
+ *     `style={{ aspectRatio }}` + `object-contain` so resizing scales
+ *     the preview without ever silently cropping or warping it. Skip
+ *     `minHeight`/`maxHeight` on these — height tracks content.
+ *     Examples: `image`, `fal-image`, `higgsfield-image-gen`,
+ *     `fal-seedance`, `fal-heygen-lipsync`, `fal-hunyuan-3d`.
+ *
+ *   - **Text-output nodes** (long-form text, chat, multi-line caption)
+ *     use `resizable: "both"`. Provide `minHeight` (~100) and
+ *     `maxHeight` (~480-520) so the body wrapper switches to
+ *     `flex-1 min-h-0 overflow-y-auto` (BaseNode does this when a
+ *     bounded height is in play) and the content scrolls inside the
+ *     card instead of piercing the silhouette. Examples: `text`,
+ *     `llm-text`, `text-concat`.
+ *
+ *   - **Utility / chrome-only nodes** (number scalars, list previews,
+ *     export buttons) use `resizable: "horizontal"` with a tight
+ *     `minWidth`/`maxWidth` band, OR omit `size` entirely. Their
+ *     content drives height naturally.
+ *
+ *   - `"vertical"` exists in the type system but is unused today —
+ *     reach for `"both"` or `"horizontal"` first.
  */
 export interface NodeSizeSchema {
   /** Initial width before any user resize. Unset = content-driven (CSS auto). */
@@ -326,6 +358,9 @@ export interface NodeSizeSchema {
    * handle (`"both"` → bottom-right corner; `"horizontal"` → right edge;
    * `"vertical"` → bottom edge) bound to React Flow's NodeResizeControl
    * with the schema's min/max as the drag bounds.
+   *
+   * Pick the axis based on content type — see the convention block in
+   * the docblock above.
    */
   resizable?: NodeResizable;
 }

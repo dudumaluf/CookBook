@@ -5,6 +5,7 @@ vi.mock("@/lib/fal/call-fal-image", () => ({ callFalImage }));
 
 import {
   __falImageTestHooks,
+  falImageConfiguredAspect,
   falImageNodeSchema,
 } from "@/components/nodes/node-fal-image";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
@@ -305,5 +306,109 @@ describe("fal-image smart-input ports", () => {
     expect(clampImagePorts("flux-2-pro", 6)).toBe(6);
     expect(clampImagePorts("flux-2-pro", 50)).toBe(8);
     expect(clampImagePorts("nano-banana-2", 50)).toBe(14);
+  });
+});
+
+describe("falImageConfiguredAspect — preview aspect resolution", () => {
+  it("resolves nano-banana / krea aspectRatio strings (16:9 → '16 / 9')", () => {
+    expect(falImageConfiguredAspect({ aspectRatio: "16:9" })).toBe("16 / 9");
+    expect(falImageConfiguredAspect({ aspectRatio: "9:16" })).toBe("9 / 16");
+    expect(falImageConfiguredAspect({ aspectRatio: "1:1" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ aspectRatio: "3:4" })).toBe("3 / 4");
+  });
+
+  it("resolves flux/seedream image_size presets to canonical aspects", () => {
+    expect(falImageConfiguredAspect({ imageSize: "square" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ imageSize: "square_hd" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ imageSize: "portrait_4_3" })).toBe(
+      "3 / 4",
+    );
+    expect(falImageConfiguredAspect({ imageSize: "portrait_16_9" })).toBe(
+      "9 / 16",
+    );
+    expect(falImageConfiguredAspect({ imageSize: "landscape_4_3" })).toBe(
+      "4 / 3",
+    );
+    expect(falImageConfiguredAspect({ imageSize: "landscape_16_9" })).toBe(
+      "16 / 9",
+    );
+  });
+
+  it("falls back to '1 / 1' for auto presets and unknown strings", () => {
+    expect(falImageConfiguredAspect({ imageSize: "auto_2K" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ imageSize: "auto_4K" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ imageSize: "weird_unknown" })).toBe(
+      "1 / 1",
+    );
+  });
+
+  it("uses custom width/height when imageSizeMode is 'custom'", () => {
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "custom",
+        customWidth: 1920,
+        customHeight: 1080,
+      }),
+    ).toBe("1920 / 1080");
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "custom",
+        customWidth: 1024,
+        customHeight: 1024,
+      }),
+    ).toBe("1024 / 1024");
+  });
+
+  it("ignores custom dimensions when imageSizeMode !== 'custom' (preset wins)", () => {
+    // The body's preset/custom toggle owns the decision — even if customWidth
+    // / customHeight are set, mode === 'preset' should mean the preset wins.
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "preset",
+        imageSize: "landscape_16_9",
+        customWidth: 1024,
+        customHeight: 1024,
+      }),
+    ).toBe("16 / 9");
+  });
+
+  it("prioritizes custom > preset > aspectRatio when multiple signals are set", () => {
+    // Custom mode beats both preset and aspectRatio.
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "custom",
+        customWidth: 800,
+        customHeight: 600,
+        imageSize: "square_hd",
+        aspectRatio: "9:16",
+      }),
+    ).toBe("800 / 600");
+    // Preset beats aspectRatio when no custom.
+    expect(
+      falImageConfiguredAspect({
+        imageSize: "portrait_16_9",
+        aspectRatio: "16:9",
+      }),
+    ).toBe("9 / 16");
+  });
+
+  it("falls back to '1 / 1' for an empty / malformed config", () => {
+    expect(falImageConfiguredAspect({})).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ aspectRatio: "" })).toBe("1 / 1");
+    expect(falImageConfiguredAspect({ aspectRatio: "garbage" })).toBe("1 / 1");
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "custom",
+        customWidth: 0,
+        customHeight: 0,
+      }),
+    ).toBe("1 / 1");
+    expect(
+      falImageConfiguredAspect({
+        imageSizeMode: "custom",
+        customWidth: -100,
+        customHeight: 100,
+      }),
+    ).toBe("1 / 1");
   });
 });

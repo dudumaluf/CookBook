@@ -9,7 +9,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import {
@@ -38,6 +38,10 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import {
+  MediaPreviewImage,
+  MediaPreviewPlaceholder,
+} from "./media-preview";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
@@ -179,59 +183,36 @@ function HiggsfieldImageGenNodeBody({
           {record.error}
         </p>
       ) : status === "running" ? (
-        <div
-          data-testid="higgsfield-running"
-          className="flex w-full items-center justify-center rounded-md bg-foreground/[0.04] text-muted-foreground"
-          style={{ aspectRatio: configuredAspect }}
+        <MediaPreviewPlaceholder
+          aspectRatio={configuredAspect}
+          testId="higgsfield-running"
         >
           <Loader2 className="h-5 w-5 animate-spin" />
-        </div>
+        </MediaPreviewPlaceholder>
       ) : imageUrls.length === 1 ? (
-        // Single-result path: aspect-faithful preview — the result was
-        // generated AT the configured ratio so config = real.
-        <a
-          href={imageUrls[0]!}
-          target="_blank"
-          rel="noreferrer noopener"
-          onPointerDown={(e) => e.stopPropagation()}
-          data-testid="higgsfield-result-single"
-          className="block w-full overflow-hidden rounded-md bg-foreground/5"
-          style={{ aspectRatio: configuredAspect }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={imageUrls[0]!}
-            alt="Generated"
-            className="h-full w-full object-cover"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
-          />
-        </a>
+        // Single-result path — config-driven aspect with `object-contain`
+        // (cover ≈ contain when ratio matches, but contain is safer if the
+        // model ever returns a slightly different size than requested).
+        <MediaPreviewImage
+          url={imageUrls[0]!}
+          alt="Generated"
+          aspectRatio={configuredAspect}
+          fit="contain"
+          testId="higgsfield-result-single"
+        />
       ) : imageUrls.length > 1 ? (
-        // Multi-result grid: cells stay square. The grid is a layout
-        // tile, not a preview of the content — uniform squares give a
-        // legible 2x2 / 4x silhouette regardless of the source ratio.
+        // Multi-result grid: `aspect-square` cells with `object-contain`
+        // so portrait/landscape batches letterbox cleanly inside the
+        // square tile — never silently crops the user's content.
         <div className="grid grid-cols-2 gap-1.5">
           {imageUrls.map((url, i) => (
-            <a
+            <MediaPreviewImage
               key={`${url}-${i}`}
-              href={url}
-              target="_blank"
-              rel="noreferrer noopener"
-              onPointerDown={(e) => e.stopPropagation()}
-              className="block aspect-square overflow-hidden rounded-md bg-foreground/5"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={url}
-                alt={`Generated ${i + 1}`}
-                className="h-full w-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </a>
+              url={url}
+              alt={`Generated ${i + 1}`}
+              aspectRatio="1 / 1"
+              fit="contain"
+            />
           ))}
         </div>
       ) : (

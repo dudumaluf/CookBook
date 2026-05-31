@@ -20,6 +20,7 @@ import {
 } from "@/lib/fal/types";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { parseAspectRatio } from "@/lib/utils/aspect-ratio";
 import type {
   ImageRef,
   NodeBodyProps,
@@ -28,6 +29,10 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import {
+  MediaPreviewImage,
+  MediaPreviewPlaceholder,
+} from "./media-preview";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
@@ -95,6 +100,58 @@ const FIELD_DEFAULTS: Record<string, string> = {
 function modelMaxRefs(model: FalImageModel): number {
   const caps = FAL_IMAGE_MODEL_CAPS[model];
   return caps.editRefs?.max ?? caps.styleReferences?.max ?? 0;
+}
+
+/**
+ * Map a Fal `image_size` preset string (`"square_hd"`, `"portrait_16_9"`,
+ * `"landscape_4_3"`, etc.) to a CSS-formatted `aspectRatio`. The presets
+ * are documented in `src/lib/fal/types.ts` (FLUX_IMAGE_SIZES /
+ * SEEDREAM_IMAGE_SIZES). `auto_*` falls through to `null` so the caller
+ * picks a fallback (the model decides at runtime).
+ */
+function aspectFromImageSizePreset(preset: string): string | null {
+  if (preset === "square" || preset === "square_hd") return "1 / 1";
+  if (preset === "portrait_4_3") return "3 / 4";
+  if (preset === "portrait_16_9") return "9 / 16";
+  if (preset === "landscape_4_3") return "4 / 3";
+  if (preset === "landscape_16_9") return "16 / 9";
+  // auto_2K / auto_4K / unknown — model picks; caller's fallback wins.
+  return null;
+}
+
+/**
+ * Resolve the **configured** aspect ratio for a Fal Image node, in
+ * priority order:
+ *   1. Custom W×H (Flux 2 Pro / Seedream 4.5 in `imageSizeMode: "custom"`).
+ *   2. Image-size preset (Flux / Seedream presets).
+ *   3. Aspect-ratio string (Nano Banana / Krea, e.g. `"16:9"`).
+ *   4. Fallback `"1 / 1"`.
+ *
+ * Used by both the running placeholder AND the result preview so the node
+ * doesn't snap shapes when the result lands. Independent of which Fal
+ * model is active — every model contributes some shape signal.
+ */
+export function falImageConfiguredAspect(
+  config: FalImageNodeConfig,
+): string {
+  if (
+    config.imageSizeMode === "custom" &&
+    typeof config.customWidth === "number" &&
+    typeof config.customHeight === "number" &&
+    config.customWidth > 0 &&
+    config.customHeight > 0
+  ) {
+    return `${config.customWidth} / ${config.customHeight}`;
+  }
+  if (typeof config.imageSize === "string") {
+    const preset = aspectFromImageSizePreset(config.imageSize);
+    if (preset) return preset;
+  }
+  if (typeof config.aspectRatio === "string") {
+    const parsed = parseAspectRatio(config.aspectRatio);
+    if (parsed) return parsed.cssAspect;
+  }
+  return "1 / 1";
 }
 
 function clampImagePorts(model: FalImageModel, requested: number): number {
@@ -212,6 +269,11 @@ function FalImageBody({
       ? [activeOutput.value.url]
       : [];
 
+  // Single source of truth for the body's aspect ratio — running placeholder,
+  // single-result preview, AND multi-image grid all use this so the node
+  // silhouette never jumps when the spinner swaps for the result.
+  const configuredAspect = falImageConfiguredAspect(config);
+
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
@@ -242,36 +304,35 @@ function FalImageBody({
           {record.error}
         </p>
       ) : status === "running" ? (
-        <div
-          className="flex aspect-square w-full items-center justify-center rounded-md bg-foreground/[0.04] text-muted-foreground"
-        >
+        // Running placeholder mirrors the configured aspect — the result
+        // will land at this exact shape, so the node doesn't jump silhouette
+        // when the spinner swaps for the image.
+        <MediaPreviewPlaceholder aspectRatio={configuredAspect}>
           <Loader2 className="h-5 w-5 animate-spin" />
-        </div>
-      ) : imageUrls.length > 0 ? (
-        <div
-          className={
-            imageUrls.length === 1 ? "" : "grid grid-cols-2 gap-1.5"
-          }
-        >
+        </MediaPreviewPlaceholder>
+      ) : imageUrls.length === 1 ? (
+        // Single-result path — use the configured aspect and `object-contain`
+        // so a 16:9 / 9:16 / custom W×H output lands at its true shape inside
+        // the node (no silent crop, no warp).
+        <MediaPreviewImage
+          url={imageUrls[0]!}
+          alt="Generated"
+          aspectRatio={configuredAspect}
+          fit="contain"
+        />
+      ) : imageUrls.length > 1 ? (
+        // Multi-result grid (Nano Banana / Seedream batch). Each tile uses
+        // the configured aspect (every image in a batch shares it) so a
+        // batch of 4 portraits doesn't get smashed into 4 squares.
+        <div className="grid grid-cols-2 gap-1.5">
           {imageUrls.map((url, i) => (
-            <a
+            <MediaPreviewImage
               key={`${url}-${i}`}
-              href={url}
-              target="_blank"
-              rel="noreferrer noopener"
-              onPointerDown={(e) => e.stopPropagation()}
-              className="block overflow-hidden rounded-md bg-foreground/5"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={url}
-                alt={`Generated ${i + 1}`}
-                className="h-full w-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </a>
+              url={url}
+              alt={`Generated ${i + 1}`}
+              aspectRatio={configuredAspect}
+              fit="contain"
+            />
           ))}
         </div>
       ) : (

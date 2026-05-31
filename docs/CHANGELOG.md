@@ -2,6 +2,29 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Media previews: aspect-faithful + standardized resize
+
+The user reported the Fal Image preview cropping outputs to a square ("the running placeholder is square, then the result lands at 16:9 and the silhouette jumps") and asked for a unified resize standard across nodes ("some only horizontal, others both, some proportional"). Both fixed.
+
+**New shared `MediaPreview` primitives** (`src/components/nodes/media-preview.tsx`). Three small components that own the aspect-ratio/object-fit dance for every media node:
+- `MediaPreviewImage` — single image, `object-contain` by default so resizing **never silently crops**. Optional `fit="cover"` for thumbnail-grid affordances. Optional `href` for the click-to-open-in-new-tab pattern, with the canonical `onPointerDown(stopPropagation)` so the canvas doesn't drag the node when the user clicks the preview. `onError` collapses the broken image to `opacity:0` while keeping the wrapper's footprint, so a 404'd image doesn't blow out the layout.
+- `MediaPreviewVideo` — `<video>` with `object-contain` + native controls, defaults to `16/9`. Same pointer-down guard as the image variant.
+- `MediaPreviewPlaceholder` — running/empty state at the **same aspect** as the eventual result, so the spinner doesn't snap to a different shape when the image lands.
+
+**Fal Image — config-driven aspect everywhere.** New `falImageConfiguredAspect(config)` resolves the active aspect ratio from (in order) `customWidth/customHeight` → `imageSize` preset → `aspectRatio` string → `"1 / 1"` fallback. Running placeholder, single result, AND multi-image grid tiles all read from the same source, so the silhouette no longer changes between states. Multi-grid switched to `object-contain` so a batch of portraits in a square tile letterboxes cleanly instead of getting smashed.
+
+**Hunyuan 3D — viewer scales with width.** Replaced fixed `h-[260px]` with `aspect-square` so widening the node grows the orbit camera proportionally (same convention as image/video previews). Running + empty placeholders updated to match.
+
+**Harmonized:** Higgsfield Image Gen, Image (input), Fal Seedance, Fal HeyGen Lipsync all migrated to the new primitives. Test IDs (`higgsfield-running`, `seedance-running`, `heygen-lipsync-result`, etc.) preserved via the new `testId` prop, so existing component tests still assert correct aspects without changes. Image-input switched to `object-contain` so a not-yet-measured image with the 1:1 fallback aspect doesn't crop.
+
+**Resize convention codified** in `NodeSizeSchema`'s docblock (`src/types/node.ts`). The rule, now explicit:
+- **Media nodes** (image, video, mesh, audio waveform) → `resizable: "horizontal"`. Width is user-controlled; height tracks content aspect via the MediaPreview wrapper. Skip `min/maxHeight`.
+- **Text-output nodes** (text, llm-text, text-concat) → `resizable: "both"` with `min/maxHeight` so the body flips to `flex-1 min-h-0 overflow-y-auto` and content scrolls inside the card.
+- **Utility / chrome-only nodes** → omit `size` (or use `"horizontal"` with a tight band).
+- `"vertical"` exists in the type system but is unused — reach for `"both"` first.
+
+**Tests +19:** `media-preview` (default aspect, custom aspect, `contain`-vs-`cover`, error-without-collapse, href semantics, video object-fit + loop/muted, placeholder children); `falImageConfiguredAspect` (every Fal preset → its canonical CSS aspect, custom W×H wins over preset, preset wins over aspect-string, malformed inputs fall back to `1 / 1`).
+
 ## 2026-05-31 — Gallery: stop saving duplicates
 
 The gallery used to insert a fresh row on every successful run with **no content check** — re-running the same prompt after a cache-clear, identical seeds on a stochastic node, even subscriber re-fires from a single `done` emit could all stack identical-looking cards. **No more.**
