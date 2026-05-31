@@ -98,8 +98,23 @@ export async function generateFalImage(
   if (req.aspectRatio && caps.aspectRatios?.includes(req.aspectRatio)) {
     input.aspect_ratio = req.aspectRatio;
   }
-  if (req.imageSize && caps.imageSizes?.includes(req.imageSize)) {
-    input.image_size = req.imageSize;
+  if (req.imageSize !== undefined && caps.imageSizes) {
+    if (typeof req.imageSize === "string") {
+      if (caps.imageSizes.includes(req.imageSize)) {
+        input.image_size = req.imageSize;
+      }
+    } else if (
+      typeof req.imageSize === "object" &&
+      Number.isInteger(req.imageSize.width) &&
+      Number.isInteger(req.imageSize.height) &&
+      req.imageSize.width > 0 &&
+      req.imageSize.height > 0
+    ) {
+      input.image_size = {
+        width: req.imageSize.width,
+        height: req.imageSize.height,
+      };
+    }
   }
   if (req.resolution && caps.resolutions?.includes(req.resolution)) {
     input.resolution = req.resolution;

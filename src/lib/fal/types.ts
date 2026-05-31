@@ -183,6 +183,24 @@ export const SEEDREAM_IMAGE_SIZES = [
   "square_hd", "square", "portrait_4_3", "portrait_16_9",
   "landscape_4_3", "landscape_16_9", "auto_2K", "auto_4K",
 ] as const;
+
+/**
+ * Custom-resolution constraints for the Fal models that accept a
+ * `{ width, height }` object in `image_size` (Flux 2 Pro and Seedream 4.5;
+ * Krea genuinely does not — Fal docs: "Krea returns a fixed-resolution
+ * image per ratio — no width/height"). Seedream additionally enforces
+ * 1920–4096px per axis; Flux is unconstrained beyond positive integers.
+ */
+export const FLUX_CUSTOM_SIZE = {
+  min: 256,
+  max: 2048,
+  default: 1024,
+} as const;
+export const SEEDREAM_CUSTOM_SIZE = {
+  min: 1920,
+  max: 4096,
+  default: 2048,
+} as const;
 export const KREA_ASPECT_RATIOS = [
   "1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16",
 ] as const;
@@ -242,6 +260,16 @@ export const falStyleReferenceSchema = z
 
 export type FalStyleReference = z.infer<typeof falStyleReferenceSchema>;
 
+/** Custom dimensions for `image_size` — Flux 2 Pro, Seedream 4.5. */
+export const falImageCustomSizeSchema = z
+  .object({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  })
+  .strict();
+
+export type FalImageCustomSize = z.infer<typeof falImageCustomSizeSchema>;
+
 export const falImageRequestSchema = z
   .object({
     model: z.enum(FAL_IMAGE_MODELS),
@@ -252,8 +280,8 @@ export const falImageRequestSchema = z
     seed: z.number().int().optional(),
     /** nano-banana / krea. */
     aspectRatio: z.string().optional(),
-    /** flux / seedream. */
-    imageSize: z.string().optional(),
+    /** flux / seedream — preset name OR { width, height }. */
+    imageSize: z.union([z.string(), falImageCustomSizeSchema]).optional(),
     /** nano-banana. */
     resolution: z.string().optional(),
     /** krea. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  migrateFalImageSmartInputs,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -163,5 +164,112 @@ describe("migrateLlmTextSmartInputs", () => {
       true,
     );
     expect((out.nodes[0]!.config as { userPorts?: number }).userPorts).toBe(8);
+  });
+});
+
+describe("migrateFalImageSmartInputs", () => {
+  const fal = (id: string, model?: string): NodeInstance => ({
+    id,
+    kind: "fal-image",
+    position: { x: 0, y: 0 },
+    config: model ? { model } : {},
+  });
+
+  it("spreads legacy `image` edges into numbered image-N sockets", () => {
+    const nodes = [fal("f1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "f1", targetHandle: "image" },
+      { id: "e2", source: "b", sourceHandle: "out", target: "f1", targetHandle: "image" },
+      { id: "e3", source: "c", sourceHandle: "out", target: "f1", targetHandle: "image" },
+    ];
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    expect(out.edges.map((e) => e.targetHandle)).toEqual([
+      "image-0",
+      "image-1",
+      "image-2",
+    ]);
+    const cfg = out.nodes[0]!.config as { imagePorts?: number };
+    // 3 migrated edges + 1 trailing empty slot = 4 ports
+    expect(cfg.imagePorts).toBe(4);
+  });
+
+  it("caps migrated edges at the per-model max (Flux 2 Pro = 8)", () => {
+    const nodes = [fal("f1", "flux-2-pro")];
+    const edges: WorkflowEdge[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `e${i}`,
+      source: `s${i}`,
+      sourceHandle: "out",
+      target: "f1",
+      targetHandle: "image" as const,
+    }));
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    // First 8 get rewritten; the rest stay legacy `image` (engine ignores).
+    expect(out.edges.slice(0, 8).map((e) => e.targetHandle)).toEqual(
+      Array.from({ length: 8 }, (_, i) => `image-${i}`),
+    );
+    expect(out.edges.slice(8).every((e) => e.targetHandle === "image")).toBe(
+      true,
+    );
+    // imagePorts capped at the model's max (8) even though count+1 = 13.
+    expect((out.nodes[0]!.config as { imagePorts?: number }).imagePorts).toBe(8);
+  });
+
+  it("uses the per-node model to set the cap (Nano Banana 2 = 14)", () => {
+    const nodes = [fal("f1", "nano-banana-2")];
+    const edges: WorkflowEdge[] = Array.from({ length: 14 }, (_, i) => ({
+      id: `e${i}`,
+      source: `s${i}`,
+      sourceHandle: "out",
+      target: "f1",
+      targetHandle: "image" as const,
+    }));
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    // All 14 fit within Nano Banana's cap.
+    expect(out.edges.every((e) => /^image-\d+$/.test(e.targetHandle!))).toBe(
+      true,
+    );
+    expect((out.nodes[0]!.config as { imagePorts?: number }).imagePorts).toBe(
+      14,
+    );
+  });
+
+  it("falls back to the default model's cap when config.model is unknown", () => {
+    const nodes = [fal("f1", "unknown-model-id")];
+    const edges: WorkflowEdge[] = Array.from({ length: 16 }, (_, i) => ({
+      id: `e${i}`,
+      source: `s${i}`,
+      sourceHandle: "out",
+      target: "f1",
+      targetHandle: "image" as const,
+    }));
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    // Default fallback is nano-banana-2 (cap 14) — first 14 rewritten.
+    expect(out.edges.slice(0, 14).every((e) =>
+      /^image-\d+$/.test(e.targetHandle!),
+    )).toBe(true);
+    expect(out.edges.slice(14).every((e) => e.targetHandle === "image")).toBe(
+      true,
+    );
+  });
+
+  it("is a no-op when there's nothing to migrate", () => {
+    const nodes = [fal("f1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "f1", targetHandle: "image-0" },
+    ];
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    expect(out.edges).toBe(edges);
+    expect(out.nodes).toBe(nodes);
+  });
+
+  it("ignores graphs without a fal-image node", () => {
+    const nodes: NodeInstance[] = [
+      { id: "t", kind: "text", position: { x: 0, y: 0 }, config: {} },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "t", targetHandle: "image" },
+    ];
+    const out = migrateFalImageSmartInputs(nodes, edges);
+    expect(out.edges).toBe(edges);
   });
 });

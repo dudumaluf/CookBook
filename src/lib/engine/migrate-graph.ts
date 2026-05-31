@@ -168,3 +168,79 @@ export function migrateLlmTextSmartInputs(
   });
   return { nodes: nextNodes, edges: nextEdges };
 }
+
+/**
+ * Per-model max wired image references the Fal Image node accepts in a
+ * single call. Sourced from `FAL_IMAGE_MODEL_CAPS` in `src/lib/fal/types.ts`,
+ * inlined here so this graph-migration module stays free of UI/type imports
+ * (it has to run before the registry is loaded). Keep these in sync with
+ * `editRefs.max` / `styleReferences.max` when caps change.
+ */
+const FAL_IMAGE_MAX_REFS: Record<string, number> = {
+  "nano-banana-2": 14,
+  "flux-2-pro": 8,
+  "seedream-v4.5": 10,
+  "krea-v2-medium": 10,
+  "krea-v2-large": 10,
+};
+const FAL_IMAGE_DEFAULT_MODEL = "nano-banana-2";
+const FAL_IMAGE_MIN_PORTS = 2;
+
+/**
+ * Fal Image moved from a single `image` (multi) handle to numbered
+ * `image-0..N` sockets that auto-grow as you wire (smart inputs). Rewrite
+ * any legacy `image` edge to the next indexed socket (in edge order, capped
+ * at the per-node model's max) and set the node's `imagePorts` so the
+ * sockets render at the right count.
+ */
+export function migrateFalImageSmartInputs(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const falImageIds = new Set(
+    nodes.filter((n) => n.kind === "fal-image").map((n) => n.id),
+  );
+  if (falImageIds.size === 0) return { nodes, edges };
+
+  // Pre-compute each node's max refs from its current `config.model`. Stale
+  // / unknown models fall back to the default's cap so the migration is
+  // deterministic even on hand-edited project files.
+  const maxRefsById = new Map<string, number>();
+  for (const n of nodes) {
+    if (n.kind !== "fal-image") continue;
+    const cfg = (n.config ?? {}) as { model?: string };
+    const model = cfg.model ?? FAL_IMAGE_DEFAULT_MODEL;
+    maxRefsById.set(
+      n.id,
+      FAL_IMAGE_MAX_REFS[model] ?? FAL_IMAGE_MAX_REFS[FAL_IMAGE_DEFAULT_MODEL]!,
+    );
+  }
+
+  const counters = new Map<string, number>();
+  let changed = false;
+  const nextEdges = edges.map((e) => {
+    if (e.targetHandle !== "image" || !falImageIds.has(e.target)) return e;
+    const i = counters.get(e.target) ?? 0;
+    counters.set(e.target, i + 1);
+    const cap = maxRefsById.get(e.target) ?? 0;
+    if (i >= cap) return e; // beyond cap — leave (will be dropped)
+    changed = true;
+    return { ...e, targetHandle: `image-${i}` };
+  });
+  if (!changed) return { nodes, edges };
+
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "fal-image") return n;
+    const count = counters.get(n.id) ?? 0;
+    if (count === 0) return n;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    const cap = maxRefsById.get(n.id) ?? 0;
+    // One trailing empty slot above the migrated count, capped at the
+    // model's max so we don't render a phantom socket the engine would
+    // ignore. Floor at MIN_IMAGE_PORTS so the node never collapses to
+    // a single ref slot post-migration.
+    const ports = Math.min(cap, Math.max(FAL_IMAGE_MIN_PORTS, count + 1));
+    return { ...n, config: { ...cfg, imagePorts: ports } };
+  });
+  return { nodes: nextNodes, edges: nextEdges };
+}

@@ -19,6 +19,7 @@
  */
 
 import {
+  migrateFalImageSmartInputs,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -257,7 +258,8 @@ export function applyProjectDocument(
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
     const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
-    const migrated = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
+    const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
+    const migrated = migrateFalImageSmartInputs(m3.nodes, m3.edges);
     useWorkflowStore.setState({
       nodes: migrated.nodes as never,
       edges: migrated.edges as never,

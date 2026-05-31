@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Fal Image: smart-input image refs (up to 14) + custom width/height
+
+Two paper-cut fixes to the Fal Image node — both surfaced by trying to actually use Nano Banana 2 as a multi-reference compositor.
+
+**Smart-input image sockets.** The single `image` socket (`multiple: true`) is gone — wiring six images into one dot was discoverable only if you already knew the trick. Replaced with auto-growing **`image 1..N`** slots (same pattern as Seedance / LLM Text / Image Concat). Per-call ceilings now match each model's published cap:
+- **Nano Banana 2 Edit → 14 refs** (joint-highest on Fal)
+- **Seedream 4.5 → 10 refs**
+- **Krea v2 (med/large) → 10 style refs**
+- **Flux 2 Pro → 8 refs**
+
+Switching models clamps the slot count to the new ceiling (overflow edges stay in the graph but are ignored at execute time — never silently dropped). Settings popover surfaces "auto-grow up to N" so the cap is visible at a glance. Migration `migrateFalImageSmartInputs` rewrites legacy `image` edges to `image-0..N` in edge order, capped at the per-node model's max; `imagePorts` set to `count + 1` (one trailing empty for the next wire). Wired into both the workflow-store persist chain (v12 → v13) and `applyProjectDocument` so cloud-loaded canvases migrate identically.
+
+**Custom width/height for Flux & Seedream.** Fal docs are explicit: `image_size` accepts a preset string OR a `{ width, height }` object — and Krea genuinely doesn't accept width/height ("returns a fixed-resolution image per ratio"). Settings popover now has a `preset / custom` toggle for **Flux 2 Pro** and **Seedream 4.5**; in custom mode reveals two number inputs constrained to the model's range (Seedream: 1920–4096, Flux: 256–2048 typical). The toggle never appears for Krea so we don't ship knobs the API will silently drop. Request schema widened to `imageSize: string | { width, height }`; server wrapper passes object form through verbatim when valid, falls back to preset when custom dimensions are missing.
+
+**Tests +14** (12 fal-image execute-path: 14-ref Nano, 8-ref Flux cap, port-order collection, preset vs custom image_size for Flux & Seedream, Krea custom-mode no-op, smart-input port derivation, model-max-refs ceiling; 5 migration: Nano 14-cap, Flux 8-cap, unknown-model fallback, no-op, non-fal-image graphs).
+
 ## 2026-05-31 — Text node: inline contenteditable editor with variable chips
 
 Replaced the textarea + separate-preview split with a **single contenteditable editor**: variables render inline as **non-editable colored chips** in the text-data-type blue (matching the socket dots) and the plain text *between* them is fully editable, multi-line, with native paste / select / undo. Edit your prompt naturally with the variables visible right where they belong. Chip identity / sockets / wires are unchanged on toggle — only the chip's label swaps.

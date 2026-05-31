@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import {
+  migrateFalImageSmartInputs,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -307,7 +308,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 12,
+      version: 13,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -591,8 +592,9 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
         const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
         const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
+        const v13 = migrateFalImageSmartInputs(v12.nodes, v12.edges);
 
-        return { ...state, nodes: v12.nodes, edges: v12.edges };
+        return { ...state, nodes: v13.nodes, edges: v13.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.
