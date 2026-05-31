@@ -15,6 +15,7 @@ import { updateNodeConfigTool } from "./construct/update-node-config";
 import { compareResultsTool } from "./eval/compare-results";
 import { evaluateResultTool } from "./eval/evaluate-result";
 import { regenerateTool } from "./eval/regenerate";
+import { analyzeSelectionSubgraphTool } from "./read/analyze-selection-subgraph";
 import { readCanvasTool } from "./read/read-canvas";
 import { readGalleryTool } from "./read/read-gallery";
 import { readLibraryTool } from "./read/read-library";
@@ -90,6 +91,8 @@ const tools: AssistantTool[] = [
   readLibraryTool,
   readGalleryTool,
   readRecipeTool,
+  // Phase 2 — analysis. Selection-scoped subgraph + heuristics.
+  analyzeSelectionSubgraphTool,
   // Slice 7.3 — construct tools. Mutate the workflow graph.
   addNodeTool,
   addEdgeTool,
