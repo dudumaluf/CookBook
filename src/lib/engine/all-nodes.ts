@@ -23,6 +23,7 @@ import { numberNodeSchema } from "@/components/nodes/node-number";
 import { passthroughNodeSchema } from "@/components/nodes/node-passthrough";
 import { videoNodeSchema } from "@/components/nodes/node-video";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
+import { textConcatNodeSchema } from "@/components/nodes/node-text-concat";
 import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
 import { videoAudioMergeNodeSchema } from "@/components/nodes/node-video-audio-merge";
@@ -70,6 +71,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(videoAudioMergeNodeSchema);
   nodeRegistry.register(imageConcatNodeSchema);
+  nodeRegistry.register(textConcatNodeSchema);
   nodeRegistry.register(imageCropNodeSchema);
   nodeRegistry.register(compareNodeSchema);
   nodeRegistry.register(imageIteratorNodeSchema);

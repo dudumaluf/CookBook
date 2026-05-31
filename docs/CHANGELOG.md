@@ -2,6 +2,12 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-30 — Text Concat: join text chunks into one (reactive, smart inputs)
+
+New **Text Concat** node (`text-concat`, *Compose* category): wire two or more text upstreams (Text / LLM Text / List / Array / anywhere a `text` socket emits) → output is the joined string. Reactive — no Run button, output recomputes whenever any wired upstream changes. Same auto-growing socket pattern as Image Concat / Video Concat / LLM Text smart inputs: numbered `text 1..N` ports that grow to "connected + 1" as you wire (cap = 8) so there's always one empty trailing slot for the next plug.
+
+Settings popover ships **six separator presets** — blank line (default), single newline, space, comma+space, em-dash, none — plus a **Custom…** textarea where Enter inserts a real newline (so multi-line dividers like `---\n` work). `skipEmpty` is on by default so a wired-but-blank Text node doesn't strand a separator in the output; opt out for fixed-shape joins where blanks should preserve their column. Mismatched upstreams (e.g. an image landed on a `text-N` socket) are silently skipped rather than crashing. **Tests +12** (schema basics, port-count clamping, separator paths, skip-empty on/off, type-mismatch tolerance, and the pure `joinChunks` helper).
+
 ## 2026-05-30 — LLM Text: smart-input sockets that auto-grow as you wire
 
 `user` and `image` were single multi-handles — three text upstreams meant three edges into the same dot, no visual distinction between them. Now both follow the **Seedance reference / Video Concat clip-N pattern**: numbered `user 1` / `image 1` sockets that grow to `user 2`, `user 3`, … (capped at 8) and `image 2`, `image 3`, … (capped at 9) the moment you wire the last one. `system` stays a single port (only one system prompt makes sense).
