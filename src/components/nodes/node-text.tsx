@@ -590,7 +590,13 @@ function TextNodeBody({
         // selection works inside the editor without panning the canvas.
         onPointerDown={(e) => e.stopPropagation()}
         onWheelCapture={(e) => e.stopPropagation()}
-        className="nowheel block min-h-[60px] w-full flex-1 resize-none whitespace-pre-wrap break-words rounded-b-xl border-0 bg-transparent px-3 pb-2.5 pt-1 text-sm leading-relaxed text-foreground outline-none focus:bg-foreground/5"
+        // `flex-1 min-h-0 overflow-y-auto` keeps the editor inside the
+        // card silhouette (ADR — "card outline is sacred"): when typed
+        // text exceeds the schema's `maxHeight`, the editor scrolls
+        // internally instead of pushing past the card's bottom border.
+        // `nowheel` lets the canvas keep zooming when the cursor is
+        // over the panel but inside-panel wheel scrolls the text.
+        className="nowheel block w-full min-h-0 flex-1 resize-none overflow-y-auto whitespace-pre-wrap break-words rounded-b-xl border-0 bg-transparent px-3 pb-2.5 pt-1 text-sm leading-relaxed text-foreground outline-none focus:bg-foreground/5"
       />
     </div>
   );

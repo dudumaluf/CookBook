@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Card silhouette is sacred: body overflow + Text editor scroll
+
+Two paper-cut fixes, but really one **systemic standard** so we never have to hunt this down per-node again.
+
+**The rule:** *the rounded card silhouette is sacred — body content never pierces it.* Codified in `BaseNode`: the body wrapper now always has `overflow-hidden`. For bounded nodes (those with a schema `maxHeight` — Text, LLM Text, Text Concat) it's the safety net that clips long output cleanly at the bottom border instead of letting it spill past the card. For unbounded nodes (image previews, etc.) it's a no-op — the card grows to fit content, nothing to clip. Nodes that want **internal scrolling** for long content opt in by adding `overflow-y-auto` to their primary content region (LLM Text and Text Concat already did this; the Text node didn't).
+
+**Text node bug fix:** the `contentEditable` editor was missing `overflow-y-auto` + `min-h-0`, so when typed text exceeded the schema's `maxHeight: 480` the editable just expanded past the card's bottom border. Now: `flex-1 min-h-0 overflow-y-auto` on the editor itself — long prompts scroll inside the card silhouette like every other multi-line region. Wheel events still `stopPropagation` so canvas zoom keeps working when the cursor isn't over the editor.
+
+Together these two changes mean: **wherever a node card's lower edge is, that's where its content stops.** Body content can no longer punch through, regardless of the body's pattern (textarea / contenteditable / image grid / multi-output panel). Future nodes get this for free as long as they pass content through `BaseNode`'s `children` slot. Ship a body that wants internal scroll → add `overflow-y-auto` to that region; ship a body that doesn't → BaseNode's silhouette guard already has you covered.
+
 ## 2026-05-31 — Fal Image: smart-input image refs (up to 14) + custom width/height
 
 Two paper-cut fixes to the Fal Image node — both surfaced by trying to actually use Nano Banana 2 as a multi-reference compositor.

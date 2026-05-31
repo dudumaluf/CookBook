@@ -267,12 +267,23 @@ export function BaseNode({
        *  so it can flush textareas / image previews to the card edge.
        *
        *  Wrapper uses `flex-1 min-h-0` *only* when the card has an explicit
-       *  height (user has resized) — that's when we need the body to share
-       *  the leftover space with the header and for any `overflow-auto`
-       *  inside the body to actually scroll. For content-driven cards
-       *  (default), `min-h-0` would let a 0-height body collapse, so we
-       *  keep the wrapper as a plain block. Either way the body sees the
-       *  same `width:100%` semantics.
+       *  height (user has resized) or a schema maxHeight — that's when we
+       *  need the body to share the leftover space with the header and for
+       *  any `overflow-auto` inside the body to actually scroll. For
+       *  content-driven cards (default), `min-h-0` would let a 0-height
+       *  body collapse, so we keep the wrapper as a plain block. Either
+       *  way the body sees the same `width:100%` semantics.
+       *
+       *  `overflow-hidden` is the silhouette guard (ADR — "card outline
+       *  is sacred"): body content NEVER pierces the rounded card border.
+       *  For bounded nodes (Text, LLM Text, Text Concat — `maxHeight`
+       *  set) it clips overflow so a long output gets cleanly cut off
+       *  at the bottom edge instead of spilling visually past the card.
+       *  For unbounded nodes (image previews, etc.) it's a no-op — the
+       *  card grows naturally to fit body content. Bodies that want to
+       *  be scrollable opt in by adding `overflow-y-auto` to their
+       *  primary content region (LLM Text output, Text Concat output,
+       *  Text node editor).
        *
        *  The `nodrag` class is the React Flow native opt-out (recognized
        *  by the lib without any prop config) — every descendant is
@@ -282,7 +293,7 @@ export function BaseNode({
       <div
         data-testid="node-body"
         className={cn(
-          "nodrag flex w-full flex-col",
+          "nodrag flex w-full flex-col overflow-hidden",
           hasBoundedHeight && "min-h-0 flex-1",
         )}
       >
