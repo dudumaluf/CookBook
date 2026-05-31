@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Text node: live preview with colored variable chips + content/names toggle
+
+Building on yesterday's `@variable` references for the Text node. The body now has a **live preview region** under the textarea (only when the body contains `@variables`) that renders the template with **colored chips** in the text-data-type blue (matching the variable socket dots). Wired chips show the upstream's text inline; **unwired or empty-string upstreams fall back to the variable name in a dashed-italic placeholder** — so missing wires are visible at a glance instead of silently going through as literal `@names`.
+
+A tiny `content / names` segmented toggle in the preview header swaps modes. **Content** (default) shows wired upstream values inline — so you immediately see `good Morning` for body `@variable1 Morning` with `"good"` wired in. **Names** shows the `@name` tokens themselves as colored chips so you can read the template structure with the variable boundaries highlighted. Toggle persists in node config (`previewMode: "content" | "names"`) so your choice sticks across reloads.
+
+The preview is reactive — it re-renders the moment any wired upstream's output changes (subscribes to the execution-store records map) or the body text changes. Implementation: a stable serialized signature of incoming `var-*` edges plus a memoized values map keeps re-renders narrow; `color-mix(in oklch, var(--datatype-text) Nx%, transparent)` gives the chip its tinted background and dashed-border placeholder variant without bloating the design tokens. **Tests +8** (preview region presence; content-mode wired vs unwired vs empty-upstream; names-mode chip; toggle dispatch + `aria-selected` accessibility).
+
 ## 2026-05-31 — Text node: `@variable` references → auto-derived input sockets
 
 The Text node body is now a **template**: type `@name` anywhere in the body and a labeled `name` input socket auto-appears on the node. Wire any text upstream into it and every `@name` in the body is substituted on output. So a body of `@variable1 Morning` with a Text node saying `good` wired into the `variable1` socket renders `good Morning`. Unwired references stay **literal** in the output (`@audience` survives) so it's easy to spot what's still missing — no silent string holes. Repeat the same `@name` as many times as you want; each occurrence gets the wired value.
