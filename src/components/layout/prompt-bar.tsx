@@ -19,6 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChatSheet } from "./chat-sheet";
+import { RefactorPreviewModal } from "@/components/assistant/refactor-preview-modal";
 import { PromptReferencePicker } from "./prompt-reference-picker";
 import { useSession } from "@/lib/auth/use-session";
 import { runReasoner } from "@/lib/assistant/reasoner";
@@ -218,6 +219,8 @@ export function PromptBar() {
       style={{ paddingLeft: padLeft, paddingRight: padRight }}
     >
       {chatSheetOpen && <ChatSheet />}
+
+      <RefactorPreviewModal />
 
       {pickerOpen ? (
         <div className="pointer-events-auto">

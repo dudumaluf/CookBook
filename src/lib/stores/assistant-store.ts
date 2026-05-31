@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { ReasonerEvent } from "@/lib/assistant/reasoner";
+import type { PendingRefactor } from "@/lib/assistant/refactor-types";
 import type { AssistantMessage } from "@/lib/assistant/types";
 
 /**
@@ -17,6 +18,10 @@ import type { AssistantMessage } from "@/lib/assistant/types";
  *   3. `pendingQuestion` — populated when the loop hit `ask_user`.
  *      The UI renders the question; the user's next prompt resumes
  *      the loop.
+ *   4. `pendingRefactor` — populated when the reasoner calls
+ *      `propose_refactor`. The RefactorPreviewModal subscribes here
+ *      and renders the pending proposal until the user applies or
+ *      cancels.
  */
 
 interface AssistantState {
@@ -25,6 +30,7 @@ interface AssistantState {
   abortController: AbortController | null;
   liveEvents: ReasonerEvent[];
   pendingQuestion: { question: string; options?: string[] } | null;
+  pendingRefactor: PendingRefactor | null;
 
   appendMessage: (msg: AssistantMessage) => void;
   setThinking: (thinking: boolean) => void;
@@ -34,6 +40,8 @@ interface AssistantState {
   setPendingQuestion: (
     q: { question: string; options?: string[] } | null,
   ) => void;
+  setPendingRefactor: (r: PendingRefactor | null) => void;
+  updatePendingRefactor: (patch: Partial<PendingRefactor>) => void;
   clear: () => void;
 }
 
@@ -43,6 +51,7 @@ export const useAssistantStore = create<AssistantState>()((set) => ({
   abortController: null,
   liveEvents: [],
   pendingQuestion: null,
+  pendingRefactor: null,
 
   appendMessage: (msg) =>
     set((state) => ({ messages: [...state.messages, msg] })),
@@ -52,6 +61,13 @@ export const useAssistantStore = create<AssistantState>()((set) => ({
     set((state) => ({ liveEvents: [...state.liveEvents, e] })),
   resetLive: () => set({ liveEvents: [], pendingQuestion: null }),
   setPendingQuestion: (q) => set({ pendingQuestion: q }),
+  setPendingRefactor: (r) => set({ pendingRefactor: r }),
+  updatePendingRefactor: (patch) =>
+    set((state) => ({
+      pendingRefactor: state.pendingRefactor
+        ? { ...state.pendingRefactor, ...patch }
+        : null,
+    })),
   clear: () =>
     set({
       messages: [],
@@ -59,5 +75,6 @@ export const useAssistantStore = create<AssistantState>()((set) => ({
       abortController: null,
       liveEvents: [],
       pendingQuestion: null,
+      pendingRefactor: null,
     }),
 }));

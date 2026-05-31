@@ -26,6 +26,7 @@ import { narrateTool } from "./reasoning/narrate";
 import { instantiateRecipeTool } from "./recipe/instantiate-recipe";
 import { saveSelectionAsRecipeTool } from "./recipe/save-selection-as-recipe";
 import { unpackCompositeTool } from "./recipe/unpack-composite";
+import { proposeRefactorTool } from "./refactor/propose-refactor";
 import { cancelRunTool } from "./run/cancel-run";
 import { runFromTool } from "./run/run-from";
 import { runWorkflowTool } from "./run/run-workflow";
@@ -105,6 +106,8 @@ const tools: AssistantTool[] = [
   instantiateRecipeTool,
   saveSelectionAsRecipeTool,
   unpackCompositeTool,
+  // Phase 3 — preview-gated bulk refactor.
+  proposeRefactorTool,
   // Slice 7.3 — run tools.
   runWorkflowTool,
   runFromTool,

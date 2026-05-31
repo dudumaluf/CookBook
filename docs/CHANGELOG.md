@@ -2,6 +2,41 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Assistant: analyze + improve a selection (or recipe)
+
+The user asked: *"would be really cool to be able to highlight a selection of nodes... have the assistant analyze inputs, outputs, whatever is relevant... so it can understand what we want and how to do it better."* The infrastructure was 90% there — 28 tools, knowledge bus, selection tracking — so we shipped the missing 10% in three phased slices.
+
+**Phase 1 — auto-inject selection context (no new UI).**
+- New shared slicer at `src/lib/recipes/slice-selection-subgraph.ts`: returns `nodes / internalEdges / boundaryIncoming / boundaryOutgoing / exposedInputs / exposedOutputs / topologicalOrder / kindCounts`. Same logic that lived inline in `save-from-canvas.ts`; both call sites now share one source of truth.
+- New knowledge dimension `buildSelectionKnowledge()` (`src/lib/assistant/knowledge/selection.ts`). Renders the focused subgraph as `## SELECTION (N nodes, M edges, K boundary)` with kinds histogram, topological listing with truncated configs, internal edges, exposed I/O, boundary edges. Honors a soft 6KB token cap with a graceful drop-configs → drop-edges fallback. URLs in config strings get redacted to `[url]`. Auto-skipped on 0/1-node selections.
+- Bundled into `buildKnowledgeBundle()` between Canvas and Library; new `skip.selection` flag on `BuildKnowledgeBundleArgs` for tests + cost-sensitive recursion.
+- New `## ANALYSIS / OPTIMIZATION FLOW` section appended to `REASONER_INSTRUCTIONS`. Five-step contract: UNDERSTAND → CRITIQUE → PROPOSE → WAIT → APPLY. Tells the reasoner explicitly NOT to mutate the graph in the analysis turn, and to route confirmed mutations through `propose_refactor` (Phase 3).
+
+**After Phase 1:** select your system-prompt-generator subgraph, ask *"how could it be simpler?"* — assistant narrates exactly what it does + suggests changes, no surprises.
+
+**Phase 2 — `analyze_selection_subgraph` tool.**
+New deterministic-findings read tool at `src/lib/assistant/tools/read/analyze-selection-subgraph.ts`. Args `{ nodeIds?: string[] }` (defaults to selection). Returns the slice + a `findings` block:
+- `redundantTextChains` — 2+ Text nodes feeding the SAME consumer socket (suggests Text Concat).
+- `deadEndOutputs` — non-reactive output handles nothing reads.
+- `singleUseScaffolding` — sourceless trivial-config nodes feeding exactly one consumer.
+- `exposableParams` — configs that diverge from `defaultConfig` on schemas with declared `configParams` (recipe-param candidates).
+- `estimatedRecipeSurface: { inputs, outputs, params }` — quick "is this recipe-shaped?" read.
+
+Heuristics are deterministic; the reasoner converts findings to prose. No LLM call inside the tool.
+
+**Phase 3 — `propose_refactor` + RefactorPreviewModal (the safety gate).**
+New refactor DSL at `src/lib/assistant/refactor-types.ts`: discriminated-union ops (`add_node | remove_node | update_node_config | move_node | add_edge | remove_edge`) with cross-op `clientId` references so `add_edge` can target a node added in the same proposal.
+
+`propose_refactor` tool (`src/lib/assistant/tools/refactor/propose-refactor.ts`) writes `{ summary, operations, status: "pending" }` to a new `pendingRefactor` field on `useAssistantStore` and returns `"Proposal queued. Awaiting user confirmation."` — reasoner stops calling tools and writes its final message.
+
+`RefactorPreviewModal` (`src/components/assistant/refactor-preview-modal.tsx`) subscribes to `pendingRefactor` and renders the proposal as a diff: summary header, color-coded op list (green plus / red trash / amber arrow), three buttons (**Apply all**, **Cancel**, **Edit in chat**). Mounted at `prompt-bar.tsx` scope so it stays reachable even when the chat sheet is closed.
+
+`refactor-apply.ts` is the apply-path dispatcher: snapshot the workflow store, dispatch each op via direct store calls (NOT through the tool surface — saves a round-trip + Zod re-validation), roll back to snapshot on the first failure. `applyPendingRefactor()` flips status pending → applying → applied / failed for the modal to render.
+
+**Tests +56:** `slice-selection-subgraph` (8), `selection.test.ts` (8), bundle-integration extension (3), `analyze-selection-subgraph` (15), `propose-refactor` (8), `refactor-apply` (11), `refactor-preview-modal` (9). All 1303 existing tests still pass.
+
+**Reasoner cost cap unchanged** at $0.50 / 20 turns. The propose/apply gate means the assistant CANNOT mutate the graph during an analysis conversation — every refactor flows through the modal. No auto-apply.
+
 ## 2026-05-31 — Recipe save dialog: header / footer pin, body scrolls
 
 Reported by the user: saving a 14-node selection as a recipe produced a confirmation dialog with 12 inputs + 2 outputs + N controls — the dialog grew taller than the viewport and **clipped the Save / Cancel buttons** off the bottom edge. No way to commit without zooming the browser out.
