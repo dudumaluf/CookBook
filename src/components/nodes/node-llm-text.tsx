@@ -28,11 +28,15 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  *     executed text on `done` / `cached`, or a one-line placeholder
  *     otherwise. Nothing else — no inline prompts, no settings sprawl.
  *   - Three input handles wired through external Text / Image nodes:
- *       • `user`   — text, `multiple:true`. Concatenated upstream chunks
- *         become one prompt (blank-line separated).
+ *       • `user`   — text, single. The user prompt. Wire a single Text
+ *         node (use Text Concat upstream if you want to combine many).
  *       • `system` — text, single.
- *       • `image`  — image, `multiple:true`. When ≥1 image is wired the
- *         server routes to `openrouter/router/vision` automatically.
+ *       • `image-N` — image, auto-growing numbered sockets. The body
+ *         monitors connected `image-N` edges and bumps the count to
+ *         `connectedCount + 1` so there's always one empty trailing
+ *         slot to wire next, capped by `MAX_IMAGE_PORTS`. When ≥1
+ *         image is wired the server routes to `openrouter/router/vision`
+ *         automatically.
  *   - Settings (temperature / max tokens / reasoning) live behind the
  *     standardized `⋯` trigger BaseNode renders in the top-right of the
  *     header (ADR-0027). This file owns the *content* of that popover
@@ -75,48 +79,36 @@ export interface LLMTextNodeConfig {
    */
   reasoning?: boolean;
   /**
-   * Smart-input port counts (auto-grow). The body bumps these to
-   * `connectedCount + 1` so the user always has one empty trailing
-   * socket per type to wire next, capped by `MAX_USER_PORTS` /
-   * `MAX_IMAGE_PORTS`. Schema-default is `1` (one empty socket each).
+   * Image port count (auto-grow). The body bumps this to `connectedCount
+   * + 1` so the user always has one empty trailing image socket to wire
+   * next, capped by `MAX_IMAGE_PORTS`. Schema-default is `1` (one empty
+   * image socket).
    *
-   * `system` stays a single port — only one system prompt makes sense.
+   * `user` and `system` stay single ports — combining many user prompts
+   * is what the Text Concat node is for.
    */
-  userPorts?: number;
   imagePorts?: number;
 }
 
 /**
- * Caps for the smart-input pattern. Nine images mirrors the Seedance
- * reference cap (and Anthropic / OpenAI vision payloads handle that many
- * fine); eight user-text slots is plenty for "system / persona / context /
- * task / examples / question" style prompts and stops the node from
- * growing into a forest if the user wires every output on the canvas.
+ * Cap for the smart-input image pattern. Nine images mirrors the
+ * Seedance reference cap (and Anthropic / OpenAI vision payloads handle
+ * that many fine); stops the node from growing into a forest if the user
+ * wires every image output on the canvas.
  */
-export const MAX_USER_PORTS = 8;
 export const MAX_IMAGE_PORTS = 9;
 
 /**
- * Build the dynamic input list from the (auto-growing) port counts.
- * Order: user-0..N → system → image-0..N. Matches the original static
- * order so visually nothing jumps when the node migrates.
- *
- * Labels are always indexed (`user 1`, `image 1`) — same convention as
- * Video Concat / Seedance reference mode — so the body's "connect the
- * last to grow another" affordance reads consistently across nodes.
+ * Build the dynamic input list. `user` and `system` are single sockets;
+ * only the image slots auto-grow. Order matches the visual stack:
+ * user → system → image-0..N.
  */
 function smartInputs(config: LLMTextNodeConfig): NodeIO[] {
-  const userN = Math.min(MAX_USER_PORTS, Math.max(1, config.userPorts ?? 1));
   const imageN = Math.min(MAX_IMAGE_PORTS, Math.max(1, config.imagePorts ?? 1));
-  const inputs: NodeIO[] = [];
-  for (let i = 0; i < userN; i++) {
-    inputs.push({
-      id: `user-${i}`,
-      label: `user ${i + 1}`,
-      dataType: "text",
-    });
-  }
-  inputs.push({ id: "system", label: "system", dataType: "text" });
+  const inputs: NodeIO[] = [
+    { id: "user", label: "user", dataType: "text" },
+    { id: "system", label: "system", dataType: "text" },
+  ];
   for (let i = 0; i < imageN; i++) {
     inputs.push({
       id: `image-${i}`,
@@ -179,43 +171,36 @@ function LLMTextNodeBody({
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const history = record?.history ?? [];
 
-  // Auto-grow smart-input sockets. Track the highest connected `user-N` and
-  // `image-N` index (per type) as a STABLE string snapshot so the workflow
-  // selector's equality check stays stable (returning a fresh object would
-  // loop, React #185). Then keep one empty trailing socket up to each cap
-  // so the user always has somewhere to wire next.
-  const connectedKey = useWorkflowStore((s) => {
-    let maxUser = -1;
-    let maxImage = -1;
+  // Auto-grow image smart-input sockets. Track the highest connected
+  // `image-N` index as a STABLE primitive so the workflow selector's
+  // equality check stays stable (returning a fresh object would loop,
+  // React #185). Then keep one empty trailing socket up to `MAX_IMAGE_PORTS`
+  // so the user always has somewhere to wire the next image. `user` and
+  // `system` are single sockets and don't auto-grow.
+  const connectedImageMax = useWorkflowStore((s) => {
+    let max = -1;
     for (const e of s.edges) {
       if (e.target !== nodeId || !e.targetHandle) continue;
-      if (e.targetHandle.startsWith("user-")) {
-        const idx = Number(e.targetHandle.slice("user-".length));
-        if (Number.isFinite(idx)) maxUser = Math.max(maxUser, idx);
-      } else if (e.targetHandle.startsWith("image-")) {
+      if (e.targetHandle.startsWith("image-")) {
         const idx = Number(e.targetHandle.slice("image-".length));
-        if (Number.isFinite(idx)) maxImage = Math.max(maxImage, idx);
+        if (Number.isFinite(idx)) max = Math.max(max, idx);
       }
     }
-    return `${maxUser},${maxImage}`;
+    return max;
   });
   useEffect(() => {
-    const [mu, mi] = connectedKey.split(",").map(Number) as [number, number];
-    const wantUserPorts = Math.min(MAX_USER_PORTS, Math.max(1, mu + 2));
-    const wantImagePorts = Math.min(MAX_IMAGE_PORTS, Math.max(1, mi + 2));
-    const haveUserPorts = Math.min(
-      MAX_USER_PORTS,
-      Math.max(1, config.userPorts ?? 1),
+    const wantImagePorts = Math.min(
+      MAX_IMAGE_PORTS,
+      Math.max(1, connectedImageMax + 2),
     );
     const haveImagePorts = Math.min(
       MAX_IMAGE_PORTS,
       Math.max(1, config.imagePorts ?? 1),
     );
-    const patch: Partial<LLMTextNodeConfig> = {};
-    if (haveUserPorts !== wantUserPorts) patch.userPorts = wantUserPorts;
-    if (haveImagePorts !== wantImagePorts) patch.imagePorts = wantImagePorts;
-    if (Object.keys(patch).length > 0) updateConfig(patch);
-  }, [connectedKey, config.userPorts, config.imagePorts, updateConfig]);
+    if (haveImagePorts !== wantImagePorts) {
+      updateConfig({ imagePorts: wantImagePorts });
+    }
+  }, [connectedImageMax, config.imagePorts, updateConfig]);
 
   // Slice 5.8 — history cursor (view-only). Defaults to the latest
   // entry; user navigates with the cursor chip below the model chip.
@@ -589,18 +574,13 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
   // Executable (not reactive) — only runs when the user clicks Run.
   reactive: false,
   execute: async ({ config, inputs, signal }) => {
-    // user-0..N: collect each wired socket's text in port order, drop
-    // empty/whitespace, then join with blank lines (matches what most
-    // LLM chat APIs do when concatenating context blocks).
-    const userChunks: string[] = [];
-    for (let i = 0; i < MAX_USER_PORTS; i++) {
-      const chunk = extractInputByType(inputs, `user-${i}`, "text");
-      if (chunk && chunk.trim().length > 0) userChunks.push(chunk.trim());
-    }
-    const user = userChunks.join("\n\n").trim();
-
-    // system: single value. We accept arrays defensively (multi-edge could
-    // be introduced later) but only use the first.
+    // user / system: single text inputs. The original multi-edge
+    // concatenation lived in this node before the smart-input rollback
+    // — it's now Text Concat's job upstream if the user wants to combine
+    // multiple text sources into one prompt.
+    const user = (
+      extractInputByType(inputs, "user", "text") ?? ""
+    ).trim();
     const system = (
       extractInputByType(inputs, "system", "text") ?? ""
     ).trim();
@@ -616,7 +596,7 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
 
     if (user.length === 0) {
       throw new Error(
-        "User prompt is empty — wire a Text node into a `user` socket.",
+        "User prompt is empty — wire a Text node into the `user` socket.",
       );
     }
 

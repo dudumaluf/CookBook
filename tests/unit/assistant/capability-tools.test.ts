@@ -115,13 +115,13 @@ describe("detect_recipe_pattern tool", () => {
       source: a1,
       sourceHandle: "out",
       target: a2,
-      targetHandle: "user-0",
+      targetHandle: "user",
     });
     ws.addEdge({
       source: b1,
       sourceHandle: "out",
       target: b2,
-      targetHandle: "user-0",
+      targetHandle: "user",
     });
     const tool = getTool("detect_recipe_pattern")!;
     const out = (await tool.execute({}, {})) as {
@@ -142,7 +142,7 @@ describe("detect_recipe_pattern tool", () => {
       source: a1,
       sourceHandle: "out",
       target: a2,
-      targetHandle: "user-0",
+      targetHandle: "user",
     });
     const tool = getTool("detect_recipe_pattern")!;
     const out = (await tool.execute({ minOccurrences: 3 }, {})) as {

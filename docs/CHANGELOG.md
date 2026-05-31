@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — LLM Text: roll back user smart-input to a single socket
+
+Course-correction on yesterday's smart-input slice. The LLM Text node briefly got auto-growing `user-0..N` sockets alongside the image ones — but combining many text chunks is what the **Text Concat node** is for, and a chat call really only has one user prompt + one system prompt. Rolling back to a single `user` socket keeps the node's mental model honest: *one user, one system, many images*.
+
+**Schema:** `user` and `system` are single-text inputs. `image-0..N` stays auto-growing (capped at 9 — Anthropic / OpenAI vision payloads handle that fine). Body's auto-grow effect now tracks only the highest connected `image-N` index and bumps `imagePorts` to `connected + 1`. `execute()` reads a single trimmed `user` from the socket; "user prompt empty" still fails fast before the network call so a misconfigured node can't burn a Fal request.
+
+**Migration `migrateLlmTextCollapseUserPorts` (workflow-store v13 → v14, also wired into `applyProjectDocument`).** Lowest-rank `user-N` wins (or first `user` legacy multi if both shapes co-exist) and is renamed to `user`; the rest of the user-related edges drop. Stale `userPorts` strips off node configs whether or not edges changed so persisted projects don't carry the dead field forever. Idempotent — graphs already at the post-rollback shape pass through untouched.
+
+**Tests:** rewrote `tests/component/nodes/node-llm-text.test.tsx` to assert the new shape (`["user", "system", "image-0"]`, `getInputs` only varies images), simpler execute paths (single user + image-N), and dropped the multi-chunk-concat tests (now Text Concat's job). Added `migrateLlmTextCollapseUserPorts` test block (+6 cases): collapse `user-N`, collapse legacy multi `user`, `user`-wins-over-`user-0` defensive case, system/image-N untouched, strip-`userPorts`-with-no-user-edges, no-op cases. Reverted recipe / assistant / integration tests that had been migrated to `user-0` back to `user` (auto-detect-io, unpack-composite, capability-tools, knowledge, recipe-soul-image-burst).
+
 ## 2026-05-31 — Card silhouette is sacred: body overflow + Text editor scroll
 
 Two paper-cut fixes, but really one **systemic standard** so we never have to hunt this down per-node again.

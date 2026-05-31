@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   migrateFalImageSmartInputs,
+  migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -273,3 +274,117 @@ describe("migrateFalImageSmartInputs", () => {
     expect(out.edges).toBe(edges);
   });
 });
+
+describe("migrateLlmTextCollapseUserPorts (v14 — single-user rollback)", () => {
+  const llm = (
+    id: string,
+    extraConfig: Record<string, unknown> = {},
+  ): NodeInstance => ({
+    id,
+    kind: "llm-text",
+    position: { x: 0, y: 0 },
+    config: { model: "openai/gpt-5", ...extraConfig },
+  });
+
+  it("collapses `user-N` smart-input edges back to a single `user`", () => {
+    const nodes = [llm("l1", { userPorts: 3 })];
+    const edges: WorkflowEdge[] = [
+      // Lowest index wins; the rest get dropped (with a stale userPorts
+      // strip on the node config so persisted projects don't carry the
+      // dead field forever).
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user-0" },
+      { id: "e1", source: "b", sourceHandle: "out", target: "l1", targetHandle: "user-1" },
+      { id: "e2", source: "c", sourceHandle: "out", target: "l1", targetHandle: "user-2" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges).toHaveLength(1);
+    expect(out.edges[0]!.id).toBe("e0");
+    expect(out.edges[0]!.targetHandle).toBe("user");
+    // userPorts gets stripped — the field is meaningless under the
+    // single-user schema and lingering on persisted projects is just cruft.
+    expect(out.nodes[0]!.config).toEqual({ model: "openai/gpt-5" });
+  });
+
+  it("treats legacy `user` (multi) the same way — picks the first encountered, drops the rest", () => {
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      // Same-rank ties broken by encounter order (Map.set semantics).
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user" },
+      { id: "e1", source: "b", sourceHandle: "out", target: "l1", targetHandle: "user" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges).toHaveLength(1);
+    expect(out.edges[0]!.id).toBe("e0");
+    expect(out.edges[0]!.targetHandle).toBe("user");
+  });
+
+  it("`user` (legacy multi) wins over `user-N` when both are present", () => {
+    // This is a defensive case — a v11 canvas + a hand-edited v12-style
+    // edge co-existing. We rank `user`=0 < `user-0`=1 so the legacy edge
+    // wins and the numbered ones drop.
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user-0" },
+      { id: "e1", source: "b", sourceHandle: "out", target: "l1", targetHandle: "user" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges).toHaveLength(1);
+    expect(out.edges[0]!.id).toBe("e1");
+    expect(out.edges[0]!.targetHandle).toBe("user");
+  });
+
+  it("leaves system + image-N edges alone (only touches user-related handles)", () => {
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user-0" },
+      { id: "e1", source: "b", sourceHandle: "out", target: "l1", targetHandle: "system" },
+      { id: "e2", source: "c", sourceHandle: "out", target: "l1", targetHandle: "image-0" },
+      { id: "e3", source: "d", sourceHandle: "out", target: "l1", targetHandle: "image-1" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges.map((e) => e.targetHandle)).toEqual([
+      "user",
+      "system",
+      "image-0",
+      "image-1",
+    ]);
+  });
+
+  it("strips stale `userPorts` even when there are no user edges to rewrite", () => {
+    const nodes = [llm("l1", { userPorts: 4, imagePorts: 2 })];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "image-0" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    // Edges untouched — only the config got cleaned.
+    expect(out.edges).toEqual(edges);
+    expect(out.nodes[0]!.config).toEqual({
+      model: "openai/gpt-5",
+      imagePorts: 2,
+    });
+  });
+
+  it("is a no-op for graphs with no llm-text node", () => {
+    const nodes: NodeInstance[] = [
+      { id: "t", kind: "text", position: { x: 0, y: 0 }, config: {} },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", source: "a", sourceHandle: "out", target: "t", targetHandle: "user" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges).toBe(edges);
+    expect(out.nodes).toBe(nodes);
+  });
+
+  it("is a no-op when the llm-text already has the post-rollback shape", () => {
+    const nodes = [llm("l1")];
+    const edges: WorkflowEdge[] = [
+      { id: "e0", source: "a", sourceHandle: "out", target: "l1", targetHandle: "user" },
+      { id: "e1", source: "b", sourceHandle: "out", target: "l1", targetHandle: "system" },
+    ];
+    const out = migrateLlmTextCollapseUserPorts(nodes, edges);
+    expect(out.edges).toBe(edges);
+    expect(out.nodes).toBe(nodes);
+  });
+});
+

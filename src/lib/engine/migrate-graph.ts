@@ -244,3 +244,89 @@ export function migrateFalImageSmartInputs(
   });
   return { nodes: nextNodes, edges: nextEdges };
 }
+
+/**
+ * LLM Text user prompt is now a single socket (rolled back from the
+ * smart-input pattern — combining many user texts is what the Text Concat
+ * node is for). The earlier v12 migration split legacy `user` (multi)
+ * edges into numbered `user-0..N` sockets; we now collapse those back to
+ * a single `user`. Lowest-index `user-N` wins (or first `user` edge if a
+ * pre-v12 canvas slipped through somehow); the rest of the user edges
+ * are dropped. Also strips any stale `userPorts` from the config so
+ * project files don't carry the now-unused field forever.
+ */
+export function migrateLlmTextCollapseUserPorts(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const llmTextIds = new Set(
+    nodes.filter((n) => n.kind === "llm-text").map((n) => n.id),
+  );
+  if (llmTextIds.size === 0) return { nodes, edges };
+
+  // Pass 1 — find each node's "winning" user edge by rank. `user`
+  // (legacy multi from pre-v12 canvases) ranks 0; `user-0` ranks 1;
+  // `user-1` ranks 2; ... ties broken by first encountered.
+  const userEdgeRank = (handle: string): number => {
+    if (handle === "user") return 0;
+    if (handle.startsWith("user-")) {
+      const n = Number(handle.slice("user-".length));
+      return Number.isFinite(n) ? n + 1 : Number.POSITIVE_INFINITY;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+  const winningId = new Map<string, string>();
+  const winningRank = new Map<string, number>();
+  for (const e of edges) {
+    if (!llmTextIds.has(e.target)) continue;
+    const rank = userEdgeRank(e.targetHandle ?? "");
+    if (!Number.isFinite(rank)) continue;
+    const currentRank = winningRank.get(e.target);
+    if (currentRank === undefined || rank < currentRank) {
+      winningRank.set(e.target, rank);
+      winningId.set(e.target, e.id);
+    }
+  }
+
+  // Pass 2 — keep each winning edge (renamed to `user` if numbered),
+  // drop the rest of the user-related edges. Non-user edges and
+  // edges to other nodes pass through untouched.
+  let changed = false;
+  const nextEdges: WorkflowEdge[] = [];
+  for (const e of edges) {
+    const isLlmTarget = llmTextIds.has(e.target);
+    const handle = e.targetHandle ?? "";
+    const isUserHandle = handle === "user" || handle.startsWith("user-");
+
+    if (!isLlmTarget || !isUserHandle) {
+      nextEdges.push(e);
+      continue;
+    }
+    if (winningId.get(e.target) !== e.id) {
+      changed = true;
+      continue;
+    }
+    if (handle !== "user") {
+      changed = true;
+      nextEdges.push({ ...e, targetHandle: "user" });
+    } else {
+      nextEdges.push(e);
+    }
+  }
+
+  // Strip `userPorts` from llm-text node configs whether or not we
+  // touched any edge — the field is meaningless under the new schema
+  // and lingering on project documents would just be cruft.
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "llm-text") return n;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    if (!("userPorts" in cfg)) return n;
+    changed = true;
+    const next = { ...cfg };
+    delete next.userPorts;
+    return { ...n, config: next };
+  });
+
+  if (!changed) return { nodes, edges };
+  return { nodes: nextNodes, edges: nextEdges };
+}

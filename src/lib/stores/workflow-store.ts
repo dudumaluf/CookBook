@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import {
   migrateFalImageSmartInputs,
+  migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -308,7 +309,7 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 13,
+      version: 14,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -585,7 +586,11 @@ export const useWorkflowStore = create<WorkflowState>()(
         // `clip-N` sockets. v11 (ADR-0058): Seedance reference image/video/
         // audio multi-handles → numbered per-type sockets. v12: LLM Text
         // `user` + `image` multi-handles → numbered `user-N` / `image-N`
-        // smart-input sockets that auto-grow as the user wires them.
+        // smart-input sockets. v13: Fal Image `image` multi-handle →
+        // numbered `image-N` smart-input sockets. v14: LLM Text user
+        // smart-input rolled back — `user-N` collapses back to a single
+        // `user` socket (Text Concat is the right primitive for combining
+        // many texts upstream); image stays auto-growing.
         const v10 = migrateVideoConcatClips(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
@@ -593,8 +598,13 @@ export const useWorkflowStore = create<WorkflowState>()(
         const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
         const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
         const v13 = migrateFalImageSmartInputs(v12.nodes, v12.edges);
+        // v14: collapse `user-N` smart-input sockets back to a single
+        // `user` (ADR follow-up — combining many user texts is what the
+        // Text Concat node is for, so the LLM Text node only ever needs
+        // one user prompt + one system prompt + the image array).
+        const v14 = migrateLlmTextCollapseUserPorts(v13.nodes, v13.edges);
 
-        return { ...state, nodes: v13.nodes, edges: v13.edges };
+        return { ...state, nodes: v14.nodes, edges: v14.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

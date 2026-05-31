@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
-// Mock the LLM client BEFORE importing the node schema so the import
-// graph picks up the mock at module-evaluation time.
 vi.mock("@/lib/llm/call-openrouter", () => ({
   callOpenRouter: vi.fn(),
 }));
@@ -40,37 +38,37 @@ beforeEach(() => {
 });
 
 describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
-  it("has the smart-input schema: user-0 + system + image-0; config carries port counts; no Properties slot", () => {
+  it("schema: single user + single system + auto-growing image-N; no Properties slot", () => {
     expect(llmTextNodeSchema.kind).toBe("llm-text");
     expect(llmTextNodeSchema.category).toBe("ai-text");
     expect(llmTextNodeSchema.reactive).toBe(false);
 
-    // Static `inputs` covers the initial port count (one user + one image)
-    // so a fresh node renders with `user 1` / `system` / `image 1`. The
-    // dynamic shape lives on `getInputs(config)`.
+    // Static `inputs` covers the initial port count (one image) so a
+    // fresh node renders with `user` / `system` / `image 1`. The dynamic
+    // shape lives on `getInputs(config)` and only varies the image
+    // count — `user` and `system` are always single sockets.
     const inputs = llmTextNodeSchema.inputs;
-    expect(inputs.map((i) => i.id)).toEqual(["user-0", "system", "image-0"]);
-    expect(inputs.find((i) => i.id === "user-0")?.dataType).toBe("text");
-    expect(inputs.find((i) => i.id === "user-0")?.multiple).toBeFalsy();
+    expect(inputs.map((i) => i.id)).toEqual(["user", "system", "image-0"]);
+    expect(inputs.find((i) => i.id === "user")?.dataType).toBe("text");
+    expect(inputs.find((i) => i.id === "user")?.multiple).toBeFalsy();
     expect(inputs.find((i) => i.id === "system")?.dataType).toBe("text");
     expect(inputs.find((i) => i.id === "system")?.multiple).toBeFalsy();
     expect(inputs.find((i) => i.id === "image-0")?.dataType).toBe("image");
     expect(inputs.find((i) => i.id === "image-0")?.multiple).toBeFalsy();
 
-    // `getInputs` expands as the user wires more sockets — body's
-    // auto-grow effect bumps `userPorts` / `imagePorts` to "connected + 1".
+    // `getInputs` only expands the image count — body's auto-grow effect
+    // bumps `imagePorts` to "connected + 1". `user` and `system` stay
+    // single (combine multiple texts upstream with the Text Concat node).
     const grown = llmTextNodeSchema.getInputs!({
       model: "x",
-      userPorts: 3,
-      imagePorts: 2,
+      imagePorts: 3,
     } as never);
     expect(grown.map((i) => i.id)).toEqual([
-      "user-0",
-      "user-1",
-      "user-2",
+      "user",
       "system",
       "image-0",
       "image-1",
+      "image-2",
     ]);
 
     expect(llmTextNodeSchema.outputs[0]?.dataType).toBe("text");
@@ -179,13 +177,9 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
           />,
         ),
       );
-      // Inline error replaces the placeholder so the user doesn't have to
-      // hover the status chip to find out what broke.
       const alert = screen.getByRole("alert");
       expect(alert).toHaveTextContent(/rate limited/);
-      // Placeholder copy must NOT be present alongside an error.
       expect(screen.queryByText(/connect/i)).not.toBeInTheDocument();
-      // Model chip remains visible so a retry with a different model is one click.
       expect(screen.getByText("GPT-5")).toBeInTheDocument();
       _resetExecutionForTests();
     });
@@ -242,7 +236,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       expect(mockedCall).not.toHaveBeenCalled();
     });
 
-    it("sends a single user upstream and returns the rich { output, usage } shape", async () => {
+    it("sends the wired user prompt and returns the rich { output, usage } shape", async () => {
       mockedCall.mockResolvedValueOnce({
         text: "real LLM response",
         model: "test/m",
@@ -255,7 +249,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       const result = await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m" },
-        inputs: { "user-0": { type: "text", value: "hello world" } },
+        inputs: { user: { type: "text", value: "hello world" } },
         signal,
       });
 
@@ -267,8 +261,6 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
         images: undefined,
         signal,
       });
-      // Rich return: { output, usage } — runner extracts usage into the
-      // ExecutionRecord so the Queue panel can surface cost / tokens.
       expect(result).toEqual({
         output: { type: "text", value: "real LLM response" },
         usage: {
@@ -280,41 +272,38 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       });
     });
 
-    it("joins multiple user upstreams (one per smart-input socket) with blank lines and forwards system", async () => {
+    it("forwards system prompt when wired", async () => {
       mockedCall.mockResolvedValueOnce({ text: "ok", model: "test/m" });
 
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m" },
         inputs: {
-          "user-0": { type: "text", value: "chunk one" },
-          "user-1": { type: "text", value: "chunk two" },
+          user: { type: "text", value: "tell me a joke" },
           system: { type: "text", value: "you are helpful" },
         },
         signal: new AbortController().signal,
       });
 
       const args = mockedCall.mock.calls[0]![0];
-      expect(args.user).toBe("chunk one\n\nchunk two");
+      expect(args.user).toBe("tell me a joke");
       expect(args.system).toBe("you are helpful");
     });
 
-    it("strips empty/whitespace user chunks across smart-input sockets", async () => {
+    it("trims whitespace from the user prompt", async () => {
       mockedCall.mockResolvedValueOnce({ text: "ok", model: "test/m" });
 
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m" },
         inputs: {
-          "user-0": { type: "text", value: "   " },
-          "user-1": { type: "text", value: "real content" },
-          "user-2": { type: "text", value: "" },
+          user: { type: "text", value: "  hello world  \n" },
         },
         signal: new AbortController().signal,
       });
 
       const args = mockedCall.mock.calls[0]![0];
-      expect(args.user).toBe("real content");
+      expect(args.user).toBe("hello world");
     });
 
     it("forwards image URLs (vision endpoint) when images are wired across smart-input sockets", async () => {
@@ -324,7 +313,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
         nodeId: "x",
         config: { model: "test/m" },
         inputs: {
-          "user-0": { type: "text", value: "describe these" },
+          user: { type: "text", value: "describe these" },
           "image-0": { type: "image", value: { url: "https://example.com/a.png" } },
           "image-1": { type: "image", value: { url: "https://example.com/b.png" } },
         },
@@ -344,7 +333,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m" },
-        inputs: { "user-0": { type: "text", value: "go" } },
+        inputs: { user: { type: "text", value: "go" } },
         signal: new AbortController().signal,
       });
 
@@ -363,7 +352,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
         llmTextNodeSchema.execute!({
           nodeId: "x",
           config: { model: "test/m" },
-          inputs: { "user-0": { type: "text", value: "go" } },
+          inputs: { user: { type: "text", value: "go" } },
           signal: new AbortController().signal,
         }),
       ).rejects.toMatchObject({ name: "AbortError" });
@@ -378,7 +367,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
         llmTextNodeSchema.execute!({
           nodeId: "x",
           config: { model: "test/m" },
-          inputs: { "user-0": { type: "text", value: "go" } },
+          inputs: { user: { type: "text", value: "go" } },
           signal: new AbortController().signal,
         }),
       ).rejects.toThrow(/rate limited/);
@@ -391,7 +380,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m", temperature: 0.3 },
-        inputs: { "user-0": { type: "text", value: "go" } },
+        inputs: { user: { type: "text", value: "go" } },
         signal: new AbortController().signal,
       });
       expect(mockedCall.mock.calls[0]![0].temperature).toBe(0.3);
@@ -402,7 +391,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m", maxTokens: 1500 },
-        inputs: { "user-0": { type: "text", value: "go" } },
+        inputs: { user: { type: "text", value: "go" } },
         signal: new AbortController().signal,
       });
       expect(mockedCall.mock.calls[0]![0].maxTokens).toBe(1500);
@@ -416,7 +405,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
           model: "google/gemini-2.5-pro",
           reasoning: true,
         },
-        inputs: { "user-0": { type: "text", value: "go" } },
+        inputs: { user: { type: "text", value: "go" } },
         signal: new AbortController().signal,
       });
       expect(mockedCall.mock.calls[0]![0].reasoning).toBe(true);
@@ -427,7 +416,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       await llmTextNodeSchema.execute!({
         nodeId: "x",
         config: { model: "test/m" },
-        inputs: { "user-0": { type: "text", value: "go" } },
+        inputs: { user: { type: "text", value: "go" } },
         signal: new AbortController().signal,
       });
       const args = mockedCall.mock.calls[0]![0];
@@ -439,12 +428,6 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
 
   /* ──────────────────────────────────────────────────────────────────── */
   /* Settings (ADR-0026 + ADR-0027)                                       */
-  /*                                                                      */
-  /* The settings *content* is owned here; the standardized `⋯` trigger   */
-  /* + popover wrapper are owned by BaseNode (covered in                  */
-  /* `base-node.test.tsx`). Rendering Content directly keeps these tests  */
-  /* narrow and avoids the Base UI portal flakiness we worked around      */
-  /* when the trigger lived in the body.                                  */
   /* ──────────────────────────────────────────────────────────────────── */
 
   describe("schema.settings — slot wired to the BaseNode trigger", () => {
@@ -489,9 +472,6 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
     });
 
     it("hasOverrides returns false when reasoning is explicitly false (treated as default)", () => {
-      // reasoning:false would be a weird thing to persist (we always
-      // clear to `undefined`) but guard against it surfacing as an
-      // override and lighting the accent dot for nothing.
       expect(
         llmTextNodeSchema.settings?.hasOverrides?.({
           model: "openai/gpt-5",
@@ -532,7 +512,6 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
     it("the temperature row says 'default' when no value is set", () => {
       renderContent({ model: "openai/gpt-5" });
       const tempLabelWrapper = screen.getByText(/temperature/i).parentElement;
-      // "default" indicator sits next to the label in the same row.
       expect(tempLabelWrapper?.textContent).toMatch(/default/i);
     });
 
@@ -575,7 +554,6 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
     });
 
     it("ticking reasoning commits true; un-ticking clears to undefined", () => {
-      // Two render passes — first false → tick to true, second true → untick to undefined.
       const { updateConfig: u1, unmount } = renderContent({
         model: "openai/gpt-5",
       });
@@ -610,31 +588,20 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
 
   describe("schema.size — sane defaults + bidirectional resize (ADR-0028)", () => {
     it("declares a size contract with bidirectional resize", () => {
-      // Regression guard: dropping size or flipping resizable would
-      // bring back the "huge node on long output" issue the user
-      // hit pre-ADR-0028.
       expect(llmTextNodeSchema.size).toBeDefined();
       expect(llmTextNodeSchema.size?.resizable).toBe("both");
     });
 
     it("constrains width within a readable range (280–720 px)", () => {
-      // 280 keeps the model chip from wrapping; 720 caps the silhouette
-      // before it dominates the canvas viewport.
       expect(llmTextNodeSchema.size?.minWidth).toBe(280);
       expect(llmTextNodeSchema.size?.maxWidth).toBe(720);
     });
 
     it("caps height so a long response scrolls rather than stretching the node", () => {
-      // The user's pre-ADR-0028 screenshot showed a multi-paragraph
-      // response blowing out the silhouette vertically. maxHeight +
-      // the body's `flex-1 overflow-y-auto` keeps the card honest.
       expect(llmTextNodeSchema.size?.maxHeight).toBe(520);
     });
 
     it("defaults to a sensible starting width but leaves height content-driven", () => {
-      // defaultWidth lands the card at a readable size from drop-in;
-      // defaultHeight stays unset so an empty / short-output node
-      // hugs the model chip + placeholder.
       expect(llmTextNodeSchema.size?.defaultWidth).toBe(380);
       expect(llmTextNodeSchema.size?.defaultHeight).toBeUndefined();
     });

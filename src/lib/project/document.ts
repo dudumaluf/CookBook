@@ -20,6 +20,7 @@
 
 import {
   migrateFalImageSmartInputs,
+  migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
   migrateSeedanceRefHandles,
   migrateVideoConcatClips,
@@ -252,14 +253,16 @@ export function applyProjectDocument(
   if (doc.workflow) {
     // Cloud/file loads bypass the workflow-store persist migrate, so run the
     // graph-level forward-ports here too (ADR-0056: Video Concat clips →
-    // clip-N; ADR-0058: Seedance reference handles; LLM Text smart inputs).
+    // clip-N; ADR-0058: Seedance reference handles; LLM Text smart inputs;
+    // LLM Text user smart-input rollback).
     const m1 = migrateVideoConcatClips(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
     const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
     const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
-    const migrated = migrateFalImageSmartInputs(m3.nodes, m3.edges);
+    const m4 = migrateFalImageSmartInputs(m3.nodes, m3.edges);
+    const migrated = migrateLlmTextCollapseUserPorts(m4.nodes, m4.edges);
     useWorkflowStore.setState({
       nodes: migrated.nodes as never,
       edges: migrated.edges as never,
