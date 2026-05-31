@@ -55,6 +55,7 @@ function rec(
     title: null,
     pinned: false,
     tags: [],
+    contentHash: null,
     createdAt: "2026-05-27T00:00:00Z",
     ...overrides,
   };

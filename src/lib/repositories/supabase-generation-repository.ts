@@ -27,6 +27,7 @@ interface RawGenerationRow {
   title: string | null;
   pinned: boolean;
   tags: string[];
+  content_hash: string | null;
   created_at: string;
 }
 
@@ -45,6 +46,7 @@ function rowToRecord(row: RawGenerationRow): GenerationRecord {
     title: row.title ?? null,
     pinned: row.pinned,
     tags: row.tags ?? [],
+    contentHash: row.content_hash ?? null,
     createdAt: row.created_at,
   };
 }
@@ -76,7 +78,7 @@ export class SupabaseGenerationRepository implements GenerationRepository {
     this.client = client ?? getSupabaseClient();
   }
 
-  async insert(input: InsertGenerationInput): Promise<GenerationRecord> {
+  async insert(input: InsertGenerationInput): Promise<GenerationRecord | null> {
     const payload = {
       project_id: input.projectId,
       owner_id: input.ownerId,
@@ -88,14 +90,53 @@ export class SupabaseGenerationRepository implements GenerationRepository {
       inputs_snapshot: input.inputsSnapshot ?? null,
       prompt_text: input.promptText ?? null,
       tags: input.tags ?? [],
+      content_hash: input.contentHash ?? null,
     };
     const { data, error } = await this.client
       .from("cookbook_generations")
       .insert(payload)
       .select("*")
       .single();
-    if (error) throw mapError(error, "Failed to insert generation");
+    if (error) {
+      // Postgres `unique_violation` (23505) — partial unique index on
+      // `(project_id, node_id, content_hash)` rejected a duplicate
+      // insert. Treat as a soft no-op: the gallery already has a row
+      // for this content, the caller doesn't care which one "won".
+      // Returning null lets the sync layer log gracefully without
+      // surfacing an error toast for a benign race.
+      const code = (error as { code?: string }).code;
+      if (code === "23505") return null;
+      throw mapError(error, "Failed to insert generation");
+    }
     return rowToRecord(data as RawGenerationRow);
+  }
+
+  async existsByContentHash(
+    projectId: string,
+    nodeId: string,
+    contentHash: string,
+  ): Promise<boolean> {
+    if (!contentHash) return false;
+    const { data, error } = await this.client
+      .from("cookbook_generations")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("node_id", nodeId)
+      .eq("content_hash", contentHash)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      // Permissions / network failures shouldn't accidentally surface
+      // duplicates as "not present" — log + treat as false so we fall
+      // through to insert, then the DB unique index catches the dup
+      // and the insert path's 23505 swallow handles it.
+      console.warn(
+        "[generation-repository] existsByContentHash failed",
+        error,
+      );
+      return false;
+    }
+    return data !== null;
   }
 
   async get(id: string): Promise<GenerationRecord | null> {

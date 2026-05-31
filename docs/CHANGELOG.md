@@ -2,6 +2,24 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Gallery: stop saving duplicates
+
+The gallery used to insert a fresh row on every successful run with **no content check** — re-running the same prompt after a cache-clear, identical seeds on a stochastic node, even subscriber re-fires from a single `done` emit could all stack identical-looking cards. **No more.**
+
+**Per-output content hash.** A new `hashOutput` helper (`src/lib/sync/output-hash.ts`) fingerprints each `StandardizedOutput` deterministically:
+- **text** → trimmed text content (whitespace-only collapses to no-hash, matches what users perceive as "same text")
+- **image / video / audio** → pre-rehost URL with type prefix (so an image and video sharing a URL never collide)
+- **mesh** → GLB URL
+- **number / soul-id** → stringified value / id
+
+Hashing happens **before** rehost so a duplicate finishes its check without paying the bandwidth + storage cost.
+
+**`generation-sync.persistRecord` flow:** for each item in the (possibly multi-output) record, hash → `repo.existsByContentHash(projectId, nodeId, hash)` → if it already exists, drop the item from the kept list. Only the kept items get rehosted and inserted. **Partial-batch dedup is supported** — a Higgsfield batch of 4 with one duplicate ships the other three (one duplicate item never suppresses its siblings).
+
+**DB-level invariant.** New migration `20260531_generations_content_hash.sql` adds a `content_hash text` column to `cookbook_generations` plus a partial unique index on `(project_id, node_id, content_hash) WHERE content_hash IS NOT NULL`. Even if two finishes race past the existence check, Postgres rejects the duplicate insert with `23505` and the repository swallows it as a soft no-op (returns null instead of throwing). Pre-migration rows land at `content_hash = NULL` so they're exempt from uniqueness — clean those up via the existing card-level Delete affordance if you want.
+
+**Tests +18:** `output-hash` (text trim, media type-prefix isolation, mesh URL, number finiteness, soul-id, null-when-missing); `supabase-generation-repository` (writes content_hash, swallows 23505, throws on other errors, existsByContentHash filters/empty/error paths); `generation-sync` (skips both rehost+insert when dup, forwards contentHash on insert payload, no-op for unhashable outputs, partial-batch dedup keeps novel items).
+
 ## 2026-05-31 — LLM Text: roll back user smart-input to a single socket
 
 Course-correction on yesterday's smart-input slice. The LLM Text node briefly got auto-growing `user-0..N` sockets alongside the image ones — but combining many text chunks is what the **Text Concat node** is for, and a chat call really only has one user prompt + one system prompt. Rolling back to a single `user` socket keeps the node's mental model honest: *one user, one system, many images*.

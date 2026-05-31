@@ -79,6 +79,7 @@ const FAKE_ROW = {
   prompt_text: "a cat",
   pinned: false,
   tags: ["test"],
+  content_hash: null,
   created_at: "2026-05-26T12:00:00Z",
 };
 
@@ -105,9 +106,127 @@ describe("SupabaseGenerationRepository", () => {
     expect((captured as { node_kind: string }).node_kind).toBe(
       "higgsfield-image-gen",
     );
-    expect(result.id).toBe("g1");
-    expect(result.promptText).toBe("a cat");
-    expect(result.tags).toEqual(["test"]);
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("g1");
+    expect(result!.promptText).toBe("a cat");
+    expect(result!.tags).toEqual(["test"]);
+  });
+
+  /* 2026-05-31 — Gallery dedup primitives. */
+
+  it("insert writes content_hash when provided (dedup column)", async () => {
+    let captured: unknown;
+    const client = makeMockClient((state) => {
+      if (state.insertPayload !== undefined) captured = state.insertPayload;
+      return { data: { ...FAKE_ROW, content_hash: "abc123" }, error: null };
+    });
+    const repo = new SupabaseGenerationRepository(client as never);
+    const result = await repo.insert({
+      projectId: "p1",
+      ownerId: "u1",
+      nodeId: "n1",
+      nodeKind: "higgsfield-image-gen",
+      runId: 7,
+      output: { type: "image", value: { url: "https://x/test.png" } },
+      contentHash: "abc123",
+    });
+    expect((captured as { content_hash: string }).content_hash).toBe("abc123");
+    // Repository surfaces the column on the camelCase record so callers
+    // can read it back (used by the gallery list UI when we surface dedup
+    // tooling later — for now it's mostly a write-side invariant).
+    expect(result?.contentHash).toBe("abc123");
+  });
+
+  it("insert returns null when Postgres rejects a unique_violation (23505)", async () => {
+    // Partial unique index on `(project_id, node_id, content_hash)` —
+    // the DB-level backstop for the dedup. The repo translates the
+    // 23505 error code into a soft no-op so the sync layer doesn't
+    // surface a toast for "you already have this row".
+    const client = makeMockClient(() => ({
+      data: null,
+      error: {
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      },
+    }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    const result = await repo.insert({
+      projectId: "p1",
+      ownerId: "u1",
+      nodeId: "n1",
+      nodeKind: "higgsfield-image-gen",
+      runId: 7,
+      output: { type: "image", value: { url: "https://x/test.png" } },
+      contentHash: "abc123",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("insert still throws on non-unique-violation errors (network, RLS, etc)", async () => {
+    const client = makeMockClient(() => ({
+      data: null,
+      error: { code: "42501", message: "Access denied by RLS policy" },
+    }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    await expect(
+      repo.insert({
+        projectId: "p1",
+        ownerId: "u1",
+        nodeId: "n1",
+        nodeKind: "higgsfield-image-gen",
+        runId: 7,
+        output: { type: "image", value: { url: "https://x/test.png" } },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("existsByContentHash filters by project + node + hash and returns true when present", async () => {
+    let capturedState: QueryState | null = null;
+    const client = makeMockClient((state) => {
+      capturedState = state;
+      return { data: { id: "g1" }, error: null };
+    });
+    const repo = new SupabaseGenerationRepository(client as never);
+    const exists = await repo.existsByContentHash("p1", "n1", "abc123");
+    expect(exists).toBe(true);
+    expect(capturedState).not.toBeNull();
+    const cols = capturedState!.filters.map((f) => f.col);
+    expect(cols).toContain("project_id");
+    expect(cols).toContain("node_id");
+    expect(cols).toContain("content_hash");
+  });
+
+  it("existsByContentHash returns false when the row isn't present", async () => {
+    const client = makeMockClient(() => ({ data: null, error: null }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    const exists = await repo.existsByContentHash("p1", "n1", "abc123");
+    expect(exists).toBe(false);
+  });
+
+  it("existsByContentHash returns false on errors so the caller falls through to insert", async () => {
+    // Network / RLS hiccup must NOT silently dedup as if the row exists
+    // — that would suppress legitimate writes. Returning false lets the
+    // caller proceed to insert, where the DB unique index catches any
+    // real duplicate.
+    const client = makeMockClient(() => ({
+      data: null,
+      error: { code: "PGRST301", message: "boom" },
+    }));
+    const repo = new SupabaseGenerationRepository(client as never);
+    const exists = await repo.existsByContentHash("p1", "n1", "abc123");
+    expect(exists).toBe(false);
+  });
+
+  it("existsByContentHash short-circuits on empty hash", async () => {
+    let called = false;
+    const client = makeMockClient(() => {
+      called = true;
+      return { data: null, error: null };
+    });
+    const repo = new SupabaseGenerationRepository(client as never);
+    const exists = await repo.existsByContentHash("p1", "n1", "");
+    expect(exists).toBe(false);
+    expect(called).toBe(false);
   });
 
   it("list filters by node + pinned + prompt search", async () => {

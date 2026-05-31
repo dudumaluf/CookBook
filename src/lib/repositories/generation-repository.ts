@@ -30,6 +30,13 @@ export interface GenerationRecord {
   title: string | null;
   pinned: boolean;
   tags: string[];
+  /**
+   * Stable content fingerprint used for dedup at the
+   * `(project_id, node_id, content_hash)` level (added 2026-05-31).
+   * Null on rows from before the migration; new inserts always carry
+   * one for hashable output types — see `lib/sync/output-hash.ts`.
+   */
+  contentHash: string | null;
   createdAt: string;
 }
 
@@ -45,6 +52,19 @@ export interface InsertGenerationInput {
   promptText?: string | null;
   /** Optional initial tags. Most callers leave this empty. */
   tags?: string[];
+  /**
+   * Stable content fingerprint computed by `hashOutput` in
+   * `lib/sync/output-hash.ts`. When set, the partial unique index on
+   * `(project_id, node_id, content_hash)` enforces dedup at the DB
+   * level — duplicate inserts surface as a `unique_violation` (Postgres
+   * `23505`) which the Supabase impl swallows as a no-op.
+   *
+   * Pass `null` (or omit) when the output type isn't dedup-able
+   * (currently only happens when a media output has no URL — pathological
+   * but defensible). Without a hash the row inserts unconditionally,
+   * matching legacy behavior.
+   */
+  contentHash?: string | null;
 }
 
 /**
@@ -95,7 +115,18 @@ export interface FindSimilarFilter {
 }
 
 export interface GenerationRepository {
-  insert(input: InsertGenerationInput): Promise<GenerationRecord>;
+  insert(input: InsertGenerationInput): Promise<GenerationRecord | null>;
+  /**
+   * Existence check used by `generation-sync.ts` to skip writing a
+   * duplicate row (and to skip the rehost work for media). Returns
+   * true when at least one row matches `(projectId, nodeId, contentHash)`.
+   * Always returns false for null/empty hashes — the caller stays cheap.
+   */
+  existsByContentHash(
+    projectId: string,
+    nodeId: string,
+    contentHash: string,
+  ): Promise<boolean>;
   list(filter: GenerationFilter): Promise<GenerationRecord[]>;
   /** Fetch a single row by id. Slice 7.4 — needed by the eval tools. */
   get(id: string): Promise<GenerationRecord | null>;

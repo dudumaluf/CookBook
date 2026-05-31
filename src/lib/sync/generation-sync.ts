@@ -10,6 +10,7 @@ import {
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useProjectStore } from "@/lib/stores/project-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import { hashOutput } from "@/lib/sync/output-hash";
 import type {
   ExecutionRecord,
   NodeCategory,
@@ -59,11 +60,23 @@ const GALLERY_CATEGORIES: ReadonlySet<NodeCategory> = new Set([
  * generation — same hash means same output, already persisted on the
  * first run. Filter `record.status === "done"` only.
  *
- * Idempotency: each `done` emit produces exactly one row (or N rows if
- * the output is an array — Higgsfield batch_size=4 = 4 rows). Re-running
- * the same workflow yields a fresh row per `done` emit (different
- * `created_at` + `run_id`), which is correct — the user explicitly ran
- * it again.
+ * **Content-hash dedup (2026-05-31).** Each `done` emit hashes its
+ * output (text → trimmed text; media/mesh → URL; number → value;
+ * soul-id → id) and looks the hash up in
+ * `(project_id, node_id, content_hash)` before rehosting. If the
+ * gallery already has a row for this content + node, this layer skips
+ * the rehost AND the insert — solves the "ran the same prompt twice
+ * after clearing the cache, got two identical text rows" papercut.
+ * Per-item dedup applies to multi-output nodes too (a batch of 4 with
+ * 1 dup inserts the other 3). Backstop: a partial unique index on
+ * `(project_id, node_id, content_hash)` makes this a hard DB
+ * invariant, so concurrent finishers can't race past the existence
+ * check.
+ *
+ * Idempotency: re-running with non-identical content (different prompt,
+ * different seed) yields a fresh row per `done` emit (different
+ * `created_at` + `run_id`), which is correct — the user explicitly
+ * generated something new.
  *
  * Failures are logged but not thrown — losing one Gallery row beats
  * crashing the run.
@@ -204,23 +217,82 @@ async function persistRecord(
   const schema = nodeRegistry.get(node.kind);
   if (!schema || !GALLERY_CATEGORIES.has(schema.category)) return;
 
-  // Step 1: rehost external image URLs to our bucket (best-effort).
-  const { output: rehostedOutput, rehosted } =
-    await rehostExternalMediaIfNeeded(record.output, node.kind);
+  // 2026-05-31 — Content-hash dedup. Compute the hash from the
+  // PRE-rehost output so we can short-circuit BOTH the rehost
+  // (potentially many MB of media) AND the insert when this exact
+  // content was already saved for this node. See `lib/sync/output-hash.ts`
+  // for the per-output-type hashing rules.
+  //
+  // We hash and look up per item (in the multi-output case — Higgsfield
+  // batch_size=4 produces 4 items). That way one duplicate item in a
+  // batch of 4 doesn't suppress the whole batch — the other 3 still
+  // insert.
+  const repo = getGenerationRepository();
+  const originalItems = Array.isArray(record.output)
+    ? record.output
+    : [record.output];
+  const itemHashes = originalItems.map((item) => hashOutput(item));
 
-  // Step 2: patch the live record so UI starts using canonical URLs.
-  if (rehosted) {
-    patchRecordOutput(nodeId, rehostedOutput);
+  // Per-item dedup probe BEFORE rehost. Items that already exist in
+  // the gallery (same hash for this project + node) are dropped here.
+  const keepIndices: number[] = [];
+  for (let i = 0; i < originalItems.length; i++) {
+    const hash = itemHashes[i];
+    if (!hash) {
+      // Output type isn't dedup-able (no hash) — keep it, the legacy
+      // "always insert" path applies.
+      keepIndices.push(i);
+      continue;
+    }
+    const exists = await repo.existsByContentHash(
+      context.projectId,
+      nodeId,
+      hash,
+    );
+    if (!exists) keepIndices.push(i);
   }
 
-  // Step 3: insert the row. Multi-output (e.g. Higgsfield batch=4) writes
-  // one row per item — easier for Gallery to query/filter than nested.
-  const repo = getGenerationRepository();
-  const items = Array.isArray(rehostedOutput)
-    ? rehostedOutput
-    : [rehostedOutput];
+  if (keepIndices.length === 0) {
+    // Every item is a duplicate — nothing to rehost or insert.
+    return;
+  }
+
+  // Step 1: rehost external image URLs to our bucket (best-effort).
+  // Rehost only the items we're going to insert (saves bandwidth on
+  // partial-batch dedup hits).
+  const itemsToRehost = keepIndices.map((i) => originalItems[i]!);
+  const { output: rehostedSlice, rehosted } =
+    await rehostExternalMediaIfNeeded(
+      itemsToRehost.length === 1 ? itemsToRehost[0]! : itemsToRehost,
+      node.kind,
+    );
+  const rehostedItems = Array.isArray(rehostedSlice)
+    ? rehostedSlice
+    : [rehostedSlice];
+
+  // Step 2: patch the live record so the UI uses canonical URLs. We
+  // need to splice the rehosted items back into the original positions
+  // so node bodies reading by index don't get confused.
+  if (rehosted) {
+    const merged = originalItems.slice();
+    keepIndices.forEach((origIdx, i) => {
+      merged[origIdx] = rehostedItems[i]!;
+    });
+    patchRecordOutput(
+      nodeId,
+      Array.isArray(record.output) ? merged : merged[0]!,
+    );
+  }
+
+  // Step 3: insert one row per kept item. The hash we computed
+  // pre-rehost is stable (provider URL or text content), so the DB's
+  // partial unique index protects against concurrent duplicate writes
+  // even if two finishes race past the existsByContentHash check.
   const promptText = extractPromptForNode(nodeId);
-  for (const item of items) {
+  for (let i = 0; i < keepIndices.length; i++) {
+    const origIdx = keepIndices[i]!;
+    const item = rehostedItems[i]!;
+    const contentHash = itemHashes[origIdx] ?? null;
     try {
       await repo.insert({
         projectId: context.projectId,
@@ -231,6 +303,7 @@ async function persistRecord(
         output: item,
         usage: (record.usage as NodeUsage | undefined) ?? null,
         promptText,
+        contentHash,
       });
     } catch (err) {
       console.warn("[generation-sync] insert failed for", nodeId, err);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const repoMocks = {
   insert: vi.fn(),
+  existsByContentHash: vi.fn(),
   list: vi.fn(),
   listForNode: vi.fn(),
   setPinned: vi.fn(),
@@ -57,6 +58,10 @@ const { useWorkflowStore } = await import("@/lib/stores/workflow-store");
 beforeEach(() => {
   _internals.resetForTests();
   Object.values(repoMocks).forEach((m) => m.mockReset());
+  // Default: no row matches the content hash → all inserts proceed.
+  // Tests that exercise dedup explicitly override this. Re-applied
+  // after `mockReset()` clears the implementation back to noop.
+  repoMocks.existsByContentHash.mockResolvedValue(false);
   uploadMock.mockReset();
   uploadVideoMock.mockReset();
   uploadAudioMock.mockReset();
@@ -383,6 +388,150 @@ describe("startAutoPersistGenerations", () => {
     };
     // The persisted output URL is the rehosted (Supabase) one.
     expect(insertArg.output.value.url).toContain("supabase.test");
+    unsub();
+  });
+
+  /* 2026-05-31 — Content-hash dedup. Re-running a node that produces
+     identical output should NOT accrete duplicate gallery rows. */
+
+  it("skips insert AND rehost when existsByContentHash returns true (full dup)", async () => {
+    repoMocks.existsByContentHash.mockResolvedValue(true);
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "n1",
+          {
+            status: "done",
+            output: {
+              type: "image",
+              value: { url: "https://cdn.fal.media/dup.png" },
+            },
+          } as never,
+        ],
+      ]),
+    });
+    await vi.waitFor(() =>
+      expect(repoMocks.existsByContentHash).toHaveBeenCalled(),
+    );
+    // Give persistRecord a moment to potentially (incorrectly) call
+    // upload/insert. Neither should fire.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(uploadMock).not.toHaveBeenCalled();
+    expect(repoMocks.insert).not.toHaveBeenCalled();
+    unsub();
+  });
+
+  it("forwards contentHash on insert payload (DB partial unique index backstop)", async () => {
+    repoMocks.insert.mockResolvedValue({ id: "gen-1" });
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "n1",
+          {
+            status: "done",
+            output: {
+              type: "image",
+              value: {
+                url: "https://abc.supabase.co/storage/v1/object/public/cookbook-assets/x.png",
+              },
+            },
+          } as never,
+        ],
+      ]),
+    });
+    await vi.waitFor(() => expect(repoMocks.insert).toHaveBeenCalled());
+    const arg = repoMocks.insert.mock.calls[0]?.[0] as {
+      contentHash?: string | null;
+    };
+    expect(arg.contentHash).toBeTypeOf("string");
+    expect(arg.contentHash!.length).toBeGreaterThan(0);
+    unsub();
+  });
+
+  it("does NOT call existsByContentHash for outputs that have no hashable content", async () => {
+    repoMocks.insert.mockResolvedValue({ id: "gen-1" });
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "n1",
+          kind: "llm-text",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "n1",
+          {
+            status: "done",
+            // Empty/whitespace text → hashOutput returns null. Skip
+            // the dedup check (nothing to dedup against) and let the
+            // legacy insert path run unconditionally.
+            output: { type: "text", value: "   " },
+          } as never,
+        ],
+      ]),
+    });
+    await vi.waitFor(() => expect(repoMocks.insert).toHaveBeenCalled());
+    expect(repoMocks.existsByContentHash).not.toHaveBeenCalled();
+    const arg = repoMocks.insert.mock.calls[0]?.[0] as {
+      contentHash?: string | null;
+    };
+    // Without a hash, the row is still written but with null content_hash
+    // — the partial unique index ignores NULL so the row inserts cleanly.
+    expect(arg.contentHash ?? null).toBeNull();
+    unsub();
+  });
+
+  it("partial-batch dedup: inserts only the items whose hash is novel (multi-output)", async () => {
+    repoMocks.insert.mockResolvedValue({ id: "gen-1" });
+    // First image already exists in the gallery, second is new. The
+    // second should still insert — one duplicate item in a batch must
+    // NOT suppress its siblings.
+    repoMocks.existsByContentHash.mockImplementation(
+      async (_p: string, _n: string, hash: string) => {
+        // Pin "exists" to whichever hash matches the first URL.
+        // Decoded by url-suffix is brittle; instead just say true on the
+        // FIRST call, false thereafter — matches the iteration order
+        // of persistRecord (item 0, item 1).
+        if (repoMocks.existsByContentHash.mock.calls.length === 1) return true;
+        void hash;
+        return false;
+      },
+    );
+    const unsub = startAutoPersistGenerations({ ownerId: "user-1" });
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "n1",
+          {
+            status: "done",
+            output: [
+              {
+                type: "image",
+                value: { url: "https://cdn.fal.media/already-in-gallery.png" },
+              },
+              {
+                type: "image",
+                value: { url: "https://cdn.fal.media/brand-new.png" },
+              },
+            ],
+          } as never,
+        ],
+      ]),
+    });
+    await vi.waitFor(() => expect(repoMocks.insert).toHaveBeenCalled());
+    // Exactly ONE insert (the brand-new item), not two.
+    expect(repoMocks.insert).toHaveBeenCalledTimes(1);
+    expect(uploadMock).toHaveBeenCalledTimes(1);
     unsub();
   });
 });
