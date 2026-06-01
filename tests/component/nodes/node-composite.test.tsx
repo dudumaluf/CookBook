@@ -17,6 +17,7 @@ function baseConfig(): CompositeNodeConfig {
   return {
     recipeId: "r1",
     recipeName: "My Recipe",
+    recipeVersion: 1,
     subgraph: {
       version: 2,
       nodes: [

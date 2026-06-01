@@ -23,6 +23,14 @@ vi.mock("@/lib/repositories/supabase-recipe-repository", () => ({
   SupabaseRecipeRepository: class {},
 }));
 
+const pushMock = vi.hoisted(() => vi.fn());
+
+// `recipe-detail.tsx` calls `useRouter().push` for the Edit button —
+// happy-dom doesn't ship a Next router context, so stub it here.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
+}));
+
 const sessionMock = vi.hoisted(() => ({
   user: { id: "user-1", email: "u@example.com" },
 }));

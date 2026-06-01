@@ -8,8 +8,10 @@ import {
   Globe,
   Lock,
   PackagePlus,
+  Pencil,
   Trash2,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -19,6 +21,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { getSpawnPosition } from "@/lib/canvas/spawn-position";
 import { extractRecipePrompts } from "@/lib/prompts/extract-from-recipe";
+import { forkRecipe } from "@/lib/recipes/fork-recipe";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import type { RecipeRecord } from "@/lib/repositories/recipe-repository";
 import { useLayoutStore } from "@/lib/stores/layout-store";
@@ -52,9 +55,10 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
   const setCookbookOpen = useLayoutStore((s) => s.setCookbookOpen);
   const addWorkflowNode = useWorkflowStore((s) => s.addNode);
   const nodeCount = useWorkflowStore((s) => s.nodes.length);
-  const [busy, setBusy] = useState<"idle" | "drop" | "duplicate" | "delete">(
-    "idle",
-  );
+  const router = useRouter();
+  const [busy, setBusy] = useState<
+    "idle" | "drop" | "duplicate" | "delete" | "edit"
+  >("idle");
 
   const isSystem = recipe.ownerId === null;
   const isYours = userId !== null && recipe.ownerId === userId;
@@ -87,6 +91,7 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
         {
           recipeId: recipe.id,
           recipeName: recipe.name,
+          recipeVersion: recipe.version,
           subgraph: recipe.subgraph,
           exposedInputs: recipe.subgraph.exposedInputs ?? [],
           exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
@@ -110,20 +115,56 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
     }
     setBusy("duplicate");
     try {
-      await getRecipeRepository().save({
-        ownerId: userId,
-        name: `${recipe.name} (copy)`,
-        description: recipe.description,
-        category: recipe.category,
-        subgraph: recipe.subgraph,
-        isNode: recipe.isNode,
-        parentRecipeId: recipe.id,
-      });
+      await forkRecipe({ source: recipe, ownerId: userId });
       await onChanged();
       toast.success(`Duplicated "${recipe.name}"`);
     } catch (err) {
       console.warn("[cookbook] duplicate failed:", err);
       toast.error("Could not duplicate recipe");
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  async function handleEdit() {
+    if (!userId) {
+      toast.error("Sign in to edit recipes");
+      return;
+    }
+    setBusy("edit");
+    try {
+      // System recipes need a user-owned fork before editing — RLS won't
+      // let `saveAsNewVersion` touch a system row directly. Phase B1
+      // does the fork silently (matches the duplicate-and-edit user
+      // expectation) and routes the user to the fork's edit page.
+      const targetId = isSystem
+        ? (await forkRecipe({
+            source: recipe,
+            ownerId: userId,
+            nameSuffix: " (your copy)",
+          })).id
+        : recipe.id;
+
+      // Preserve return URL so the edit page's Save / Discard land the
+      // user back where they came from (typically the project canvas
+      // they opened the Cookbook overlay over).
+      const from =
+        typeof window !== "undefined"
+          ? `?from=${encodeURIComponent(window.location.pathname)}`
+          : "";
+
+      // Refresh the Library list so a fresh fork is visible when the
+      // user navigates back later. Awaited so the user sees the fork
+      // in any "open in Library" pivot.
+      if (isSystem) {
+        await onChanged();
+      }
+
+      setCookbookOpen(false);
+      router.push(`/recipes/${targetId}/edit${from}`);
+    } catch (err) {
+      console.warn("[cookbook] edit open failed:", err);
+      toast.error("Could not open recipe for edit");
     } finally {
       setBusy("idle");
     }
@@ -192,6 +233,22 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
             >
               <PackagePlus className="h-3.5 w-3.5" />
               Drop on canvas
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleEdit()}
+              disabled={busy !== "idle" || !userId}
+              className="gap-1.5"
+              data-testid="cookbook-recipe-edit"
+              title={
+                isSystem
+                  ? "Forks the system recipe to your library, then opens it for edit"
+                  : undefined
+              }
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              {isSystem ? "Fork & edit" : "Edit"}
             </Button>
             <Button
               variant="ghost"

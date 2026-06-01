@@ -10,7 +10,10 @@ import type { NodeInstance, WorkflowEdge } from "@/types/node";
  *
  * The schema is read-mostly during M0a — the assistant DSL queries
  * recipes to pick a template, and the user occasionally saves a canvas
- * subgraph. Updates are rare; sharing is M2.
+ * subgraph. Phase B1 (Cookbook Library — ADR-0051) activates editing:
+ * `saveAsNewVersion()` bumps the row's version + archives the prior
+ * snapshot to `cookbook_recipe_versions` atomically via the
+ * `cookbook_save_as_new_version` RPC.
  */
 
 /**
@@ -94,11 +97,34 @@ export interface RecipeRecord {
   createdAt: string;
   /**
    * Cookbook Library Phase A — recipe-row version. Bumped on every edit
-   * (Phase B). v1 = original/never-edited. Composite-node instances may
-   * carry a `recipeVersion` config so the canvas can show "Update
-   * available → v(N+1)" when the recipe has moved on.
+   * (Phase B1 activates this). v1 = original/never-edited. Composite-node
+   * instances may carry a `recipeVersion` config so the canvas can show
+   * "Update available → v(N+1)" when the recipe has moved on (Phase B2).
    */
   version: number;
+}
+
+/**
+ * One historical snapshot of a recipe, captured at the moment the user
+ * pressed Save in the Phase B1 edit flow. The current row stays on
+ * `cookbook_recipes`; `cookbook_recipe_versions` only stores prior
+ * versions. So when a recipe is at v3, the versions table has v1 and v2;
+ * v3 is the row itself.
+ */
+export interface RecipeVersionRecord {
+  id: string;
+  recipeId: string;
+  version: number;
+  subgraph: RecipeSubgraph;
+  /** Snapshot of the name at this version (renames after the fact don't
+   *  retroactively edit history). */
+  name: string;
+  description: string | null;
+  category: string | null;
+  /** auth.uid() of the user who saved this version (null for v1 created
+   *  by a system migration; null also when the row predates RLS). */
+  savedBy: string | null;
+  createdAt: string;
 }
 
 export interface SaveRecipeInput {
@@ -112,6 +138,27 @@ export interface SaveRecipeInput {
   subgraph: RecipeSubgraph;
   isNode?: boolean;
   parentRecipeId?: string | null;
+}
+
+/**
+ * Phase B1 — input for the edit-and-save-as-new-version flow. Unlike
+ * {@link SaveRecipeInput} (which inserts OR updates by id without any
+ * version bookkeeping), this archives the prior version + bumps `version`
+ * atomically via the `cookbook_save_as_new_version` Postgres RPC.
+ *
+ * `recipeId` is REQUIRED — there's no "save as new version" semantics for
+ * a recipe that doesn't exist yet. Callers fork system recipes via
+ * `forkRecipe()` first, then use this for subsequent edits.
+ *
+ * Optional name/description/category let the edit flow update metadata
+ * alongside the subgraph; null/undefined keeps the prior value.
+ */
+export interface SaveAsNewVersionInput {
+  recipeId: string;
+  subgraph: RecipeSubgraph;
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
 }
 
 export interface RecipeFilter {
@@ -130,6 +177,30 @@ export interface RecipeRepository {
   get(id: string): Promise<RecipeRecord | null>;
   save(input: SaveRecipeInput): Promise<RecipeRecord>;
   remove(id: string): Promise<void>;
+  /**
+   * Phase B1 — atomically: snapshot the current `(subgraph, name, …)` of
+   * `recipeId` into `cookbook_recipe_versions` AS the prior version,
+   * then update `cookbook_recipes` with the new subgraph + bumped
+   * version. Backed by the `cookbook_save_as_new_version` RPC.
+   *
+   * Returns the updated record (with the bumped `version`).
+   */
+  saveAsNewVersion(input: SaveAsNewVersionInput): Promise<RecipeRecord>;
+  /**
+   * Phase B1 — list every prior version of a recipe, descending by
+   * version number (most recent edit first). The current version lives
+   * on the `cookbook_recipes` row itself and is NOT included here.
+   */
+  listVersions(recipeId: string): Promise<RecipeVersionRecord[]>;
+  /**
+   * Phase B1 — fetch one specific historical version. Returns null if
+   * the (recipeId, version) pair doesn't exist (e.g. asking for v2 of a
+   * never-edited recipe).
+   */
+  getVersion(
+    recipeId: string,
+    version: number,
+  ): Promise<RecipeVersionRecord | null>;
 }
 
 export class RecipeRepositoryError extends Error {

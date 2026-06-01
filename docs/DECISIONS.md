@@ -2464,6 +2464,51 @@ Changing `clips` → `clip-N` is a graph-shape change spanning nodes + edges. `m
 - **portCount lives in config** — the auto-grow writes `portCount` (a tiny config field) so `getInputs` can render the right count; it's driven by a body effect watching edges, guarded so it can't loop.
 - **Migration in two places** — persist + document both call the shared helper. Minor duplication, but cloud loads (the real path) don't go through persist, so both are needed.
 
+## ADR-0059 — Cookbook Library Phase B1: route-based recipe edit + atomic version-bump RPC
+
+- **Date**: 2026-06-01
+- **Status**: implemented (B1 shipped; B2 — propagation badges + history/diff — planned).
+- **Context**: Phase A (ADR none, see `COOKBOOK-LIBRARY.md`) shipped a read-only Library: users can browse / drop / duplicate / delete recipes but can't actually edit one. The schema already had `version` + `cookbook_recipe_versions` from a separate Phase A migration, but no UI consumed them. Editing flow needs to land before the assistant can co-author prompts (Phase C) or pick specialist roles (Phase D), and shipping it as one giant PR ("Phase B") risked stalling under the weight of badges + history viewer + diff propagation. So Phase B was split into B1 (core edit + versioning) and B2 (badges + history/diff propagation).
+
+### 1. Decisão: a dedicated route (`/recipes/[id]/edit`) instead of an in-canvas modal
+
+Two real options. (a) Edit modal that overlays the project canvas. (b) Dedicated route whose canvas IS the recipe.
+
+We picked (b) because: (1) the recipe IS a canvas — using React Flow + the workflow store as-is means we get drag, snap, settings popovers, the Add Node menu, the Library panel, and Run-here for free; reimplementing those inside a modal would either build a different editor (UX inconsistency) or embed React Flow twice in one DOM (overlap / event-routing nightmares). (2) "We're editing a different thing now" is a strong mental model that benefits from a URL change — back-button works naturally, the user can refresh and stay where they were, deep-links work, and screenshotting / sharing the edit URL is meaningful. (3) `useWorkflowStore` is global and doesn't multiplex nicely between two contexts in the same DOM; swapping its contents wholesale at route change is far cleaner than maintaining two parallel "stores" for edit-vs-canvas.
+
+### 2. Decisão: silent fork-on-edit for system recipes (no explicit "fork first" step)
+
+System recipes (`owner_id IS NULL`) are read-only by RLS. Two approaches: (a) make the user explicitly Duplicate first then Edit; (b) silently fork on Edit click and route to the fork. We picked (b) because the explicit-fork friction adds zero value — the user already wants their own copy when they click Edit on a system recipe. The fork happens via the shared `forkRecipe(... " (your copy)")` helper (distinct suffix from the explicit Duplicate flow's `" (copy)"`), the Library list refreshes so the fork shows up on return, and the route URL replaces to the fork's id so a refresh keeps editing the working copy instead of re-forking. Direct URL hits to `/recipes/<system_id>/edit` go through the same fork path inside `openRecipeForEdit` for defense in depth.
+
+### 3. Decisão: Postgres RPC for atomic version-bump + history insert
+
+Two client-side queries (INSERT into history, then UPDATE the row) aren't transactional from JS — a network drop between them yields phantom history or a bumped row without history. Three options: (a) trust the network and accept rare drift; (b) move the two writes into a Supabase Edge Function; (c) Postgres RPC running `security invoker` so the caller's `auth.uid()` drives RLS. We picked (c): a single PL/pgSQL function (`cookbook_save_as_new_version`) reads the current row, INSERTs the prior `(subgraph, name, description, category, version)` into `cookbook_recipe_versions`, then UPDATEs `cookbook_recipes` with the new subgraph + `version + 1`, all atomically. RLS still enforces ownership on both tables — system recipes can't be edited via this path because the history-insert policy requires owner; the trip to the RPC fails before any write lands. Returns the updated row so the caller can refresh in-memory state. Migration: `supabase/migrations/20260601_recipe_edit_rpc.sql`.
+
+### 4. Decisão: a transient `useRecipeEditStore` (NOT persisted), reactive-runner guard via module-level helper
+
+State for "we are editing recipe X" cannot be persisted: page reload should not silently dump you into edit mode mid-flow. The route is the authority; the store mirrors it within a tab session. The store carries `recipeId`, `recipeName`, `currentVersion`, the exposed I/O snapshot from edit-open (preserved verbatim into the saved subgraph so renaming an internal node mid-edit doesn't drop a public handle), and `hasUnsavedChanges`. A module-level `isRecipeEditActive()` helper reads `recipeId !== null` so the reactive runner can short-circuit cheaply (importing the React-tied hook into engine code would create a cyclic-render concern). Hydrating the workflow store with a recipe's subgraph would otherwise trigger a reactive flush of every reactive node inside, which in nested cases can be hundreds — backing off entirely while editing is the correct call.
+
+### 5. Decisão: stamp `recipeVersion` on EVERY composite drop site (5 places), even before B2 reads it
+
+Phase B2 will surface "Update available → v(latest)" badges on stale composite instances. That requires every existing instance carry the version it was dropped from. Two options: (a) backfill via migration when B2 ships (but pre-B2 drops would carry `null` — they'd never get a badge); (b) start stamping in B1 so by the time B2 ships, every instance has the field. We picked (b): `CompositeNodeConfig.recipeVersion: number | null` (required field — keeping it required makes it impossible to silently lose at any drop site), `null` for pre-B1 instances, a number for everything dropped from B1 onward. Five drop sites: `recipe-detail.tsx` handleDrop, `canvas-flow.tsx` recipe drag-drop, `add-node-button.tsx` handlePickRecipe, `instantiate-recipe.ts` (assistant tool), `save-from-canvas.ts` (freshly-saved recipe is v1). Phase B2's comparator treats `null` as "we don't know — don't badge" and a number as comparable; both behaviors are intentional.
+
+### 6. Trade-offs aceitos
+
+- **Edit page doesn't show the assistant** — `PromptBar` is intentionally absent. Specialist assistant roles ("Recipe Architect" who knows the edit canvas) come in Phase D.
+- **No autosave inside edit mode** — Save is explicit. Justification: edits are structural; autosave would create version-history noise and surprise the user with rapid-fire `v3 → v4 → v5 → v6` on every keystroke. The `hasUnsavedChanges` flag + `beforeunload` warning + Discard confirm cover the safety net.
+- **Cookbook overlay is invisible during edit mode** — clicking the Cookbook button is hidden so a recipe-inside-a-recipe-being-edited can't open. The Add Node popover's "Recipes" group still works (composites nest fine; the engine handles it).
+- **Edit-time changes to the recipe DO NOT propagate to existing composite instances** — instances are snapshots at drop time. Phase B2 lights the "Update available" badge + offers two upgrade actions (this-instance / all-instances-in-this-project). Until then, users who want the new version drop a fresh composite.
+- **Phase B was split into B1 + B2** — B1 ships the editor; B2 ships the propagation badges + history viewer + diff. The split lets B1 land sooner with a smaller surface to review / regress; B2 builds on a stable foundation.
+
+### 7. Cross-references
+
+- ADR-0037 (RecipeRepository surface) — extended with `saveAsNewVersion` / `listVersions` / `getVersion`.
+- ADR-0036 (reactive runner) — guard added: `isRecipeEditActive()` short-circuits the flush.
+- ADR-0051 (Library revamp) — recipes-as-nodes home in Add Node, the Library is assets-only — the edit route picks up the same separation; the recipe canvas is the editor surface.
+- ADR-0052 (recipes as configurable nodes) — `recipeVersion` joins `exposedParams` on `CompositeNodeConfig`.
+- `docs/COOKBOOK-LIBRARY.md` §5 Phase B1 — phased roadmap reference.
+- `docs/RESOLUTION-INSIGHTS.md` — parked ideas to revisit after B+ closes.
+
 ## ADR-0057 — Seedance via the async queue (submit + poll), not one blocking request
 
 - **Date**: 2026-05-30

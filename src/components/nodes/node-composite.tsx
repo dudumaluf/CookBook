@@ -68,6 +68,12 @@ export interface CompositeNodeConfig {
    *  `name` at instantiation time; user-editable per-node via the
    *  standard rename flow without affecting the recipe row. */
   recipeName: string;
+  /** Cookbook Library Phase B1 — the recipe's `version` at the moment
+   *  this composite was dropped on canvas. null = pre-B1 instance (or
+   *  composite saved without a cloud row). Phase B2 reads this to
+   *  surface "Update available → vN" badges when the recipe row has
+   *  moved on. Phase B1 only writes it. */
+  recipeVersion: number | null;
   /** The captured subgraph that runs when this composite executes. */
   subgraph: RecipeSubgraph;
   /** Auto-detected at save time. Each entry binds a public input id
@@ -356,6 +362,7 @@ export const compositeNodeSchema = defineNode<CompositeNodeConfig>({
   defaultConfig: {
     recipeId: null,
     recipeName: "Untitled recipe",
+    recipeVersion: null,
     subgraph: { version: 1, nodes: [], edges: [] },
     exposedInputs: [],
     exposedOutputs: [],

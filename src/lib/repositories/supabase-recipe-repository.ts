@@ -7,8 +7,10 @@ import {
   type RecipeRecord,
   type RecipeRepository,
   RecipeRepositoryError,
+  type RecipeVersionRecord,
   RECIPE_SUBGRAPH_VERSION,
   type RecipeSubgraph,
+  type SaveAsNewVersionInput,
   type SaveRecipeInput,
 } from "./recipe-repository";
 
@@ -24,6 +26,18 @@ interface RawRecipeRow {
   created_at: string;
   /** Phase A — present on rows after the recipe-versions migration. */
   version?: number | null;
+}
+
+interface RawRecipeVersionRow {
+  id: string;
+  recipe_id: string;
+  version: number;
+  subgraph: RecipeSubgraph | null;
+  name: string;
+  description: string | null;
+  category: string | null;
+  saved_by: string | null;
+  created_at: string;
 }
 
 function rowToRecord(row: RawRecipeRow): RecipeRecord {
@@ -44,6 +58,24 @@ function rowToRecord(row: RawRecipeRow): RecipeRecord {
     // Backfill v1 if the column is missing (pre-migration row OR a row
     // returned by Supabase before the column rolled out everywhere).
     version: typeof row.version === "number" && row.version > 0 ? row.version : 1,
+  };
+}
+
+function versionRowToRecord(row: RawRecipeVersionRow): RecipeVersionRecord {
+  return {
+    id: row.id,
+    recipeId: row.recipe_id,
+    version: row.version,
+    subgraph: row.subgraph ?? {
+      version: RECIPE_SUBGRAPH_VERSION,
+      nodes: [],
+      edges: [],
+    },
+    name: row.name,
+    description: row.description,
+    category: row.category,
+    savedBy: row.saved_by,
+    createdAt: row.created_at,
   };
 }
 
@@ -144,6 +176,56 @@ export class SupabaseRecipeRepository implements RecipeRepository {
       .delete()
       .eq("id", id);
     if (error) throw mapError(error, "Failed to delete recipe");
+  }
+
+  async saveAsNewVersion(input: SaveAsNewVersionInput): Promise<RecipeRecord> {
+    // The RPC archives the prior snapshot + bumps the row in one
+    // transaction (see supabase/migrations/20260601_recipe_edit_rpc.sql).
+    // RLS on both tables enforces ownership — system recipes (owner_id
+    // IS NULL) cannot be edited via this path; they must be forked first.
+    const { data, error } = await this.client.rpc(
+      "cookbook_save_as_new_version",
+      {
+        p_recipe_id: input.recipeId,
+        p_subgraph: input.subgraph,
+        p_name: input.name ?? null,
+        p_description: input.description ?? null,
+        p_category: input.category ?? null,
+      },
+    );
+    if (error) throw mapError(error, "Failed to save recipe version");
+    if (!data) {
+      throw new RecipeRepositoryError(
+        "saveAsNewVersion returned no row",
+        "unknown",
+      );
+    }
+    return rowToRecord(data as RawRecipeRow);
+  }
+
+  async listVersions(recipeId: string): Promise<RecipeVersionRecord[]> {
+    const { data, error } = await this.client
+      .from("cookbook_recipe_versions")
+      .select("*")
+      .eq("recipe_id", recipeId)
+      .order("version", { ascending: false });
+    if (error) throw mapError(error, "Failed to list recipe versions");
+    return ((data ?? []) as RawRecipeVersionRow[]).map(versionRowToRecord);
+  }
+
+  async getVersion(
+    recipeId: string,
+    version: number,
+  ): Promise<RecipeVersionRecord | null> {
+    const { data, error } = await this.client
+      .from("cookbook_recipe_versions")
+      .select("*")
+      .eq("recipe_id", recipeId)
+      .eq("version", version)
+      .maybeSingle();
+    if (error) throw mapError(error, "Failed to fetch recipe version");
+    if (!data) return null;
+    return versionRowToRecord(data as RawRecipeVersionRow);
   }
 }
 

@@ -119,26 +119,47 @@ Phase A doesn't activate this — it just creates the storage. Phase B writes a 
 
 ## 5. The phased plan
 
-### Phase A — Read-only Library (this ship)
+### Phase A — Read-only Library (shipped 2026-06-01)
 
 The full list of pieces:
 
 1. **Foundation** — DB migration + prompts registry (`src/lib/prompts/registry.ts`) + prompt extractor (walks subgraphs to find internal prompts).
-2. **Shell** — `/library` route + top-nav button next to Gallery + tabs container.
-3. **Recipes tab read-only** — card grid + filter + search + slide-in detail + mini-canvas preview + extracted-prompts list + Drop / Duplicate / Delete actions.
+2. **Shell** — Cookbook overlay (⌘B) opened from a top-nav button next to Gallery + tabs container.
+3. **Recipes tab read-only** — card grid + filter + search + slide-in detail + extracted-prompts list + Drop / Duplicate / Delete actions.
 4. **Prompts tab read-only** — Assistant + Recipe-internal + Node defaults sections, plain-English descriptions, copy buttons, cross-tab search.
 5. **Polish** — tooltips, empty states, loading states, all seven UI principles.
 
-### Phase B — Edit flow + versioning UI
+### Phase B — Edit flow + versioning (split into B1 → B2)
+
+Phase B is shipped in two consecutive PRs so the user lands the core editor faster and the badges/diff propagation arrive on a stable foundation.
+
+#### Phase B1 — Recipe edit + versioning core
 
 When this ships:
 
-- **Edit button** appears on user-owned recipes in the detail panel.
-- Clicking Edit opens the recipe's subgraph as a sandbox graph in the canvas. The canvas chrome shows a "Editing recipe: *name*" badge.
-- **Save** creates a new version: bumps `cookbook_recipes.version`, archives the previous subgraph to `cookbook_recipe_versions`, updates `cookbook_recipes.subgraph` to the new content.
-- Composite nodes already on canvases that use this recipe show an **"Update available → v2"** badge with two options: *Update this instance* or *Update all instances of this recipe in this graph*.
-- **System recipes** can't be edited directly. Clicking Edit on a system recipe silently creates a user copy ("Seedance Prompt Director (your copy)") and opens THAT for edit. The original system version is untouched.
-- **Diff view** — when looking at a recipe's history, side-by-side comparison of any two versions.
+- **Edit button** in the recipe detail panel — visible on every recipe (system or yours).
+- **User-owned** → click Edit navigates to a dedicated route `/recipes/[id]/edit` whose canvas is hydrated with the recipe's subgraph. Top of canvas: a quiet badge *"Editing recipe: <name> (v<n>)"* with **Save** + **Discard** actions.
+- **System recipe** → click Edit silently creates a user-owned fork named `<name> (your copy)` (helper: `forkRecipe`), then redirects to that fork's edit page. The system original stays untouched.
+- **Save** atomically (Postgres RPC `cookbook_save_as_new_version`): archives the prior `(subgraph, name, description, category, version)` to `cookbook_recipe_versions`, then updates `cookbook_recipes` with the new subgraph + bumped `version`. Then navigates back to wherever the user came from.
+- **Discard** navigates back without writing; if there are unsaved changes, a confirm dialog gates it.
+- **Reactive runner** is guarded — does NOT auto-fire while in recipe-edit mode (`isRecipeEditActive()` from `recipe-edit-store`).
+- **Composite-instance pin** — `CompositeNodeConfig` gains `recipeVersion: number | null`, stamped on every drop entry point (Cookbook Drop, canvas drag-drop, Add Node popover, `instantiateRecipeOnCanvas`, save-from-canvas, assistant `instantiate_recipe`). B1 only writes the field; B2 reads it.
+
+What B1 does NOT include yet:
+
+- ❌ "Update available → vN" badge on existing composite instances (B2).
+- ❌ Bulk re-fetch / replace embedded subgraph on stale instances (B2).
+- ❌ Version history viewer + diff between two versions inside the Library detail panel (B2).
+
+#### Phase B2 — Update-available + history/diff propagation
+
+When this ships:
+
+- **"Update available → v<latest>" badge** on composite instances whose embedded `recipeVersion` is below the recipe's current version. Pulled live via `recipe-repository.list()` + a tiny pub/sub on save events.
+- **Two upgrade actions** on the badge: *Update this instance* (re-fetch recipe, replace embedded subgraph + bump `recipeVersion` on this instance) and *Update all instances of this recipe in this project*.
+- **Version history viewer** in the Library detail panel — list of versions descending (uses `repository.listVersions(recipeId)`), each entry shows version number + saved date + saved-by; click any entry shows the diff vs the current.
+- **Plain-English diff** — added/removed/changed internal nodes; for changed Text + LLM Text nodes, a small char-level diff of the system/user prompt text. Visual subgraph diff is parked.
+- **System recipe instance behaviour** — composites pinned to a system recipe show *"Update available"* whenever the system recipe is bumped via migration; clicking Update silently re-fetches.
 
 ### Phase C — Personal prompt overrides + assistant-as-co-author
 
@@ -239,6 +260,7 @@ A user's personal customization of a code-defined prompt (assistant base, specia
 
 Not committed to building these yet, but they're worth keeping in mind as the Library matures:
 
+- **Cross-app insights from Resolution (parked)** — see [`docs/RESOLUTION-INSIGHTS.md`](RESOLUTION-INSIGHTS.md) for slot-based prompt editing, the four universal subgraph verbs (EXPAND / BRIDGE / COMPRESS / REGENERATE), the five-views model (Outline view first), and synthesize-pattern recipe candidates. Re-engage after Phase B+ closes; each direction has a phase-specific best-fit noted in the doc.
 - **Recipe import / export** — JSON file. Drop a `.recipe.json` into the Library to install someone else's recipe.
 - **Recipe marketplace** — community recipes shared through a public collection. Requires moderation policy.
 - **Per-team libraries** — recipes scoped to a workspace/team rather than a single user.
@@ -286,8 +308,9 @@ When you add a new feature that introduces a prompt or a recipe, two steps make 
 
 | Phase | Status | Shipped on |
 |---|---|---|
-| A — Read-only Library | 🔨 In progress | — |
-| B — Edit flow + versioning | 📋 Planned | — |
+| A — Read-only Library | ✅ Shipped | 2026-06-01 |
+| B1 — Recipe edit + versioning core | ✅ Shipped | 2026-06-01 |
+| B2 — Update-available + history/diff propagation | 📋 Planned | — |
 | C — Personal prompt overrides + assistant-as-co-author | 📋 Planned | — |
 | D — Specialist recipes + assistant roles | 📋 Planned | — |
 | E — Orchestration | 📋 Planned | — |

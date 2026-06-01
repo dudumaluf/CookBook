@@ -2,6 +2,7 @@
 
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { isRecipeEditActive } from "@/lib/stores/recipe-edit-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { StandardizedOutput } from "@/types/node";
 
@@ -26,6 +27,13 @@ import { runWorkflow } from "./run-workflow";
  * specific transition (not every record patch) so reactive runs don't
  * feedback-loop into themselves.
  *
+ * Phase B1 hotfix (ADR-0051): we ALSO short-circuit the flush when the
+ * recipe-edit store is active. The recipe-edit canvas hydrates the
+ * workflow-store with the recipe's subgraph, which would otherwise
+ * trigger an immediate reactive flush of every reactive node inside the
+ * recipe (sometimes hundreds, in nested cases). The user is editing,
+ * not running — they'll click Run / Run-here when they want output.
+ *
  * Activation: started once per session in the AppShell `useEffect`
  * (after auth bootstrap). Returns an unsubscribe function for teardown
  * on logout.
@@ -38,8 +46,9 @@ import { runWorkflow } from "./run-workflow";
  * outputs from the last full run flow into reactive consumers without
  * needing them in the per-flush cache.
  *
- * Skip when isRunning: a full run from the user's Run button takes
- * precedence; the reactive runner backs off until that completes.
+ * Skip when isRunning OR isRecipeEditActive: a full run from the user's
+ * Run button takes precedence; the reactive runner backs off until
+ * that completes. Edit mode skips entirely.
  */
 
 const DEBOUNCE_MS = 150;
@@ -72,6 +81,11 @@ export function startReactiveRunner(
     // Skip if a user-initiated full run is in flight — let it finish so we
     // don't race the engine's records.
     if (useExecutionStore.getState().isRunning) return;
+    // Skip when the recipe-edit canvas is active (ADR-0051). Editing a
+    // recipe is a structural workflow, not a runtime one; reactive nodes
+    // shouldn't fire just because the user dragged a Text node into the
+    // saved subgraph. The user runs explicitly via Run / Run-here.
+    if (isRecipeEditActive()) return;
     if (inFlightController) {
       inFlightController.abort();
     }

@@ -146,6 +146,10 @@ export async function saveSelectionAsRecipe(
     config: {
       recipeId: recipe.id,
       recipeName: recipe.name,
+      // Freshly-saved recipe always starts at v1 (the DB default); stamp
+      // the composite so Phase B2's "Update available" badge can compare
+      // this instance against the live recipe row later.
+      recipeVersion: recipe.version,
       subgraph,
       exposedInputs: input.exposedInputs,
       exposedOutputs: input.exposedOutputs,

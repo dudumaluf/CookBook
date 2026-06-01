@@ -663,6 +663,7 @@ function CanvasFlowInner() {
                 ws.addNode("composite", dropPos, {
                   recipeId: recipe.id,
                   recipeName: recipe.name,
+                  recipeVersion: recipe.version,
                   subgraph: recipe.subgraph,
                   exposedInputs: recipe.subgraph.exposedInputs ?? [],
                   exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
