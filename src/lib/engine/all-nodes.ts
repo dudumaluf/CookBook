@@ -10,6 +10,7 @@ import { heygenLipsyncNodeSchema } from "@/components/nodes/node-fal-heygen-lips
 import { hunyuan3dNodeSchema } from "@/components/nodes/node-fal-hunyuan-3d";
 import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
 import { marlinNodeSchema } from "@/components/nodes/node-fal-marlin";
+import { scribeV2NodeSchema } from "@/components/nodes/node-fal-scribe-v2";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
@@ -62,6 +63,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(falAudioIsolationNodeSchema);
   nodeRegistry.register(hunyuan3dNodeSchema);
   nodeRegistry.register(marlinNodeSchema);
+  nodeRegistry.register(scribeV2NodeSchema);
   nodeRegistry.register(heygenLipsyncNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);

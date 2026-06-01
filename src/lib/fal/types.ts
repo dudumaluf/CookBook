@@ -547,3 +547,84 @@ export type HeygenLipsyncStatusRequest = z.infer<
 export type HeygenLipsyncStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & HeygenLipsyncSuccessResponse);
+
+/* ────────────────── ElevenLabs Scribe V2 (speech → text) ────────────────── */
+
+/** Fal `fal-ai/elevenlabs/speech-to-text/scribe-v2` — fast STT with word-level timestamps + speaker diarization. */
+export const SCRIBE_V2_ENDPOINT =
+  "fal-ai/elevenlabs/speech-to-text/scribe-v2";
+
+/**
+ * Per-word transcription segment. `type: "word"` is an actual token; `"spacing"`
+ * marks the gap between words. Both come back interleaved from Fal so a UI
+ * that renders inline timing can stitch them in order without inventing
+ * spacing of its own.
+ */
+export interface ScribeV2WordSegment {
+  start: number;
+  end: number;
+  text: string;
+  /** Defaults to `"word"` when Fal omits the field. */
+  type: "word" | "spacing";
+  /** Set only when `diarize: true`; e.g. `"speaker_0"`. */
+  speakerId?: string;
+}
+
+/**
+ * Per-keyterm Fal limits. Up to 100 terms, each ≤ 50 chars. Adds 30%
+ * to the per-minute price when ANY keyterm is set.
+ */
+export const SCRIBE_V2_KEYTERMS_MAX_COUNT = 100;
+export const SCRIBE_V2_KEYTERMS_MAX_LENGTH = 50;
+
+export const scribeV2RequestSchema = z
+  .object({
+    audioUrl: z.string().url(),
+    /** ISO 639-2 / language code (e.g. "eng", "spa"). Omit for auto-detect. */
+    languageCode: z.string().min(1).max(8).optional(),
+    /** Tag laughter / applause / etc. Default true on Fal. */
+    tagAudioEvents: z.boolean().optional(),
+    /** Annotate speakers (`speaker_0`, `speaker_1`, …). Default true on Fal. */
+    diarize: z.boolean().optional(),
+    /**
+     * Bias terms — words / phrases the model should prefer to transcribe.
+     * Adds 30% to base price when non-empty. Capped per Fal's docs.
+     */
+    keyterms: z
+      .array(z.string().min(1).max(SCRIBE_V2_KEYTERMS_MAX_LENGTH))
+      .max(SCRIBE_V2_KEYTERMS_MAX_COUNT)
+      .optional(),
+  })
+  .strict();
+
+export type ScribeV2Request = z.infer<typeof scribeV2RequestSchema>;
+
+export interface ScribeV2SuccessResponse {
+  /** Full reconstructed transcript — the canonical text output. */
+  text: string;
+  /** Detected (or echoed) language code. */
+  languageCode: string;
+  /** Confidence in language detection (0..1). */
+  languageProbability: number;
+  /** Word-level segments with start / end timestamps + speaker id. */
+  words: ScribeV2WordSegment[];
+  model: string;
+}
+
+export interface ScribeV2SubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const scribeV2StatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type ScribeV2StatusRequest = z.infer<typeof scribeV2StatusRequestSchema>;
+
+export type ScribeV2StatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & ScribeV2SuccessResponse);

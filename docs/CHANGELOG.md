@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Scribe V2 node: ElevenLabs speech-to-text via Fal
+
+Adds a transcription node alongside the existing ElevenLabs audio-isolation node. Wire any audio file, get the full transcript as text plus word-level timestamps, language detection, and optional speaker diarization.
+
+**1. Node `fal-scribe-v2`.** New `src/components/nodes/node-fal-scribe-v2.tsx`. Inputs: `audio` (`audio` datatype). Outputs: `out` (`text`, the canonical full transcript). Settings panel exposes `languageCode` (text — empty means auto-detect; e.g. `eng`, `spa`, `fra`, `deu`, `jpn`), `tagAudioEvents` (toggle, default true), `diarize` (toggle, default true), `keyterms` (newline-separated textarea, capped at 100 entries × 50 chars per ElevenLabs limits — adds 30% per Fal pricing). Body shows a scrollable speaker-grouped view with `[mm:ss]` timestamps when diarization is on, falls back to the raw transcript when only the text shape is available. Word-level timing + detected language live in a per-history-entry side-channel (Marlin pattern) so navigating back through history keeps the timestamped breakdown intact without inventing a new datatype on the wire. Non-reactive (Fal billing). Registered in `src/lib/engine/all-nodes.ts`.
+
+**2. Server stack (ADR-0057 async submit + poll).** New `src/lib/fal/scribe-v2-api.ts` (`submitScribeV2` / `getScribeV2Result` — `fal.queue.submit/status/result` against `fal-ai/elevenlabs/speech-to-text/scribe-v2`, with `FAL_KEY` strictly server-side). New routes `src/app/api/fal/scribe-v2/route.ts` + `.../status/route.ts` mirror the audio-isolation shape: Zod-validate → call wrapper → map error codes (`missing_key` → 500, `aborted` → 499, `upstream_error` → 502). Defensive raw-output coercion: missing `text` is reconstructed from `words[]`; unknown `type` falls back to `"word"`; finite-number guards on `start` / `end` so a malformed segment is dropped rather than crashing the body. Browser poll wrapper `src/lib/fal/call-scribe-v2.ts` uses 3-second polling, 10-minute hard deadline, 5 consecutive-error tolerance — same resilience as audio-isolation.
+
+**3. Types in `src/lib/fal/types.ts`.** Added `SCRIBE_V2_ENDPOINT`, `SCRIBE_V2_KEYTERMS_MAX_COUNT`/`_MAX_LENGTH`, `scribeV2RequestSchema`, `scribeV2StatusRequestSchema`, `ScribeV2WordSegment` (with optional `speakerId`), `ScribeV2SuccessResponse`, `ScribeV2SubmitResponse`, `ScribeV2StatusResponse`. `keyterms` validated as a length-bounded array of length-bounded strings.
+
+**Tests +21:** 11 in new `tests/unit/fal/scribe-v2-route.test.ts` (non-JSON / missing-audioUrl / non-URL / oversized-keyterm validation; valid submit returns request id; optional knobs forwarded; `missing_key` → 500; `upstream_error` → 502; status pending; status done with words/speaker; status missing requestId rejected) plus 10 in new `tests/unit/nodes/node-fal-scribe-v2.test.ts` (no-audio rejection; audioUrl forwarded; optional knobs forwarded; keyterms forwarded; whitespace-only keyterms stripped; empty keyterms array omitted; languageCode trimmed; blank languageCode treated as auto-detect; transcript surfaces as text output; schema shape — non-reactive transform, audio-in / text-out). All 1407 tests green; lint, typecheck, and `next build` pass.
+
 ## 2026-05-31 — Smarter assistant Slice 3: history compaction + speculative pre-fetch + memory loop
 
 Last of the four "Smarter assistant" slices. Cuts a full LLM round-trip off the most common analyze flow, stops the conversation history from growing without bound, and teaches the reasoner to remember user preferences across sessions.
