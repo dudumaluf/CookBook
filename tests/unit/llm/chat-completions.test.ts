@@ -236,4 +236,104 @@ describe("callChatCompletions", () => {
       expect((e as Error).message).toContain("model overloaded");
     }
   });
+
+  /* ────────────────────────────────────────────────────────────────── */
+  /* Slice 1 of "Smarter assistant" — cache token telemetry              */
+  /* ────────────────────────────────────────────────────────────────── */
+
+  describe("cache token telemetry (Slice 1)", () => {
+    it("surfaces Anthropic cache fields when present in usage", async () => {
+      mockFetchOnce({
+        body: {
+          model: "anthropic/claude-sonnet-4.5",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 200,
+            completion_tokens: 10,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 7128,
+          },
+        },
+      });
+      const out = await callChatCompletions(
+        { model: "anthropic/claude-sonnet-4.5", user: "Hi" },
+        new AbortController().signal,
+      );
+      expect(out.cacheReadTokens).toBe(7128);
+      expect(out.cacheCreationTokens).toBe(0);
+    });
+
+    it("maps Gemini's cached_content_token_count onto cacheReadTokens", async () => {
+      mockFetchOnce({
+        body: {
+          model: "google/gemini-2.5-pro",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            cached_content_token_count: 850,
+          },
+        },
+      });
+      const out = await callChatCompletions(
+        { model: "google/gemini-2.5-pro", user: "Hi" },
+        new AbortController().signal,
+      );
+      expect(out.cacheReadTokens).toBe(850);
+      expect(out.cacheCreationTokens).toBeUndefined();
+    });
+
+    it("omits cache fields entirely when the provider doesn't surface them", async () => {
+      mockFetchOnce({ body: FAKE_OK_RESPONSE });
+      const out = await callChatCompletions(
+        { model: "openai/gpt-4o", user: "Hi" },
+        new AbortController().signal,
+      );
+      expect(out.cacheReadTokens).toBeUndefined();
+      expect(out.cacheCreationTokens).toBeUndefined();
+    });
+
+    it("forwards a structured system message (content blocks) verbatim", async () => {
+      const fetchMock = mockFetchOnce({ body: FAKE_OK_RESPONSE });
+      await callChatCompletions(
+        {
+          model: "anthropic/claude-sonnet-4.5",
+          messages: [
+            {
+              role: "system",
+              content: [
+                {
+                  type: "text",
+                  text: "static prefix",
+                  cache_control: { type: "ephemeral", ttl: "1h" },
+                },
+                { type: "text", text: "dynamic suffix" },
+              ],
+            },
+            { role: "user", content: "hi" },
+          ],
+        },
+        new AbortController().signal,
+      );
+      const [, init] = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      const body = JSON.parse(init.body as string);
+      expect(body.messages[0].role).toBe("system");
+      expect(body.messages[0].content[0].cache_control).toEqual({
+        type: "ephemeral",
+        ttl: "1h",
+      });
+    });
+  });
 });

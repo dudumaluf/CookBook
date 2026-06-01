@@ -26,11 +26,26 @@ import { z } from "zod";
  * Chat Completions content-block shape so any provider that speaks that
  * dialect (Fal openai-compat, OpenRouter direct, OpenAI direct,
  * Anthropic via OpenAI shim) accepts our payload as-is.
+ *
+ * Slice 1 of "Smarter assistant" extends the `text` variant with an
+ * optional `cache_control` marker — Anthropic's prompt-cache hint,
+ * which Anthropic + Gemini honor and other providers silently ignore.
+ * The marker is forwarded verbatim so we don't need provider-specific
+ * branches.
  */
+export const cacheControlSchema = z.object({
+  type: z.literal("ephemeral"),
+  /** Optional TTL hint. Defaults to provider-specific (5m on Anthropic). */
+  ttl: z.enum(["5m", "1h"]).optional(),
+});
+
+export type CacheControl = z.infer<typeof cacheControlSchema>;
+
 export const chatContentBlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
     text: z.string(),
+    cache_control: cacheControlSchema.optional(),
   }),
   z.object({
     type: z.literal("image_url"),
@@ -63,7 +78,11 @@ export type ChatToolCall = z.infer<typeof chatToolCallSchema>;
 export const chatMessageSchema = z.discriminatedUnion("role", [
   z.object({
     role: z.literal("system"),
-    content: z.string(),
+    // System content can be a plain string OR an array of text content
+    // blocks. The latter unlocks per-block `cache_control` markers
+    // (Slice 1 of "Smarter assistant"), so we can mark the static
+    // prefix as cacheable while leaving the dynamic suffix uncached.
+    content: z.union([z.string(), z.array(chatContentBlockSchema)]),
   }),
   z.object({
     role: z.literal("user"),
@@ -185,6 +204,15 @@ export interface LlmSuccessResponse {
   /** Best-effort token counts. */
   inputTokens?: number;
   outputTokens?: number;
+  /**
+   * Anthropic / Gemini prompt-cache telemetry (Slice 1 of "Smarter
+   * assistant"). `cacheReadTokens` > 0 on a turn means the static
+   * prefix was billed at the discounted rate; `cacheCreationTokens`
+   * is the (one-time) write of a new cache entry. Both omitted when
+   * the provider doesn't surface them.
+   */
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
   /** Tool calls emitted by the assistant. Empty / undefined when none. */
   toolCalls?: ChatToolCall[];
   /** OpenAI-style finish reason ("stop", "tool_calls", "length", "content_filter"). */

@@ -58,6 +58,15 @@ interface OpenAIChatResponse {
     completion_tokens?: number;
     total_tokens?: number;
     cost?: number;
+    /**
+     * Anthropic prompt-cache fields (Slice 1 of "Smarter assistant").
+     * Surfaced by Anthropic + by Anthropic-via-OpenRouter. Both
+     * names are accepted because OpenRouter normalizes some.
+     */
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    /** Gemini equivalent — flat count, no creation/read split. */
+    cached_content_token_count?: number;
   };
   // Some providers (OpenRouter / Fal) attach cost here directly when the
   // generation is from a metered backend.
@@ -210,12 +219,29 @@ export async function callChatCompletions(
   const text = choice.message.content ?? "";
   const toolCalls = choice.message.tool_calls;
 
+  // Anthropic surfaces both `cache_creation_input_tokens` (write) and
+  // `cache_read_input_tokens` (hit). Gemini surfaces a flat
+  // `cached_content_token_count` — we map that to `cacheReadTokens`
+  // because all of it is read traffic. Either way, undefined fields
+  // stay undefined so callers can distinguish "no telemetry surfaced"
+  // from "zero cache activity".
+  const cacheRead =
+    data.usage?.cache_read_input_tokens ??
+    data.usage?.cached_content_token_count;
+  const cacheCreate = data.usage?.cache_creation_input_tokens;
+
   return {
     text,
     model: data.model ?? args.model,
     costUsd: data.usage?.cost,
     inputTokens: data.usage?.prompt_tokens,
     outputTokens: data.usage?.completion_tokens,
+    ...(typeof cacheCreate === "number"
+      ? { cacheCreationTokens: cacheCreate }
+      : {}),
+    ...(typeof cacheRead === "number"
+      ? { cacheReadTokens: cacheRead }
+      : {}),
     ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
     ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
   };

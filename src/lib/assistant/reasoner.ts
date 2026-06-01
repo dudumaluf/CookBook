@@ -1,11 +1,17 @@
 "use client";
 
+import {
+  DEFAULT_ASSISTANT_MODEL,
+  resolveModel,
+} from "@/lib/assistant/models";
 import { callOpenRouter } from "@/lib/llm/call-openrouter";
 import type {
+  ChatContentBlock,
   ChatMessage,
   ChatToolCall,
   LlmSuccessResponse,
 } from "@/lib/llm/types";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import { buildKnowledgeBundle } from "./knowledge";
 import {
@@ -59,8 +65,45 @@ import type { AssistantTool, ToolExecutionContext } from "./tools";
  */
 
 const MAX_TURNS = 20;
-const MAX_COST_USD = 0.5;
-const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5";
+/**
+ * Hard cap per `runReasoner` call.
+ *
+ * Slice 1 of "Smarter assistant" raised this from $0.50 to $1.00 to
+ * make room for the headroom that prompt caching (when it fires)
+ * gives us — most turns now bill at a fraction of the old static-
+ * prefix cost. Slice 3 bumps it again to $1.50:
+ *
+ *   - Slice 1 prompt caching trims re-billed static prefix to ~10%
+ *     of pre-Slice-1.
+ *   - Slice 2 lazy context + parallel reads cut another ~30% off
+ *     the average turn.
+ *   - Slice 3 history compaction + speculative pre-fetch remove a
+ *     full turn from the analyze flow.
+ *
+ * The new cap gives even pathological flows headroom while still
+ * tripping before a runaway loop burns through the budget.
+ */
+const MAX_COST_USD = 1.5;
+/**
+ * Slice 3 of "Smarter assistant" — history compaction threshold.
+ *
+ * After this many completed turns we start replacing stale read_*
+ * tool results with a one-line summary so the outgoing request body
+ * doesn't keep ballooning. The 2 most recent read results are
+ * preserved verbatim because the LLM is most likely still reasoning
+ * about them. Threshold of 5 = compaction kicks in around turn 6 of
+ * a long conversation, comfortably AFTER the typical analyze flow
+ * (1–4 turns) has wrapped.
+ */
+const COMPACTION_TURN_THRESHOLD = 5;
+const COMPACTION_KEEP_LATEST_N = 2;
+
+/**
+ * Default model when the caller doesn't pass one and the settings
+ * store hasn't been touched. Exported so external callers can refer
+ * to it without re-importing from `models.ts`.
+ */
+export const DEFAULT_MODEL = DEFAULT_ASSISTANT_MODEL;
 
 export type ReasonerEvent =
   | { type: "user"; content: string }
@@ -156,9 +199,14 @@ export async function runReasoner(
     ownerId,
     projectId,
     signal,
-    model = DEFAULT_MODEL,
+    model: rawModel,
     onEvent,
   } = options;
+  // Defensive default: an empty / whitespace-only model id falls back
+  // to the catalog default. Keeps a stale localStorage value or a
+  // typoed prompt-bar wire from sending a blank id upstream.
+  const model =
+    rawModel && rawModel.trim().length > 0 ? rawModel.trim() : DEFAULT_MODEL;
 
   const events: ReasonerEvent[] = [];
   function emit(ev: ReasonerEvent) {
@@ -172,12 +220,87 @@ export async function runReasoner(
 
   // Initial system prompt + history.
   const bundle = await buildKnowledgeBundle({ ownerId, projectId });
-  const systemContent = bundle.system + "\n\n" + REASONER_INSTRUCTIONS;
+  const capability = resolveModel(model);
+  // System message build — Slice 1 of "Smarter assistant".
+  //
+  // On caching-capable models (Anthropic, Gemini), emit two text
+  // content blocks with `cache_control: { type: "ephemeral", ttl: "1h" }`
+  // on the static prefix so the provider can serve subsequent turns
+  // from a discounted cache read. Reasoner instructions are bundled
+  // into the static prefix so they ride along.
+  //
+  // On caching-incapable models (OpenAI, Grok, custom), emit a plain
+  // concatenated string identical to today's request shape — markers
+  // would just be ignored and we don't want to risk a provider
+  // rejecting an unfamiliar block format.
+  const staticPrefix = `${bundle.staticPrefix}\n\n${REASONER_INSTRUCTIONS}`;
+  const dynamicSuffix = bundle.dynamicSuffix;
+  let systemMessage: ChatMessage;
+  if (capability.caching && staticPrefix.length > 0) {
+    const blocks: ChatContentBlock[] = [
+      {
+        type: "text",
+        text: staticPrefix,
+        cache_control: { type: "ephemeral", ttl: "1h" },
+      },
+    ];
+    if (dynamicSuffix.length > 0) {
+      blocks.push({ type: "text", text: dynamicSuffix });
+    }
+    systemMessage = { role: "system", content: blocks };
+  } else {
+    const text = dynamicSuffix
+      ? `${staticPrefix}\n\n${dynamicSuffix}`
+      : staticPrefix;
+    systemMessage = { role: "system", content: text };
+  }
   // Append the referenced-items note to the user turn (the chat UI still
   // shows the clean userMessage via the `user` event above).
   const refsNote = references ? buildReferencesNote(references) : "";
-  const userContent = refsNote ? `${userMessage}\n\n${refsNote}` : userMessage;
+  let userContent = refsNote ? `${userMessage}\n\n${refsNote}` : userMessage;
+
+  // Slice 3 of "Smarter assistant" — speculative pre-fetch.
+  //
+  // The most common analyze flow looks like:
+  //   turn 1: LLM calls analyze_selection_subgraph()
+  //   turn 2: LLM writes the UNDERSTAND/CRITIQUE/PROPOSE prose.
+  //
+  // We can collapse it to a single turn when we KNOW the user wants
+  // analysis: a 2+ node selection plus an analyze-shaped phrase in
+  // their message. Run the tool ourselves before the first LLM call
+  // and inline the result as an `<analysis_context>` block on the
+  // user message. The reasoner sees the findings on turn 1 and can
+  // jump straight to the prose, saving a full LLM round-trip on the
+  // critical path.
+  //
+  // Falls back silently to "no pre-fetch" if anything errors — the
+  // turn loop below behaves identically to today.
+  if (
+    speculativePrefetchEnabled() &&
+    matchesAnalyzeIntent(userMessage) &&
+    useWorkflowStore.getState().selectedNodeIds.length >= 2
+  ) {
+    try {
+      const tool = getTool("analyze_selection_subgraph");
+      if (tool) {
+        const result = await tool.execute({}, ctx);
+        const block = `<analysis_context tool="analyze_selection_subgraph" speculative="true">\n${JSON.stringify(result, null, 2)}\n</analysis_context>`;
+        userContent = `${userContent}\n\n${block}`;
+        emit({
+          type: "narration",
+          content:
+            "Pre-fetched selection analysis so I can skip the first read round-trip.",
+        });
+      }
+    } catch (err) {
+      console.warn("[reasoner] speculative pre-fetch failed:", err);
+    }
+  }
+  // System lives at index 0 of `messages[]` so the chat-completions
+  // wrapper doesn't try to prepend a separate string `system` arg.
+  // (`buildRequestBody` only prepends when messages[0].role !== "system".)
   const messages: ChatMessage[] = [
+    systemMessage,
     ...bundle.messages,
     { role: "user", content: userContent },
   ];
@@ -191,16 +314,37 @@ export async function runReasoner(
       return { events, totalCostUsd, aborted: true };
     }
 
+    // Slice 3 of "Smarter assistant" — history compaction.
+    //
+    // After turn 5 the conversation history typically holds dozens of
+    // KB of stale read_* / analyze_* tool results that the LLM has
+    // already digested. Replace each with a one-line placeholder so
+    // the OUTGOING request body shrinks. We always keep the latest 2
+    // read results verbatim — the LLM is most likely to be reasoning
+    // about those still. Mutating tool results (add_node, run_*,
+    // propose_refactor, …) are NEVER touched: they encode the
+    // committed graph state and the LLM may need their full payload
+    // (e.g. node ids) to keep reasoning coherently.
+    //
+    // Set ASSISTANT_HISTORY_COMPACTION=false to disable (rollback).
+    if (turn >= COMPACTION_TURN_THRESHOLD && historyCompactionEnabled()) {
+      compactStaleReadResults(messages);
+    }
+
     let response: LlmSuccessResponse;
     try {
       response = await callOpenRouter({
         model,
         messages,
-        system: systemContent,
         tools: toolDefs,
         toolChoice: "auto",
         temperature: 0.2,
         maxTokens: 1500,
+        // Slice 2: allow Claude/GPT/etc. to emit multiple tool calls in
+        // a single turn. The dispatch loop below groups read-only calls
+        // and runs them concurrently while keeping mutating calls
+        // sequential, so concurrent emission is safe.
+        parallelToolCalls: true,
         signal,
       });
     } catch (err) {
@@ -214,6 +358,38 @@ export async function runReasoner(
 
     if (typeof response.costUsd === "number") {
       totalCostUsd += response.costUsd;
+    }
+
+    // Telemetry — Slice 1 of "Smarter assistant". Surfaces cache hits
+    // so we can verify whether prompt caching is actually firing in
+    // production. `cache_read > 0` on turn 2+ = caching is working.
+    // All-zeros + Anthropic model = Fal/OpenRouter is stripping the
+    // markers; lean on Slices 2/3 for savings.
+    if (
+      response.cacheCreationTokens !== undefined ||
+      response.cacheReadTokens !== undefined ||
+      response.inputTokens !== undefined
+    ) {
+      const parts: string[] = [
+        `[reasoner] turn ${turn + 1}`,
+        `model=${capability.id}`,
+      ];
+      if (typeof response.costUsd === "number") {
+        parts.push(`cost=$${response.costUsd.toFixed(4)}`);
+      }
+      if (typeof response.cacheReadTokens === "number") {
+        parts.push(`cache_read=${response.cacheReadTokens}`);
+      }
+      if (typeof response.cacheCreationTokens === "number") {
+        parts.push(`cache_create=${response.cacheCreationTokens}`);
+      }
+      if (typeof response.inputTokens === "number") {
+        parts.push(`input=${response.inputTokens}`);
+      }
+      if (typeof response.outputTokens === "number") {
+        parts.push(`output=${response.outputTokens}`);
+      }
+      console.log(parts.join(" "));
     }
 
     // Append the assistant turn to messages so subsequent calls
@@ -239,8 +415,33 @@ export async function runReasoner(
       return { events, totalCostUsd, finalText: response.text };
     }
 
-    // Dispatch each tool call. Sequential — `parallel_tool_calls`
-    // is off so the LLM emitted them ordered.
+    // Dispatch each tool call.
+    //
+    // Slice 2 of "Smarter assistant": with `parallel_tool_calls: true`
+    // the LLM is allowed to emit multiple tools in a single turn. We
+    // group them by side-effect class:
+    //
+    //   - read-only: names starting with `read_` or `analyze_`, plus
+    //     `narrate` (no graph mutation, safe to run concurrently).
+    //   - mutating: everything else (add_node, add_edge, run_*,
+    //     propose_refactor, etc.) — must stay sequential because of
+    //     write-after-write dependencies (e.g. add_edge wants the id
+    //     from a preceding add_node).
+    //
+    // We still emit `tool_call` events in the original LLM-emitted
+    // order so the trace UI is not reshuffled. Same for the
+    // post-dispatch `tool_result` events and the appended tool
+    // messages — order in `messages[]` matches `response.toolCalls`.
+    //
+    // ask_user halts the rest of the turn (paused: true) just like
+    // before. Any tool calls emitted AFTER an ask_user in the same
+    // turn are dropped, matching the pre-Slice-2 behavior.
+    type ToolOutcome = { result: unknown; durationMs: number };
+    const outcomes = new Map<string, ToolOutcome>();
+    const readCallsToDispatch: ChatToolCall[] = [];
+    const writeCallsToDispatch: ChatToolCall[] = [];
+    let pausedForAskUser = false;
+
     for (const call of response.toolCalls) {
       emit({
         type: "tool_call",
@@ -278,37 +479,69 @@ export async function runReasoner(
               note: "User asked; resuming next turn.",
             }),
           });
-          return { events, totalCostUsd, paused: true };
+          pausedForAskUser = true;
+          break;
         }
       }
 
+      if (isReadOnlyToolName(call.function.name)) {
+        readCallsToDispatch.push(call);
+      } else {
+        writeCallsToDispatch.push(call);
+      }
+    }
+
+    if (pausedForAskUser) {
+      return { events, totalCostUsd, paused: true };
+    }
+
+    // Read-only group → concurrent. `Promise.all` waits for the
+    // slowest, but the wall-clock dominates the slowest single read,
+    // not the sum. ~30% saving on multi-read turns.
+    if (readCallsToDispatch.length > 0) {
+      await Promise.all(
+        readCallsToDispatch.map(async (call) => {
+          const tool = getTool(call.function.name);
+          const startedAt = performance.now();
+          const result = !tool
+            ? { ok: false, error: `Unknown tool: ${call.function.name}` }
+            : await dispatchTool(tool, call, ctx);
+          const durationMs = Math.round(performance.now() - startedAt);
+          outcomes.set(call.id, { result, durationMs });
+        }),
+      );
+    }
+
+    // Mutating group → sequential. add_edge needs the id from a
+    // preceding add_node; the assistant relies on this ordering.
+    for (const call of writeCallsToDispatch) {
       const tool = getTool(call.function.name);
       const startedAt = performance.now();
-      let result: unknown;
-      if (!tool) {
-        result = {
-          ok: false,
-          error: `Unknown tool: ${call.function.name}`,
-        };
-      } else {
-        result = await dispatchTool(tool, call, ctx);
-      }
+      const result = !tool
+        ? { ok: false, error: `Unknown tool: ${call.function.name}` }
+        : await dispatchTool(tool, call, ctx);
       const durationMs = Math.round(performance.now() - startedAt);
+      outcomes.set(call.id, { result, durationMs });
+    }
+
+    // Emit results + push tool messages in the LLM's emission order so
+    // (a) the trace UI renders in the order the user expects, and
+    // (b) the OpenAI shape is preserved (each tool_call has exactly
+    // one matching tool message, identified by tool_call_id).
+    for (const call of response.toolCalls) {
+      const outcome = outcomes.get(call.id);
+      if (!outcome) continue;
       emit({
         type: "tool_result",
         toolName: call.function.name,
         callId: call.id,
-        result,
-        durationMs,
+        result: outcome.result,
+        durationMs: outcome.durationMs,
       });
-
-      // Append the tool result to messages so the next LLM call
-      // sees it. Each tool call gets exactly one matching tool
-      // message, identified by tool_call_id.
       messages.push({
         role: "tool",
         tool_call_id: call.id,
-        content: JSON.stringify(result),
+        content: JSON.stringify(outcome.result),
       });
     }
 
@@ -364,6 +597,176 @@ function safeParseJson(s: string): unknown {
   }
 }
 
+/**
+ * Slice 2 of "Smarter assistant".
+ *
+ * A tool is safe to dispatch concurrently with peers iff it has no
+ * effect on the workflow graph or on external state observable by
+ * other tools. We classify by name (cheap, no descriptor changes
+ * needed):
+ *
+ *   - `read_*`         — pure observation (read_canvas, read_gallery, …).
+ *   - `analyze_*`      — pure observation (analyze_selection_subgraph).
+ *   - `narrate`        — emits a chat narration; no graph mutation.
+ *
+ * Everything else (add_*, remove_*, update_*, run_*, propose_refactor,
+ * find_similar_generations because it hits the network and ordering
+ * with mutations is unspecified, etc.) is treated as mutating and
+ * dispatched sequentially.
+ */
+function isReadOnlyToolName(name: string): boolean {
+  if (name === "narrate") return true;
+  return name.startsWith("read_") || name.startsWith("analyze_");
+}
+
+/**
+ * Slice 3 of "Smarter assistant" — history compaction.
+ *
+ * Walk `messages[]` and replace stale `read_*` / `analyze_*` tool
+ * results with a one-line placeholder. We keep the latest N
+ * (configured via {@link COMPACTION_KEEP_LATEST_N}) untouched
+ * because the LLM is most likely still reasoning about them.
+ *
+ * Mutating tool results (add_*, run_*, propose_refactor, …) are
+ * NEVER compacted: they encode committed graph state and the LLM
+ * may need the full payload to stay consistent.
+ *
+ * The placeholder shape is intentionally tiny so token savings are
+ * material:
+ *   `[summarized] read_canvas returned 30 nodes, 42 edges`
+ *
+ * Mutates `messages` in place — no clone, no allocation per
+ * non-stale entry.
+ */
+function compactStaleReadResults(messages: ChatMessage[]): void {
+  // Map tool_call_id → tool name from preceding assistant turns. We
+  // need this because tool messages don't carry the tool name on the
+  // wire — only the call id.
+  const callIdToName = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        callIdToName.set(tc.id, tc.function.name);
+      }
+    }
+  }
+
+  const readToolMessageIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg?.role !== "tool" || !msg.tool_call_id) continue;
+    const name = callIdToName.get(msg.tool_call_id);
+    if (!name) continue;
+    if (name.startsWith("read_") || name.startsWith("analyze_")) {
+      readToolMessageIndices.push(i);
+    }
+  }
+
+  if (readToolMessageIndices.length <= COMPACTION_KEEP_LATEST_N) return;
+
+  const toCompact = readToolMessageIndices.slice(
+    0,
+    readToolMessageIndices.length - COMPACTION_KEEP_LATEST_N,
+  );
+
+  for (const idx of toCompact) {
+    const msg = messages[idx];
+    if (!msg || msg.role !== "tool") continue;
+    const name = callIdToName.get(msg.tool_call_id) ?? "read_*";
+    const original =
+      typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    if (typeof original === "string" && original.startsWith("[summarized]")) {
+      // Already compacted — leave alone (keeps idempotency).
+      continue;
+    }
+    msg.content = summarizeReadResult(name, original);
+  }
+}
+
+/**
+ * Best-effort one-line summary of a read tool's JSON payload. Falls
+ * back to a generic placeholder if the payload doesn't fit any
+ * known shape — the goal is not perfect fidelity, it's "enough for
+ * the LLM to remember this tool was already called and roughly what
+ * it returned without the full body bloating every subsequent
+ * request".
+ */
+function summarizeReadResult(toolName: string, originalJson: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(originalJson);
+  } catch {
+    return `[summarized] ${toolName} result elided to save tokens`;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return `[summarized] ${toolName} result elided to save tokens`;
+  }
+  const obj = parsed as Record<string, unknown>;
+
+  if (Array.isArray(obj.nodes) && Array.isArray(obj.edges)) {
+    const nodes = obj.nodes as unknown[];
+    const edges = obj.edges as unknown[];
+    return `[summarized] ${toolName} returned ${nodes.length} nodes, ${edges.length} edges`;
+  }
+  if (Array.isArray(obj.assets)) {
+    return `[summarized] ${toolName} returned ${(obj.assets as unknown[]).length} assets`;
+  }
+  if (Array.isArray(obj.generations)) {
+    return `[summarized] ${toolName} returned ${(obj.generations as unknown[]).length} generations`;
+  }
+  if (typeof obj.count === "number") {
+    return `[summarized] ${toolName} returned count=${obj.count}`;
+  }
+  if (obj.found === false) {
+    return `[summarized] ${toolName} returned found:false`;
+  }
+  if (obj.found === true && typeof obj.kind === "string") {
+    return `[summarized] ${toolName} returned schema for kind=${obj.kind}`;
+  }
+  return `[summarized] ${toolName} result elided to save tokens`;
+}
+
+/**
+ * Env-toggle for the rollback story. Defaults to enabled.
+ * Set ASSISTANT_HISTORY_COMPACTION=false (any case) to disable.
+ */
+function historyCompactionEnabled(): boolean {
+  const raw = (typeof process !== "undefined" && process.env
+    ? process.env.ASSISTANT_HISTORY_COMPACTION
+    : undefined);
+  if (raw === undefined) return true;
+  return raw.toLowerCase() !== "false";
+}
+
+/**
+ * Slice 3 of "Smarter assistant" — speculative pre-fetch.
+ *
+ * Trigger on the canonical analyze/optimize verbs the user reaches
+ * for when they want suggestions about a selected subgraph. The
+ * regex is intentionally generous because the cost of a false
+ * positive is low (one extra fast tool call's worth of compute) and
+ * the cost of a false negative is high (a wasted round-trip).
+ */
+const ANALYZE_INTENT_RE =
+  /\b(improve|simplify|optimize|optimise|analyze|analyse|review|refactor|cleaner|simpler|better|tidy|clean[\s-]?up)\b/i;
+
+function matchesAnalyzeIntent(message: string): boolean {
+  if (!message) return false;
+  return ANALYZE_INTENT_RE.test(message);
+}
+
+/**
+ * Env-toggle for the rollback story. Defaults to enabled.
+ * Set ASSISTANT_SPECULATIVE=false (any case) to disable.
+ */
+function speculativePrefetchEnabled(): boolean {
+  const raw = (typeof process !== "undefined" && process.env
+    ? process.env.ASSISTANT_SPECULATIVE
+    : undefined);
+  if (raw === undefined) return true;
+  return raw.toLowerCase() !== "false";
+}
+
 const REASONER_INSTRUCTIONS = `## OPERATING INSTRUCTIONS
 
 You are operating in a tool-calling loop. Each turn:
@@ -371,23 +774,29 @@ You are operating in a tool-calling loop. Each turn:
 - Decide: is the user's request handled? If yes, write the final assistant message (no tool calls). If not, call one or more tools to make progress.
 
 Rules:
-- Always call \`narrate\` to keep the user informed during long tool sequences (e.g. "checking your gallery for noir prompts...", "found 3 candidates").
+- narrate sparingly: at most ONE short sentence per call. Skip entirely on fast turns (< 3 tool calls).
 - Call \`ask_user\` when ambiguous: which Soul ID? which image? confirm cost > $0.05?
 - Use \`read_*\` tools to GROUND your decisions in real state, not assumptions.
+- The \`## NODE CATALOG\` section gives you a one-line summary per kind. Call \`read_node_schema({ kind })\` when you need the full I/O + defaultConfig of a kind you don't already remember in detail.
 - Construct workflows step-by-step: \`add_node\` for each, then \`add_edge\` for each connection.
 - ALWAYS finish with \`run_workflow\` (or \`run_from\`) when the user wanted output, not just a graph.
-- When done, write a short final assistant message summarizing what you did + pointing the user at the result (Gallery / canvas).
+- Final assistant message: 1–3 sentences unless the user asked for prose explanation. NEVER restate what the user just said. Point at the result (Gallery / canvas) and stop.
 - DO NOT include markdown JSON or code-fences in the final assistant message — write natural prose.
 
 Cost discipline:
 - Reactive nodes (Text, Image, Number, Iterators) cost nothing — use them freely.
 - Non-reactive (LLM, Higgsfield, Export) cost real money. Confirm via \`ask_user\` when single-message spend > $0.05.
-- Hard caps: 20 tool calls + $0.50 per user message. If you approach either, narrate + finish.
+- Hard caps: 20 tool calls + $1.50 per user message. If you approach either, narrate + finish.
+
+## BATCHING
+
+When you're about to call construct tools (\`add_node\`, \`add_edge\`, \`remove_node\`, \`remove_edge\`, \`update_node_config\`, \`move_node\`) THREE OR MORE times in a row, bundle them into a single \`propose_refactor\` call instead. Even when the user hasn't asked for an "analyze + apply" flow — bundling cuts round-trips and the user still sees the preview modal and confirms atomically. One or two ops can stay as direct calls; three or more should always go through \`propose_refactor\`.
 
 ## ANALYSIS / OPTIMIZATION FLOW
 
 When the SELECTION block is present in your context (\`## SELECTION\` after \`## CANVAS\`) the user has highlighted a subgraph and likely wants to discuss IT specifically — not the whole canvas. When their message reads as "analyze", "review", "what does this do", "how can I improve / simplify / optimize this", "is this organized well", "can you make it better", or similar, follow this order strictly:
 
+0. **REMEMBER.** Call \`read_user_preferences\` once at the start of an analyze flow. If the user has prior preferences (e.g. "prefers Text Concat over chained text nodes", "always wants params exposed"), surface them in your CRITIQUE and PROPOSE steps so suggestions stay aligned with their style. Skip \`read_user_preferences\` on non-analyze turns to save round-trips.
 1. **UNDERSTAND.** State explicitly what the workflow is doing in plain prose. Cover:
    - Inputs the slice accepts (the \`Exposed I/O if saved as recipe\` block tells you).
    - Outputs it produces.
@@ -401,4 +810,5 @@ When the SELECTION block is present in your context (\`## SELECTION\` after \`##
 3. **PROPOSE.** Offer 1–3 specific changes the user can opt into, each as a single sentence + a hint of which tools you'd call. Example:
    > "1. Collapse n3 and n4 into one Text Concat — I'd \`add_node\` a \`text-concat\`, \`add_edge\` from each chunk to its inputs, then \`remove_node\` the two originals."
 4. **WAIT.** **Do NOT mutate the graph in this turn.** Write your final assistant message after step 3 and stop. The user must say "apply", "do it", "yes do option 2", or accept a specific suggestion before you call any mutating tools.
-5. **APPLY (next turn, only on confirmation).** When the user confirms, call \`propose_refactor\` (NOT raw \`add_node\` / \`remove_node\`) so the change goes through the preview-diff modal. The user's atomic confirm there is the final gate. Pass a one-line \`summary\` and an ordered \`operations[]\` list. The tool just QUEUES the proposal — your job is done after the call; write the final assistant message and stop.`;
+5. **APPLY (next turn, only on confirmation).** When the user confirms, call \`propose_refactor\` (NOT raw \`add_node\` / \`remove_node\`) so the change goes through the preview-diff modal. The user's atomic confirm there is the final gate. Pass a one-line \`summary\` and an ordered \`operations[]\` list. The tool just QUEUES the proposal — your job is done after the call; write the final assistant message and stop.
+6. **LEARN.** After a successful \`propose_refactor\` call (i.e. you queued the proposal — the user's atomic confirm happens out of band), call \`update_user_preferences\` once with a short \`patterns\` entry capturing what you just consolidated. Future analyze flows will load this via \`read_user_preferences\` and align with it. Skip if the change was trivial or one-off.`;

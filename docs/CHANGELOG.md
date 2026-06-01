@@ -2,6 +2,74 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-05-31 — Smarter assistant Slice 3: history compaction + speculative pre-fetch + memory loop
+
+Last of the four "Smarter assistant" slices. Cuts a full LLM round-trip off the most common analyze flow, stops the conversation history from growing without bound, and teaches the reasoner to remember user preferences across sessions.
+
+**1. History compaction in `messages[]`.** New `compactStaleReadResults()` helper inside `src/lib/assistant/reasoner.ts`. After turn 5, walk the request body and replace stale `read_*` / `analyze_*` tool messages with a one-line placeholder (`[summarized] read_canvas returned 30 nodes, 42 edges`). The latest 2 read results are preserved verbatim because the LLM is still reasoning about them. Mutating tool results (`add_node`, `run_*`, `propose_refactor`, …) are NEVER compacted — they encode committed graph state. Idempotent: re-compaction skips already-compacted entries. Toggleable via `ASSISTANT_HISTORY_COMPACTION=false` (rollback story).
+
+**2. Speculative pre-fetch.** Before the first LLM call, detect the high-probability "user wants analysis" signal: 2+ nodes selected AND the message matches `/\b(improve|simplify|optimize|optimise|analyze|analyse|review|refactor|cleaner|simpler|better|tidy|clean[\s-]?up)\b/i`. When both fire, run `analyze_selection_subgraph` ourselves and inline the result into the user message as `<analysis_context>`. The reasoner sees the findings on turn 1 and jumps straight to UNDERSTAND → CRITIQUE → PROPOSE — saves a full round-trip on the canonical analyze flow. Falls back silently to "no pre-fetch" on any error. Toggleable via `ASSISTANT_SPECULATIVE=false`.
+
+**3. User-preference loop in `REASONER_INSTRUCTIONS`.** Two new steps in the analysis flow: **0. REMEMBER** (call `read_user_preferences` at analyze start), **6. LEARN** (call `update_user_preferences` after a successful `propose_refactor`). The tools already existed (Slice 7.6); Slice 3 just teaches the reasoner to use them habitually so refactor preferences accumulate across sessions.
+
+**4. Output discipline.** Tightened the global rules block: `narrate sparingly: at most ONE short sentence per call; skip entirely on fast turns (< 3 tool calls)`. Final assistant message: `1–3 sentences unless the user asked for prose explanation. NEVER restate what the user just said.` ~30% output token savings on long sessions.
+
+**5. Cost cap bump $1.00 → $1.50.** With Slice 1 caching, Slice 2 lazy context, and Slice 3 compaction + speculative, even pathological flows fit. Cap still trips well before a runaway loop sprints through the budget.
+
+**Tests +13:** 8 in `tests/unit/assistant/reasoner.test.ts` (compaction triggers after threshold; latest 2 stay verbatim; mutating results never compacted; env-var disable; speculative fires on intent + selection; doesn't fire without; env-var disable) plus 3 in new `tests/unit/assistant/preferences.test.ts` (REMEMBER references `read_user_preferences`; LEARN references `update_user_preferences`; preferences guidance lives inside the analyze flow not the global rules) plus 2 inline (output-discipline phrases; updated cap-trip threshold). All 1386 tests green.
+
+## 2026-05-31 — Smarter assistant Slice 2: lazy context + parallel reads + propose_refactor preference
+
+Third of the four "Smarter assistant" slices. Loads less to begin with and dispatches concurrent read tools in parallel — typical multi-read turns now finish in ~one read's wall-time instead of the sum.
+
+**1. Lazy node catalog.** `src/lib/assistant/knowledge/node-catalog.ts` switched from full I/O blocks per kind (~3,500 tokens) to one-line summaries per kind (~1,000 tokens). Format: `` - `kind` — Title (category · reactive · 2 in / 1 out) — Description ``. The full I/O + `defaultConfig` of any kind is one tool call away via the new `read_node_schema` tool. Net token savings on a typical turn: ~2,500 tokens.
+
+**2. New `read_node_schema` tool.** New file `src/lib/assistant/tools/read/read-node-schema.ts`. Args `{ kind: string }`, returns `{ found, kind, title, description, category, reactive, iterator, inputs, outputs, defaultConfig }`. JSON-roundtrips `defaultConfig` so non-serializable bits (class instances, functions) get stripped. Registered in `src/lib/assistant/tools/index.ts` alongside the other `read_*` tools.
+
+**3. Tighter gallery context.** `src/lib/assistant/knowledge/gallery.ts` `RECENT_LIMIT` 15 → 5 and `PINNED_LIMIT` 10 → 5. Net savings ~1,000 tokens/turn. Smaller-but-always > conditional-but-sometimes-missing — the full gallery is one `read_gallery` call away when a turn actually needs it.
+
+**4. Parallel dispatch for read-only tools.** `runReasoner` now classifies each emitted tool call by name: `read_*`, `analyze_*`, and `narrate` are read-only and run via `Promise.all`; everything else (`add_*`, `remove_*`, `update_*`, `run_*`, `propose_refactor`, …) dispatches sequentially because writes have ordering dependencies (e.g. `add_edge` needs the id from the preceding `add_node`). Emit order is preserved for the trace UI: `tool_call` events fire in the LLM's emission order, and `tool_result` events / appended `tool` messages in the same order — out-of-order completion is invisible to both the user and the next-turn LLM. `parallel_tool_calls: true` is now forwarded to the LLM so Claude/GPT know they can emit multiple tools in one turn.
+
+**5. `propose_refactor` preference.** New `## BATCHING` section in `REASONER_INSTRUCTIONS`: when about to call construct tools (`add_node`, `add_edge`, `remove_node`, `remove_edge`, `update_node_config`, `move_node`) THREE OR MORE times in a row, bundle them into a single `propose_refactor` call instead. Even when the user hasn't explicitly asked for an "analyze + apply" flow — bundling cuts round-trips and the user still sees the preview modal and confirms atomically.
+
+**Tests +13:** 5 in new `tests/unit/assistant/tools/read-node-schema.test.ts` (registration, full schema for known kind, per-handle dataType + multiple flag, found:false on unknown kind, JSON-safe defaultConfig, empty-kind rejection) plus 5 in `tests/unit/assistant/reasoner.test.ts` (`parallelToolCalls: true` is forwarded; 3 read tools dispatch concurrently in <150ms not 180ms; mutating tools dispatch sequentially preserving emit order; out-of-order completion still emits results in emit order; BATCHING section is present in the system prompt) plus 3 in `tests/unit/assistant/knowledge.test.ts` (one-line-per-kind summaries; `read_node_schema` referenced; no `**Inputs:**` / `**Outputs:**` blocks; gallery list call uses `limit ≤ 5`). All 1373 tests green.
+
+## 2026-05-31 — Smarter assistant Slice 1: Anthropic prompt caching + cost telemetry
+
+Second of the four "Smarter assistant" slices. Stops re-billing the static prefix every turn on caching-capable models, surfaces cache-hit telemetry so we can verify caching is firing in production, and bumps the per-message cost cap to $1.00 with the new headroom.
+
+**1. Cache-capable response shape.** `src/lib/llm/types.ts` extended: `LlmSuccessResponse` now carries optional `cacheCreationTokens` + `cacheReadTokens`. `chatContentBlockSchema.text` accepts an optional `cache_control: { type: "ephemeral", ttl?: "5m" | "1h" }` field. `chatMessageSchema` system variant accepts either a string or an array of content blocks so we can emit Anthropic-style cache markers without a separate request shape.
+
+**2. Cache token mapping in `chat-completions.ts`.** `OpenAIChatResponse.usage` extended with `cache_creation_input_tokens` (Anthropic), `cache_read_input_tokens` (Anthropic), and `cached_content_token_count` (Gemini). All three map back to the unified `cacheCreationTokens` / `cacheReadTokens` on `LlmSuccessResponse`. Provider-agnostic at the boundary; reasoner only sees the unified shape.
+
+**3. Knowledge bundle staticPrefix / dynamicSuffix split.** `src/lib/assistant/knowledge/index.ts` `buildKnowledgeBundle` now returns `{ system, staticPrefix, dynamicSuffix, messages }`. `staticPrefix` = identity + vocabulary + node catalog + tool definitions (~7,300 tokens, never changes within a session). `dynamicSuffix` = recipes + canvas + selection + library + gallery (recomputed per call). `system` is `staticPrefix + "\n\n" + dynamicSuffix` for backward compat; existing callers keep working.
+
+**4. Conditional cache markers in the reasoner.** `runReasoner` now resolves the selected model via `resolveModel(model)` and inspects `capability.caching`. When `true` (Anthropic, Gemini), the system message ships as two content blocks: `[{ type: "text", text: staticPrefix, cache_control: { type: "ephemeral", ttl: "1h" } }, { type: "text", text: dynamicSuffix }]`. When `false` (OpenAI, Grok, custom), the system message is a single concatenated string identical to today. Reasoner instructions are bundled into the static prefix so they ride along on the cache hit.
+
+**5. Per-turn cache telemetry.** New `console.log` line per turn: `[reasoner] turn 3 model=anthropic/claude-sonnet-4.5 cost=$0.012 cache_read=7128 cache_create=0 input=8200 output=210`. Lets us watch whether `cache_read > 0` on turn 2+ in production. If it's always 0 on Anthropic models, Fal/OpenRouter is stripping markers and we know to lean harder on Slices 2/3 for savings.
+
+**6. Cost cap $0.50 → $1.00.** Conservative bump matching the expected Slice 1 savings — even a no-op caching scenario fits within the cap on a typical 7-turn analyze run.
+
+**Tests +14:** 4 in new `tests/unit/llm/cache-control.test.ts` (`cacheControlSchema` accepts ephemeral + 5m/1h TTLs, rejects bad TTLs and types; text block with/without cache_control; cache_control rejected on image blocks). 3 in `tests/unit/llm/chat-completions.test.ts` (`cacheReadTokens` from Anthropic, `cacheReadTokens` from Gemini's `cached_content_token_count`, fields omitted when not present, structured system messages forwarded verbatim). 6 in `tests/unit/assistant/knowledge.test.ts` (staticPrefix contains identity/vocabulary/catalog/tools; dynamicSuffix contains canvas/library/gallery; staticPrefix excludes per-call dimensions; legacy `system` is the concatenation; staticPrefix > 4096 chars Anthropic caching threshold; empty dynamicSuffix when all skip flags set). 4 in `tests/unit/assistant/reasoner.test.ts` (caching-capable models emit content blocks with cache_control; caching-incapable models emit a plain string; unknown ids default to plain string; no top-level `system` arg). All 1360 tests green.
+
+## 2026-05-31 — Smarter assistant Slice 0: model selector + per-browser settings
+
+First of four "Smarter assistant" slices, foundation for the rest. Lets the user pick which LLM drives the assistant from a curated catalog (or any custom OpenRouter id), persists the choice in localStorage, and exposes the capability metadata (`caching`, `tools`) the later slices read.
+
+**1. Model catalog.** New file `src/lib/assistant/models.ts`. `AssistantModel` interface (`id`, `label`, `provider`, `tier: "fast" | "balanced" | "premium"`, `caching: boolean`, `tools: boolean`, `costHint: "$" | "$$" | "$$$" | "$$$$"`). `ASSISTANT_MODELS` ships 8 curated picks (Sonnet 4.5, Opus 4, Haiku 4.5, GPT-5, GPT-4o, Gemini 2.5 Pro, Gemini 2.5 Flash, Grok 4). `DEFAULT_ASSISTANT_MODEL` = Sonnet 4.5. `resolveModel(id)` returns the curated metadata or a permissive default for unknown ids (`tools: true, caching: false`).
+
+**2. Settings store.** New file `src/lib/stores/assistant-settings-store.ts`. Zustand + `persist` middleware → localStorage, single field `model: string`. Validated on read via `getModel()`: empty / whitespace strings fall back to the default. `setModel` trims input. `reset` clears to the default.
+
+**3. ModelSelector dropdown.** New file `src/components/assistant/model-selector.tsx`. Compact `Popover` trigger (label + tier badge + cost hint dots). Menu lists `ASSISTANT_MODELS` with capability dots (`tools`, `cache`) and a footer entry "Custom OpenRouter ID..." that accepts arbitrary `provider/model-name` strings on Enter. Selected row gets a check mark.
+
+**4. Mounted in chat-sheet header.** `src/components/layout/chat-sheet.tsx` slots `<ModelSelector />` between the conversation title and the Clear button. No layout regressions at the existing `max-w-[640px]` width.
+
+**5. Wired into the prompt bar.** `src/components/layout/prompt-bar.tsx` reads `useAssistantSettingsStore.getState().getModel()` and passes it as the `model` arg to `runReasoner`. The reasoner already accepted this on its options surface.
+
+**6. Defensive fallback in the reasoner.** `runReasoner` now does `model = rawModel?.trim() ?? DEFAULT_MODEL`, falling back to the catalog default on empty / whitespace input. `DEFAULT_MODEL` is re-exported from `models.ts` so `models.ts` is the single source of truth.
+
+**Tests +21:** 9 in new `tests/unit/stores/assistant-settings-store.test.ts` (catalog validation: every model has both providers + tool capability; default is Sonnet 4.5; `isKnownModel`; `resolveModel` for known/unknown/empty; `setModel` trims; `reset`; localStorage persistence; `getActiveModel` convenience). 8 in new `tests/component/assistant/model-selector.test.tsx` (trigger renders; popover lists models; selected highlight; click selects + persists; custom-id input flow open/type/Enter; Enter ignores empty; Apply button). 4 in `tests/unit/assistant/reasoner.test.ts` (explicit model id forwarded; default fallback when omitted; default fallback on empty/whitespace; trim around custom ids). All 1346 tests green.
+
 ## 2026-05-31 — Assistant: analyze + improve a selection (or recipe)
 
 The user asked: *"would be really cool to be able to highlight a selection of nodes... have the assistant analyze inputs, outputs, whatever is relevant... so it can understand what we want and how to do it better."* The infrastructure was 90% there — 28 tools, knowledge bus, selection tracking — so we shipped the missing 10% in three phased slices.

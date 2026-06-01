@@ -19,6 +19,7 @@ import { analyzeSelectionSubgraphTool } from "./read/analyze-selection-subgraph"
 import { readCanvasTool } from "./read/read-canvas";
 import { readGalleryTool } from "./read/read-gallery";
 import { readLibraryTool } from "./read/read-library";
+import { readNodeSchemaTool } from "./read/read-node-schema";
 import { readNodeStateTool } from "./read/read-node-state";
 import { readRecipeTool } from "./read/read-recipe";
 import { askUserTool } from "./reasoning/ask-user";
@@ -89,6 +90,7 @@ const tools: AssistantTool[] = [
   // Slice 7.2 — read tools. Observability surface.
   readCanvasTool,
   readNodeStateTool,
+  readNodeSchemaTool,
   readLibraryTool,
   readGalleryTool,
   readRecipeTool,

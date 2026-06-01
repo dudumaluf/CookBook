@@ -45,6 +45,9 @@ const { buildCanvasKnowledge } = await import(
 const { buildLibraryKnowledge } = await import(
   "@/lib/assistant/knowledge/library"
 );
+const { buildGalleryKnowledge } = await import(
+  "@/lib/assistant/knowledge/gallery"
+);
 const { buildConversationMessages } = await import(
   "@/lib/assistant/knowledge/conversation"
 );
@@ -110,6 +113,37 @@ describe("buildNodeCatalogKnowledge", () => {
     expect(md).toContain("reactive");
     // Hidden kinds (composite, passthrough) are excluded.
     expect(md).not.toContain("`passthrough`");
+  });
+
+  /* ────────────────────────────────────────────────────────── */
+  /* Slice 2 of "Smarter assistant" — lazy summaries            */
+  /* ────────────────────────────────────────────────────────── */
+
+  it("emits one-line-per-kind summaries (Slice 2 lazy catalog)", () => {
+    const md = buildNodeCatalogKnowledge();
+    // Each kind line starts with "- `<kind>` — <title> ..." and we
+    // expect roughly one line per registered kind. We don't assert
+    // exact counts (registry grows), but we DO assert there's no
+    // multi-line per-kind shape (a regression to the old format).
+    const kindLines = md.split("\n").filter((l) => /^- `[\w-]+`/.test(l));
+    expect(kindLines.length).toBeGreaterThan(10);
+    // Every kind line includes the inline I/O signature (e.g. "1 in / 1 out")
+    for (const line of kindLines) {
+      expect(line).toMatch(/\d\+? in \/ \d\+? out/);
+    }
+  });
+
+  it("references the read_node_schema tool for full I/O lookups", () => {
+    const md = buildNodeCatalogKnowledge();
+    expect(md).toContain("read_node_schema");
+  });
+
+  it("does NOT inline the full I/O block for any kind (Slice 2 trim)", () => {
+    const md = buildNodeCatalogKnowledge();
+    // The old-format full block always had a sub-header like
+    // "**Inputs:**" / "**Outputs:**". Lazy summaries DON'T.
+    expect(md).not.toMatch(/\*\*Inputs:\*\*/);
+    expect(md).not.toMatch(/\*\*Outputs:\*\*/);
   });
 });
 
@@ -196,6 +230,22 @@ describe("buildLibraryKnowledge", () => {
     expect(md).toContain("Dudu");
     expect(md).toContain("Images");
     expect(md).toContain("Photo.jpg");
+  });
+});
+
+describe("buildGalleryKnowledge — Slice 2 limits", () => {
+  it("calls list with the trimmed limits (5 recent + 5 pinned)", async () => {
+    generationRepoMocks.list.mockResolvedValue([]);
+    await buildGalleryKnowledge("p1");
+    // Two list calls — recent + pinned. Slice 2 trimmed both to 5.
+    const limits = generationRepoMocks.list.mock.calls.map(
+      (args: unknown[]) => (args[0] as { limit?: number }).limit,
+    );
+    // Both calls cap at 5 (was 15 + 10 pre-Slice-2).
+    for (const l of limits) {
+      expect(l).toBeLessThanOrEqual(5);
+    }
+    expect(limits).toContain(5);
   });
 });
 
@@ -336,5 +386,80 @@ describe("buildKnowledgeBundle", () => {
       skip: { selection: true },
     });
     expect(bundle.system).not.toContain("## SELECTION");
+  });
+
+  /* ────────────────────────────────────────────────────────────────── */
+  /* Slice 1 of "Smarter assistant" — staticPrefix / dynamicSuffix split */
+  /* ────────────────────────────────────────────────────────────────── */
+
+  describe("staticPrefix / dynamicSuffix split (Slice 1)", () => {
+    it("returns staticPrefix containing identity + node catalog + tools", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+      });
+      expect(bundle.staticPrefix).toContain("COOKBOOK");
+      expect(bundle.staticPrefix).toContain("VOCABULARY");
+      expect(bundle.staticPrefix).toContain("NODE CATALOG");
+      expect(bundle.staticPrefix).toContain("TOOLS YOU CAN CALL");
+    });
+
+    it("returns dynamicSuffix containing canvas + library + gallery", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+      });
+      expect(bundle.dynamicSuffix).toContain("CANVAS");
+      expect(bundle.dynamicSuffix).toContain("LIBRARY");
+      expect(bundle.dynamicSuffix).toContain("GALLERY");
+    });
+
+    it("staticPrefix excludes per-call dimensions", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+      });
+      expect(bundle.staticPrefix).not.toContain("## CANVAS");
+      expect(bundle.staticPrefix).not.toContain("## GALLERY");
+      expect(bundle.staticPrefix).not.toContain("## LIBRARY");
+    });
+
+    it("system equals staticPrefix + '\\n\\n' + dynamicSuffix (legacy concat)", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+      });
+      const expected = `${bundle.staticPrefix}\n\n${bundle.dynamicSuffix}`;
+      expect(bundle.system).toBe(expected);
+    });
+
+    it("staticPrefix is well above the 1024-token caching threshold", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+      });
+      // Anthropic requires >= 1024 tokens for caching to fire. We use
+      // chars/4 as a rough token estimate — heuristic, but enough to
+      // catch a regression where the static prefix gets accidentally
+      // shrunk below the caching threshold.
+      expect(bundle.staticPrefix.length).toBeGreaterThan(4096);
+    });
+
+    it("dynamicSuffix is empty when all dynamic skip flags are set", async () => {
+      const bundle = await buildKnowledgeBundle({
+        ownerId: "u1",
+        projectId: "p1",
+        skip: {
+          canvas: true,
+          library: true,
+          gallery: true,
+          recipes: true,
+          selection: true,
+        },
+      });
+      expect(bundle.dynamicSuffix).toBe("");
+      // Static prefix is unaffected by dynamic skip flags.
+      expect(bundle.staticPrefix.length).toBeGreaterThan(0);
+    });
   });
 });

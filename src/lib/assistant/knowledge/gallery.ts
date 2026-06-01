@@ -2,7 +2,8 @@ import { getGenerationRepository } from "@/lib/repositories/supabase-generation-
 import type { GenerationRecord } from "@/lib/repositories/generation-repository";
 
 /**
- * Knowledge dimension: gallery state — Slice 7.2 (ADR-0041).
+ * Knowledge dimension: gallery state — Slice 7.2 (ADR-0041),
+ * tightened in Slice 2 of "Smarter assistant".
  *
  * Recent generations the user has produced — a compact "what have I
  * been making lately" snapshot. The assistant uses it for context
@@ -11,9 +12,13 @@ import type { GenerationRecord } from "@/lib/repositories/generation-repository"
  * follow-ups.
  *
  * Strategy:
- *   1. Latest 15 generations across all kinds (covers ~last week of
- *      activity for a regular user).
- *   2. Plus any pinned generations (max 10) — pinned ≈ "user
+ *   1. Latest 5 generations across all kinds (a smaller window than
+ *      the original 15 — the system prompt is dominated by static
+ *      catalog/instructions, so a tighter recency snapshot saves
+ *      ~1,000 tokens/turn without dropping the "is X already in the
+ *      gallery?" pattern entirely. The full gallery is one
+ *      `read_gallery` call away when needed).
+ *   2. Plus any pinned generations (max 5) — pinned ≈ "user
  *      curated, treat as durable".
  *   3. De-duplicate by id.
  *
@@ -24,8 +29,8 @@ import type { GenerationRecord } from "@/lib/repositories/generation-repository"
  * them via `read_gallery({ filter })` if needed.
  */
 
-const RECENT_LIMIT = 15;
-const PINNED_LIMIT = 10;
+const RECENT_LIMIT = 5;
+const PINNED_LIMIT = 5;
 const PROMPT_TRUNCATE = 120;
 
 function truncate(s: string | null, n: number): string {

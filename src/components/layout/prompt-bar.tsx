@@ -27,6 +27,7 @@ import type { PromptReference } from "@/lib/assistant/prompt-references";
 import { attachFileAsReference } from "@/lib/library/attach-file";
 import { getGenerationRepository } from "@/lib/repositories/supabase-generation-repository";
 import { persistMessage } from "@/lib/sync/chat-sync";
+import { useAssistantSettingsStore } from "@/lib/stores/assistant-settings-store";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
@@ -131,6 +132,12 @@ export function PromptBar() {
     resetLive();
     const controller = new AbortController();
     setAbortController(controller);
+    // Slice 0 — read the user's selected model on submit so we always
+    // pick up the freshest setting (the picker may have been changed
+    // mid-thought). `getModel()` falls back to the default when the
+    // persisted value is empty / missing, so we never hand the
+    // reasoner a blank id.
+    const selectedModel = useAssistantSettingsStore.getState().getModel();
     try {
       // Slice 7.3 — runReasoner replaces the one-shot planFromAssistant.
       // Tool calls dispatch live; we render the trace via onEvent and
@@ -141,6 +148,7 @@ export function PromptBar() {
         ownerId: user.id,
         projectId,
         signal: controller.signal,
+        model: selectedModel,
         onEvent: (e) => {
           appendLiveEvent(e);
           if (e.type === "ask_user") {

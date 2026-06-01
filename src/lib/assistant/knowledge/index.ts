@@ -12,25 +12,32 @@ import type { ChatMessage } from "@/lib/llm/types";
 import { buildConversationMessages } from "./conversation";
 
 /**
- * Knowledge bus — Slice 7.2 (ADR-0041).
+ * Knowledge bus — Slice 7.2 (ADR-0041), refined by Slice 1 of
+ * "Smarter assistant".
  *
  * Single entry point for "what does the assistant know right now?".
  * Returns:
- *   - `system`: a long markdown string going into the system prompt
- *     (identity + vocabulary + node catalog + recipes + canvas +
- *     library + gallery + tool surface description).
+ *   - `staticPrefix`: identity + vocabulary + node catalog + tool
+ *     surface description. Stable across a session — cacheable on
+ *     models that honor Anthropic-style `cache_control` markers.
+ *   - `dynamicSuffix`: recipes + canvas + selection + library +
+ *     gallery. Recomputed per call (canvas changes, gallery grows).
+ *   - `system` (legacy): the concatenated `staticPrefix\n\ndynamicSuffix`,
+ *     same string the assistant has always seen. Kept for backward
+ *     compatibility with any caller that doesn't care about the split.
  *   - `messages`: the conversation history converted to OpenAI Chat
  *     Completions `messages[]` shape, ready to prepend to the new
  *     user message.
  *
- * Slice 7.2 ships ALL eight knowledge dimensions. The `relevance`
- * hints are honored as filters (skip dimensions when the caller
- * knows they're irrelevant) but default to "include everything"
- * because token budget at M0a-scale is comfortable.
+ * Why split here vs in the reasoner: only the knowledge bundle knows
+ * which dimensions are static. Surfacing the split as a typed return
+ * shape lets the reasoner emit a structured system message (two
+ * content blocks, with `cache_control` on the prefix) when the
+ * selected model supports caching, and a plain string otherwise.
  *
  * The function is async because two dimensions (recipes + gallery)
  * are DB-backed. Callers (the assistant) await once at the top of
- * `planFromAssistant`.
+ * `runReasoner`.
  */
 
 export interface KnowledgeBundleOptions {
@@ -62,7 +69,24 @@ export interface KnowledgeBundleOptions {
 }
 
 export interface KnowledgeBundle {
-  /** Concatenated markdown for the system prompt. */
+  /**
+   * Static portion of the system prompt — identity, vocabulary,
+   * node catalog, tool descriptions. Doesn't change within a
+   * session, so caching providers (Anthropic / Gemini) can serve
+   * subsequent turns from a discounted cache read.
+   */
+  staticPrefix: string;
+  /**
+   * Dynamic portion — recipes, canvas, selection, library, gallery.
+   * Recomputed each call because graph + gallery state evolves.
+   */
+  dynamicSuffix: string;
+  /**
+   * Legacy concatenated form: `staticPrefix + "\n\n" + dynamicSuffix`.
+   * Same string the assistant has always seen. Kept so callers that
+   * don't care about the split (or are running on caching-incapable
+   * models) can keep their existing code path.
+   */
   system: string;
   /** OpenAI-shape conversation history (oldest-first). */
   messages: ChatMessage[];
@@ -79,21 +103,14 @@ export async function buildKnowledgeBundle(
     skip.gallery ? null : buildGalleryKnowledge(projectId),
   ]);
 
-  const sections: string[] = [];
-  sections.push(buildIdentityKnowledge());
-  sections.push(buildVocabularyKnowledge());
-  if (!skip.nodeCatalog) sections.push(buildNodeCatalogKnowledge());
-  if (recipeMd) sections.push(recipeMd);
-  if (!skip.canvas) sections.push(buildCanvasKnowledge());
-  // Selection block lives RIGHT after canvas — same scope, more focused.
-  // Returns null when the user has 0/1 nodes selected, so we just skip
-  // the push instead of branching on selection size here.
-  const selectionMd = buildSelectionKnowledge({ skip: skip.selection });
-  if (selectionMd) sections.push(selectionMd);
-  if (!skip.library) sections.push(buildLibraryKnowledge());
-  if (galleryMd) sections.push(galleryMd);
-  // Tool surface description — auto-generated from the registry. Empty
-  // until Slice 7.2 read tools register; populated by 7.2 onwards.
+  // Static — identity / vocabulary / node catalog / tool surface.
+  // These don't change within a session.
+  const staticSections: string[] = [];
+  staticSections.push(buildIdentityKnowledge());
+  staticSections.push(buildVocabularyKnowledge());
+  if (!skip.nodeCatalog) staticSections.push(buildNodeCatalogKnowledge());
+  // Tool surface description — auto-generated from the registry. Lives
+  // in the static prefix because the registry is stable per release.
   const tools = getToolDefinitions();
   if (tools.length > 0) {
     const lines = ["## TOOLS YOU CAN CALL"];
@@ -103,13 +120,39 @@ export async function buildKnowledgeBundle(
         t.function.description,
       );
     }
-    sections.push(lines.join("\n\n"));
+    staticSections.push(lines.join("\n\n"));
   }
+
+  // Dynamic — recipes / canvas / selection / library / gallery.
+  // These change as the user works (new gallery entries, edited canvas,
+  // different selection) so they invalidate the cache by design.
+  const dynamicSections: string[] = [];
+  if (recipeMd) dynamicSections.push(recipeMd);
+  if (!skip.canvas) dynamicSections.push(buildCanvasKnowledge());
+  // Selection block lives RIGHT after canvas — same scope, more focused.
+  // Returns null when the user has 0/1 nodes selected, so we just skip
+  // the push instead of branching on selection size here.
+  const selectionMd = buildSelectionKnowledge({ skip: skip.selection });
+  if (selectionMd) dynamicSections.push(selectionMd);
+  if (!skip.library) dynamicSections.push(buildLibraryKnowledge());
+  if (galleryMd) dynamicSections.push(galleryMd);
 
   const messages = skip.conversation ? [] : buildConversationMessages();
 
+  const staticPrefix = staticSections.join("\n\n");
+  const dynamicSuffix = dynamicSections.join("\n\n");
+  // Legacy concatenation matches what callers used to receive — newline
+  // separator between non-empty halves so two-block / one-string forms
+  // produce identical text content.
+  const system =
+    staticPrefix && dynamicSuffix
+      ? `${staticPrefix}\n\n${dynamicSuffix}`
+      : staticPrefix || dynamicSuffix;
+
   return {
-    system: sections.join("\n\n"),
+    staticPrefix,
+    dynamicSuffix,
+    system,
     messages,
   };
 }
