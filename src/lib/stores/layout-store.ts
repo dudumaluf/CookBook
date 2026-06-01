@@ -23,6 +23,10 @@ export type LibraryView = "grid" | "list";
 /** Library grid thumbnail size (revamp): small / medium / large. */
 export type LibraryThumb = "s" | "m" | "l";
 
+/** Cookbook overlay tab (Recipes vs Prompts). Persisted so reopening the
+ *  Cookbook lands on whichever tab was last used. */
+export type CookbookTab = "recipes" | "prompts";
+
 interface LayoutState {
   libraryOpen: boolean;
   queueOpen: boolean;
@@ -37,6 +41,10 @@ interface LayoutState {
   /** Persisted UI prefs for how the Library renders assets. */
   libraryView: LibraryView;
   libraryThumb: LibraryThumb;
+  /** Cookbook Library overlay (Phase A) — recipes + prompts hub. */
+  cookbookOpen: boolean;
+  /** Persisted: last-used Cookbook tab so reopening lands where you left off. */
+  cookbookTab: CookbookTab;
 
   toggleLibrary: () => void;
   toggleLibraryDrawer: () => void;
@@ -55,6 +63,9 @@ interface LayoutState {
   toggleAddNodePopover: () => void;
   setAddNodePopoverOpen: (open: boolean) => void;
   setApprovalGate: (on: boolean) => void;
+  toggleCookbook: () => void;
+  setCookbookOpen: (open: boolean) => void;
+  setCookbookTab: (tab: CookbookTab) => void;
 
   /** Esc handler — close every ephemeral overlay. Returns true if anything closed. */
   closeAllOverlays: () => boolean;
@@ -74,6 +85,8 @@ export const useLayoutStore = create<LayoutState>()(
       approvalGateOn: true,
       libraryView: "grid",
       libraryThumb: "m",
+      cookbookOpen: false,
+      cookbookTab: "recipes",
 
       toggleLibrary: () => set((s) => ({ libraryOpen: !s.libraryOpen })),
       toggleLibraryDrawer: () =>
@@ -95,6 +108,9 @@ export const useLayoutStore = create<LayoutState>()(
         set((s) => ({ addNodePopoverOpen: !s.addNodePopoverOpen })),
       setAddNodePopoverOpen: (open) => set({ addNodePopoverOpen: open }),
       setApprovalGate: (on) => set({ approvalGateOn: on }),
+      toggleCookbook: () => set((s) => ({ cookbookOpen: !s.cookbookOpen })),
+      setCookbookOpen: (open) => set({ cookbookOpen: open }),
+      setCookbookTab: (tab) => set({ cookbookTab: tab }),
 
       closeAllOverlays: () => {
         const s = get();
@@ -104,7 +120,8 @@ export const useLayoutStore = create<LayoutState>()(
           s.logsPanelOpen ||
           s.galleryOpen ||
           s.libraryDrawerOpen ||
-          s.addNodePopoverOpen;
+          s.addNodePopoverOpen ||
+          s.cookbookOpen;
         if (!anyOpen) return false;
         set({
           chatSheetOpen: false,
@@ -113,6 +130,7 @@ export const useLayoutStore = create<LayoutState>()(
           galleryOpen: false,
           libraryDrawerOpen: false,
           addNodePopoverOpen: false,
+          cookbookOpen: false,
         });
         return true;
       },
@@ -121,8 +139,9 @@ export const useLayoutStore = create<LayoutState>()(
       name: "cookbook.layout",
       storage: createJSONStorage(() => localStorage),
       // v4: adds persisted Library view prefs (libraryView / libraryThumb).
+      // v5: adds persisted Cookbook tab (cookbookTab) — Library Phase A.
       // Additive — absent fields fall back to store defaults on rehydrate.
-      version: 4,
+      version: 5,
       // SSR-safe: don't auto-rehydrate on first render. Instead the shell
       // triggers .persist.rehydrate() inside a useEffect. This guarantees the
       // server-rendered HTML matches the client's initial render (= defaults).
@@ -134,6 +153,7 @@ export const useLayoutStore = create<LayoutState>()(
         approvalGateOn: state.approvalGateOn,
         libraryView: state.libraryView,
         libraryThumb: state.libraryThumb,
+        cookbookTab: state.cookbookTab,
       }),
       migrate: (persisted, version) => {
         // v1: leftPanelTab/rightPanelTab/bottomDrawer fields

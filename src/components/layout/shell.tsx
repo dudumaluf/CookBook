@@ -10,6 +10,7 @@ import { LibraryPanel } from "./library-panel";
 import { QueuePanel } from "./queue-panel";
 import { PromptBar } from "./prompt-bar";
 import { AddNodeButton } from "./add-node-button";
+import { CookbookButton } from "./cookbook-button";
 import { GalleryButton } from "./gallery-button";
 import { RunButton } from "./run-button";
 import { CommandPalette } from "./command-palette";
@@ -19,6 +20,7 @@ import { LibraryDrawer } from "./library-drawer";
 import { ProjectMenu } from "./project-menu";
 import { EditableTitle } from "./editable-title";
 import { SaveIndicator } from "./save-indicator";
+import { CookbookOverlay } from "@/components/cookbook/cookbook-overlay";
 import { useSession } from "@/lib/auth/use-session";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
 import { closeProject, openProject } from "@/lib/project/session";
@@ -123,12 +125,14 @@ export function AppShell({ projectId }: { projectId: string }) {
         <SaveIndicator />
       </div>
 
-      {/* Top-right cluster: Gallery (look at past work) → Run (kick off the
-       *  current graph) → Add Node (extend the graph). Reads left-to-right
-       *  as a workflow sentence. Queue panel below is vertically centered
-       *  → no collision; the add-node popover (z-50) overlays the queue
-       *  when both are open. */}
+      {/* Top-right cluster: Cookbook (recipes + prompts hub) → Gallery
+       *  (look at past work) → Run (kick off the current graph) → Add
+       *  Node (extend the graph). Reads left-to-right as a workflow
+       *  sentence: discover → review → execute → grow. Queue panel
+       *  below is vertically centered → no collision; the add-node
+       *  popover (z-50) overlays the queue when both are open. */}
       <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1.5">
+        <CookbookButton />
         <GalleryButton />
         <RunButton />
         <AddNodeButton />
@@ -145,6 +149,7 @@ export function AppShell({ projectId }: { projectId: string }) {
       <LogsPanel />
       <GalleryDrawer />
       <LibraryDrawer />
+      <CookbookOverlay />
       <CommandPalette />
     </div>
   );

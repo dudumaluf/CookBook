@@ -92,6 +92,13 @@ export interface RecipeRecord {
   isNode: boolean;
   parentRecipeId: string | null;
   createdAt: string;
+  /**
+   * Cookbook Library Phase A — recipe-row version. Bumped on every edit
+   * (Phase B). v1 = original/never-edited. Composite-node instances may
+   * carry a `recipeVersion` config so the canvas can show "Update
+   * available → v(N+1)" when the recipe has moved on.
+   */
+  version: number;
 }
 
 export interface SaveRecipeInput {

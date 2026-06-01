@@ -18,7 +18,8 @@ This folder is the **single source of truth** for the project. Every architectur
 7. **[PRISM-REUSE-LOG.md](./PRISM-REUSE-LOG.md)** — every file/pattern copied from the previous `prism/` project, with adaptation notes.
 8. **[CHANGELOG.md](./CHANGELOG.md)** — date-keyed log of what shipped each day.
 9. **[ASSISTANT.md](./ASSISTANT.md)** — north-star doc for the LLM assistant: identity, knowledge dimensions, tool surface, runtime contract, provider strategy, failure modes. Lands in Slice 7.1.
-10. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
+10. **[COOKBOOK-LIBRARY.md](./COOKBOOK-LIBRARY.md)** — design + roadmap for the Library feature (recipes + prompts hub). Phased plan (A → E), concept glossary, and the premium-UI contract. Copy any section into another LLM to brainstorm without losing context.
+11. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
 
 ## Milestone snapshots
 

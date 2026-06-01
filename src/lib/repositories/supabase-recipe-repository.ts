@@ -22,6 +22,8 @@ interface RawRecipeRow {
   is_node: boolean;
   parent_recipe_id: string | null;
   created_at: string;
+  /** Phase A — present on rows after the recipe-versions migration. */
+  version?: number | null;
 }
 
 function rowToRecord(row: RawRecipeRow): RecipeRecord {
@@ -39,6 +41,9 @@ function rowToRecord(row: RawRecipeRow): RecipeRecord {
     isNode: row.is_node,
     parentRecipeId: row.parent_recipe_id,
     createdAt: row.created_at,
+    // Backfill v1 if the column is missing (pre-migration row OR a row
+    // returned by Supabase before the column rolled out everywhere).
+    version: typeof row.version === "number" && row.version > 0 ? row.version : 1,
   };
 }
 

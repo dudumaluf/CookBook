@@ -9,6 +9,7 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
  *
  * - ⌘1   toggle Library panel
  * - ⌘2   toggle Queue panel
+ * - ⌘B   toggle Cookbook overlay (recipes + prompts library)
  * - ⌘G   toggle Gallery drawer
  * - ⌘J   toggle chat history sheet
  * - ⌘K   open command palette
@@ -16,7 +17,7 @@ import { useLayoutStore } from "@/lib/stores/layout-store";
  *        ⌘N because macOS / Chrome intercept it as "new window".
  * - ⌘⇧L  toggle logs panel
  * - ⌘⇧A  toggle Library drawer (full asset management)
- * - Esc  close any open overlay (chat / palette / logs / gallery / add-node)
+ * - Esc  close any open overlay (chat / palette / logs / gallery / cookbook / add-node)
  *
  * `/` is handled in PromptBar to focus the textarea.
  */
@@ -30,6 +31,7 @@ export function useLayoutShortcuts() {
     toggleLogsPanel,
     toggleLibraryDrawer,
     toggleAddNodePopover,
+    toggleCookbook,
     closeAllOverlays,
   } = useLayoutStore();
 
@@ -71,6 +73,10 @@ export function useLayoutShortcuts() {
           e.preventDefault();
           toggleQueue();
           break;
+        case "b":
+          e.preventDefault();
+          toggleCookbook();
+          break;
         case "g":
           e.preventDefault();
           toggleGallery();
@@ -101,6 +107,7 @@ export function useLayoutShortcuts() {
     toggleLogsPanel,
     toggleLibraryDrawer,
     toggleAddNodePopover,
+    toggleCookbook,
     closeAllOverlays,
   ]);
 }
