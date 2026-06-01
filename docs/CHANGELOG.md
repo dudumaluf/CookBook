@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-01 — Seedance Prompt Director system recipe
+
+New built-in recipe ("Seedance Prompt Director") — converts a creative briefing + reference images into a polished Seedance 2.0 video prompt with proper structure, vocabulary, and reference tagging. Curated from Fal's "How to use Seedance 2.0" guide and Higgsfield's "Seedance 2.0 Complete Prompting Guide".
+
+**1. Modular workflow built from existing primitives.** Inner subgraph composes 6 stock nodes — Text (base principles), Text (templates separated by `═══BREAK═══`), Array (splits on the delimiter), List (cursor picks one template), Text Concat (joins base + selected template), LLM Text (Gemini 2.5 Pro, vision). No new node-type. The Array → List → Concat chain is exactly the "lists we can select things from" pattern the user asked for.
+
+**2. Five format-templates baked in, cursor-driven.** A single `template` exposed-param (number 0–4) on the composite picks the active format without unpacking: 0 Freeform, 1 Single-Shot, 2 Multi-Shot Commercial (3 shots / 15s / hook → develop → reveal), 3 Transformation (6-shot escalation arc + Higgsfield's verbatim aesthetic header), 4 Orb / POV-power (continuous handheld POV, `[VFX: …]` inline brackets, terminal SFX list). Other exposed params: `model` (select among Gemini 2.5 Pro / Sonnet 4.5 / GPT-4o / GPT-4o-mini), `temperature`. Switch templates at runtime by editing the inline control on the composite — no rewiring, no recipe-swap.
+
+**3. Reference tagging that survives end-to-end.** Up to 4 image inputs (`image-1`..`image-4`) feed the LLM via vision; the system prompt instructs the LLM to refer to them as `@Image1`..`@Image4` (numerical order matching the input positions). Output is a `text` prompt the user wires straight into the Seedance node's `prompt` input. The same image refs go to Seedance's `image-N` handles — `@Image1` in the prompt resolves to `image-0` on Seedance, perfectly aligned.
+
+**4. Variable-system safety verified.** The text-node `@variable` interpolation regex (`(?<=^|\W)@([a-zA-Z][a-zA-Z0-9_-]*)`) DOES match Seedance reference tokens like `@Image1`, `@Video1` — but only inside Text node bodies, only at execute time, and only when the matching `var-Image1` socket is wired. The Director routes LLM Text → composite output → user wires to Seedance, with NO Text node in the path, so `@Image1`-style tags pass through untouched. Documented in the migration header so future maintainers don't put a Text node back into the path. The inner `templates-text` node contains @-tokens by necessity (LLM needs to see the convention) — those create phantom var-* sockets in the Text node UI on Unpack but stay literal at runtime since none are wired.
+
+**5. Curated system prompt structure.** Universal Seedance principles (Subject → Camera → Sound → Cuts; cinematographer vocabulary; opening duration/shot-count/aspect-ratio header; closing `Total: 15s / N shots / 16:9` line; forbidden quality boosters; output-only-prompt-text rules) layer with a format-specific overlay. Each Higgsfield format's verbatim aesthetic header (`Montage, multi-shot action Hollywood movie…ARRI ALEXA aesthetic` for Transformation; `Single continuous shot, first-person POV…natural imperfections` for Orb-POV) is embedded so the LLM produces prompts that hit Seedance's tuned cadence.
+
+**Shipped as:** `supabase/migrations/20260601_seedance_prompt_director_recipe.sql` (authoritative record) plus a same-content INSERT applied to the CookBook production Supabase via MCP at commit time. `INSERT … ON CONFLICT DO NOTHING` so re-running the migration is safe. Verified post-apply: 6 nodes, 5 edges, 5 exposed inputs, 1 exposed output, 3 exposed params; templates-text splits cleanly into 5 templates on the configured delimiter. All 1407 tests green; lint, typecheck, build untouched (no app code changed).
+
 ## 2026-05-31 — Scribe V2 node: ElevenLabs speech-to-text via Fal
 
 Adds a transcription node alongside the existing ElevenLabs audio-isolation node. Wire any audio file, get the full transcript as text plus word-level timestamps, language detection, and optional speaker diarization.
