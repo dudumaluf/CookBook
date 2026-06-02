@@ -20,6 +20,7 @@ import {
   closeRecipeEdit,
   openRecipeForEdit,
 } from "@/lib/project/recipe-edit-session";
+import { useRecipeWatcherHydration } from "@/lib/stores/recipe-watcher-store";
 
 /**
  * RecipeEditShell — Cookbook Library Phase B1 (ADR-0051).
@@ -46,6 +47,11 @@ export function RecipeEditShell({ recipeId }: { recipeId: string }) {
   const { user } = useSession();
   // Same stable-id rule as AppShell — avoid tearing down on token refresh.
   const userId = user?.id;
+  // Phase B2: keep the recipe-version map fresh so any composites the
+  // user pulls in via Add Node show up-to-date badges. (Doesn't help
+  // the recipe currently being edited — that's the whole point of this
+  // shell — but cross-recipe references inside this one need it.)
+  useRecipeWatcherHydration({ userId });
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromUrl = searchParams.get("from");

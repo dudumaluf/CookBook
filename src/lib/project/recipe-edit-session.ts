@@ -10,6 +10,7 @@ import {
 } from "@/lib/repositories/recipe-repository";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useRecipeEditStore } from "@/lib/stores/recipe-edit-store";
+import { useRecipeWatcherStore } from "@/lib/stores/recipe-watcher-store";
 import { useSaveStatusStore } from "@/lib/stores/save-status-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
@@ -210,6 +211,15 @@ export async function saveRecipeEdit(
   // still display-only; we don't bump it here because the route is
   // about to unmount + close.
   useRecipeEditStore.getState().setUnsaved(false);
+
+  // Phase B2: refresh the watcher store so any composite instances on
+  // canvases the user navigates back to immediately learn about the new
+  // version. Fire-and-forget — a failed refresh just means the badge
+  // takes a beat longer to appear (focus-refresh covers it).
+  void useRecipeWatcherStore.getState().refresh({
+    ownerId: record.ownerId,
+    includeSystem: true,
+  });
 
   return { ok: true, record };
 }

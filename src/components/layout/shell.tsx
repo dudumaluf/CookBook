@@ -24,6 +24,7 @@ import { CookbookOverlay } from "@/components/cookbook/cookbook-overlay";
 import { useSession } from "@/lib/auth/use-session";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
 import { closeProject, openProject } from "@/lib/project/session";
+import { useRecipeWatcherHydration } from "@/lib/stores/recipe-watcher-store";
 
 /**
  * AppShell — refactor v3 (ADR-0013) + v4 (ADR-0015 polish)
@@ -54,6 +55,10 @@ export function AppShell({ projectId }: { projectId: string }) {
   // project every time you switch tabs and back — aborting any in-flight run
   // and wiping the canvas records. The id only changes on real sign-in/out.
   const userId = user?.id;
+  // Phase B2: keep the recipe-version map fresh so composites on canvas
+  // can show "Update available" badges. Hydrates on mount + on every
+  // window focus (covers cross-tab + cross-device edits).
+  useRecipeWatcherHydration({ userId });
   const router = useRouter();
   // Start in `loading` (not `idle`) so the canvas never flashes empty
   // before the project document is applied on mount.

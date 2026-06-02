@@ -2548,3 +2548,74 @@ Reference mode renders `image-0..N`, `video-0..N`, `audio-0..N` (+ `prompt`). A 
 - **Per-type config counters** — three small fields, one guarded effect; mirrors Video Concat's `portCount`.
 - **Catalog shows `image-0` etc.** — the assistant's node catalog lists the index-0 sockets (it can't see the auto-grow); wiring more than one ref programmatically needs the indexed ids. Acceptable.
 - **Legacy fallback kept in execute** — belt-and-suspenders for any unmigrated path (the Continuity Builder calls `callSeedanceVideo` directly and is unaffected).
+
+---
+
+## ADR-0060 — Cookbook Library Phase B2: update-available propagation + version history + plain-English diff
+
+### Context
+
+Phase B1 shipped the recipe edit flow + atomic version-bump RPC + per-instance `recipeVersion` stamping at all five drop sites. The "consumer" half was deliberately deferred: composites on canvas had no idea their source recipe had moved on, the version-history table was written but not displayed, and the diff was an ADR commitment without an implementation. Phase B2 closes that loop. The user-facing question to answer: "I edited recipe X. What does that mean for the canvas in front of me?"
+
+Three sub-decisions inside B2 deserve their own slot — propagation channel design, override preservation strategy, and diff fidelity.
+
+### Decision 1 — Local pub/sub + focus-refresh, NOT Supabase Realtime
+
+For the watcher store (`useRecipeWatcherStore`) to surface "Update available" in real time, three options:
+
+- **(a) Polling** — every composite re-queries every N seconds. Wasteful, jittery UX, hard to scale.
+- **(b) Supabase Realtime subscription** on `cookbook_recipes` UPDATE events. Catches every change everywhere; but adds a long-lived WS, extra failure modes (reconnection), and a feature gate (Realtime is per-table).
+- **(c) Local pub/sub** — `saveRecipeEdit` calls `watcher.refresh()` on success; `window.focus` listener does the same on tab return. Catches in-tab edits instantly; cross-tab / cross-device edits land on focus.
+
+Picked **(c)**. The use case is single-user-per-recipe (Cookbook is a personal-canvas app, not a multi-author Figma). The focus-refresh window is bounded by how long the user can have a stale tab open without switching — typically seconds to minutes — and the cost of being a beat late is one false-negative badge for ~30 seconds. Realtime adds a permanent runtime cost (WS) for an edge case (other-device editing while you're staring at the same recipe). If concurrent multi-author becomes a thing in Phase E, we revisit with Realtime.
+
+### Decision 2 — Capture-then-reapply override preservation, with "dropped" reporting
+
+When a user has tweaked an `exposedParam` inline on a composite (writes the value into `subgraph.nodes[*].config[configKey]`), a naive `subgraph = newSubgraph` would wipe those tweaks. Three options:
+
+- **(a) Lose overrides on update; warn the user.** Simple but punishing — the whole point of an `exposedParam` is to let the user customize without forking.
+- **(b) Diff overrides against the OLD recipe defaults; only carry over deviations.** Most "correct" but requires fetching the old version's row to know what's a deviation.
+- **(c) Capture-then-reapply**: snapshot every `exposedParam`'s current value pre-update, then write those values into the new subgraph by `internalNodeId`. If the inner node is gone in the new shape, drop the override and report `dropped: N`.
+
+Picked **(c)**. Approximation of (b) without the extra round trip — the semantic loss is "if the user happened to set their override to the same value as the old default and the recipe edit changed the default, the user keeps the old default value, not the new one." Acceptable. Reporting `dropped: N` lets the badge UI warn ("Updated. 2 custom values dropped because the recipe's structure changed.") so the user knows to re-tune. Extracted as pure helpers (`captureExposedOverrides`, `applyExposedOverrides`) for testability and reuse by `updateAllCompositesByRecipe`.
+
+### Decision 3 — Plain-English diff with char-level highlights, NO visual subgraph diff
+
+The diff's job is to answer "did the recipe really change in a way I care about?" — five seconds of reading. Two ends of the design spectrum:
+
+- **(a) Visual subgraph diff** — render the old + new subgraphs side-by-side with edges, mark added/removed/changed nodes inline. Beautiful but expensive to build (custom React Flow comparison view) and noisy for the 80% case (small prompt tweaks).
+- **(b) Plain-English structured diff** — added/removed/changed nodes by id, with field-level deltas, plus char-level highlight for long prompt text fields.
+
+Picked **(b)** for B2. Visual diff is an explicit non-goal here — parked indefinitely. Char-level diff via the `diff` npm package (zero deps, ~2KB, MIT, the standard JS lib) only fires for Text + LLM Text node config fields over 30 chars (anything shorter renders raw — the noise of diffing "hi" → "hey" isn't worth it). Non-text fields (model ids, numbers) render as `prev → next`; char-diffing `flux/pro → nano-banana/v2` would be silly. Position deltas are dropped entirely (visual-only). `kind` change becomes a synthetic `kind` field on the changed node so it surfaces alongside config changes.
+
+### Decision 4 — Hide the badge on pre-B1 instances, NOT auto-stamp them
+
+Pre-B1 composites carry `recipeVersion: null`. The badge could:
+
+- **(a) Treat null as "very stale" and stamp v1 silently on first hydration.** Aggressive — false positives are likely (some pre-B1 instances may be of recipes that NEVER changed; we'd badge them with no real signal).
+- **(b) Hide the badge for null instances.** Conservative — they never see "Update available" until the user manually re-instantiates the composite (which stamps the current version).
+
+Picked **(b)**. Pre-B1 instances are forever-quiet on this surface. The flip side is fine: a user who wants the up-to-date version of a composite can delete + re-drop, OR (Phase B1's path) edit the recipe and the new version flows everywhere. There's no class of user blocked by null-quiet badges; there IS a class of user annoyed by spurious orange dots.
+
+### Consequences
+
+**Wins.**
+- The recipe-edit loop closes end-to-end: edit → save → see badges on the canvas → click Update → the composite reflects the latest. No reload, no re-import, no manual sync.
+- Override preservation respects the user's per-instance customization without forcing forks.
+- Plain-English diff is cheap (one helper file + one component) and answers the most common question without building a graph diff renderer.
+- `recipeVersion` was stamped but unused before B2; the field finally pays for itself.
+- The tests cover edge cases (override preservation when inner node is gone, null-instance quietness, watcher coalescing, char-diff threshold) so regressions are caught.
+
+**Trade-offs we accept.**
+- **No real-time cross-device propagation.** A user editing the same recipe on two devices simultaneously won't see the other's changes until they switch back to one of the tabs. Cookbook isn't designed for that workflow; revisit if Phase E orchestration makes concurrent editing common.
+- **Override preservation is approximate.** A user who set their override to the same value as the old default keeps the old default after an update (not the new default). We accept the semantic loss as the price of avoiding an extra round trip to fetch the old recipe row.
+- **No visual subgraph diff.** Parked indefinitely. The plain-English diff covers the 80% case; the engineering cost of a visual diff is high relative to the marginal value (most edits are prompt tweaks anyway).
+- **Pre-B1 composites stay quiet.** A user with a years-old project full of pre-B1 composite instances will never see "Update available" on those nodes. Solvable manually (re-drop) or via Phase E orchestration. Not a B2 blocker.
+- **`diff` npm package as new dep.** ~2KB, zero deps of its own, MIT, well-maintained. Aceito.
+
+**What's parked for later.**
+- Visual subgraph diff (parked indefinitely).
+- Restore-to-version (download a prior subgraph and replace current). More risky than "view + update to latest" — would let a user accidentally revert work.
+- Branch / merge between versions. Phase E concern at earliest.
+- Real-time cross-device propagation via Supabase Realtime. Revisit when concurrent editing is a real workflow.
+- "Update available" surface inside the Library overlay (currently only on canvas composites). Would help users browsing recipes; low priority since the Library detail panel already shows the current version.

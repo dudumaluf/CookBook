@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { CopyButton } from "@/components/cookbook/copy-button";
+import { RecipeVersionHistory } from "@/components/cookbook/recipe-version-history";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -387,6 +388,9 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
             </section>
           </>
         ) : null}
+
+        {/* Phase B2: version history (only renders for v > 1 recipes). */}
+        <RecipeVersionHistory recipe={recipe} />
       </div>
     </ScrollArea>
   );

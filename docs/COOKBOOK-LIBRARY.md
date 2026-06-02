@@ -310,7 +310,7 @@ When you add a new feature that introduces a prompt or a recipe, two steps make 
 |---|---|---|
 | A — Read-only Library | ✅ Shipped | 2026-06-01 |
 | B1 — Recipe edit + versioning core | ✅ Shipped | 2026-06-01 |
-| B2 — Update-available + history/diff propagation | 📋 Planned | — |
+| B2 — Update-available + history/diff propagation | ✅ Shipped | 2026-06-01 |
 | C — Personal prompt overrides + assistant-as-co-author | 📋 Planned | — |
 | D — Specialist recipes + assistant roles | 📋 Planned | — |
 | E — Orchestration | 📋 Planned | — |

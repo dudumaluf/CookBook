@@ -19,7 +19,10 @@ import type {
   RecipeExposedParam,
 } from "@/lib/repositories/recipe-repository";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useRecipeCurrentVersion } from "@/lib/stores/recipe-watcher-store";
 import { Loader2 } from "lucide-react";
+
+import { CompositeUpdateBadge } from "./composite-update-badge";
 
 /**
  * Composite node — Slice 6.6 (ADR-0039).
@@ -105,6 +108,15 @@ function CompositeNodeBody({
   const status = record?.status;
   const params = config.exposedParams ?? [];
   const internalNodeCount = config.subgraph?.nodes.length ?? 0;
+  // Phase B2: surface "Update available" when the watcher knows a newer
+  // version exists for our recipe id. Returns null until the watcher
+  // hydrates OR the recipe id isn't tracked OR we're up to date.
+  const currentRecipeVersion = useRecipeCurrentVersion(config.recipeId);
+  const showUpdateBadge =
+    config.recipeId !== null &&
+    config.recipeVersion !== null &&
+    currentRecipeVersion !== null &&
+    currentRecipeVersion > config.recipeVersion;
 
   function paramValue(p: RecipeExposedParam): unknown {
     const node = config.subgraph?.nodes.find((n) => n.id === p.internalNodeId);
@@ -124,6 +136,16 @@ function CompositeNodeBody({
 
   return (
     <div className="flex w-full min-w-[200px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
+      {showUpdateBadge ? (
+        <div className="-mx-1 flex justify-end">
+          <CompositeUpdateBadge
+            nodeId={nodeId}
+            recipeId={config.recipeId!}
+            instanceVersion={config.recipeVersion!}
+            currentVersion={currentRecipeVersion!}
+          />
+        </div>
+      ) : null}
       {params.length > 0 ? (
         <div className="flex flex-col gap-1.5">
           {params.map((p, i) => (
