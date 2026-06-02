@@ -11,6 +11,8 @@ import type {
   ChatToolCall,
   LlmSuccessResponse,
 } from "@/lib/llm/types";
+import { useAssistantRoleStore } from "@/lib/stores/assistant-role-store";
+import { resolveRole } from "@/lib/assistant/roles";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import { buildKnowledgeBundle } from "./knowledge";
@@ -222,19 +224,33 @@ export async function runReasoner(
   // Initial system prompt + history.
   const bundle = await buildKnowledgeBundle({ ownerId, projectId });
   const capability = resolveModel(model);
-  // System message build — Slice 1 of "Smarter assistant".
+  // System message build — Slice 1 of "Smarter assistant" + Phase D1
+  // role overlays.
   //
   // On caching-capable models (Anthropic, Gemini), emit two text
   // content blocks with `cache_control: { type: "ephemeral", ttl: "1h" }`
   // on the static prefix so the provider can serve subsequent turns
-  // from a discounted cache read. Reasoner instructions are bundled
-  // into the static prefix so they ride along.
+  // from a discounted cache read. Reasoner instructions + the active
+  // role's overlay are bundled into the static prefix so they ride
+  // along.
+  //
+  // The role overlay sits AFTER `REASONER_INSTRUCTIONS` so it can
+  // specialize / override the base behavior (e.g. Storyboard Director
+  // adds its 10 continuity rules on top of the regular tool-calling
+  // discipline). Switching roles invalidates the cache by definition
+  // — that's the explicit cost of a switch (and it's fine, since
+  // role switches are rare relative to turn cadence).
   //
   // On caching-incapable models (OpenAI, Grok, custom), emit a plain
   // concatenated string identical to today's request shape — markers
   // would just be ignored and we don't want to risk a provider
   // rejecting an unfamiliar block format.
-  const staticPrefix = `${bundle.staticPrefix}\n\n${REASONER_INSTRUCTIONS}`;
+  const roleOverlay = resolveRole(useAssistantRoleStore.getState().getRoleId())
+    .systemPromptOverlay;
+  const staticPrefix =
+    roleOverlay.length > 0
+      ? `${bundle.staticPrefix}\n\n${REASONER_INSTRUCTIONS}\n\n${roleOverlay}`
+      : `${bundle.staticPrefix}\n\n${REASONER_INSTRUCTIONS}`;
   const dynamicSuffix = bundle.dynamicSuffix;
   let systemMessage: ChatMessage;
   if (capability.caching && staticPrefix.length > 0) {

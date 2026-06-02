@@ -2619,3 +2619,68 @@ Picked **(b)**. Pre-B1 instances are forever-quiet on this surface. The flip sid
 - Branch / merge between versions. Phase E concern at earliest.
 - Real-time cross-device propagation via Supabase Realtime. Revisit when concurrent editing is a real workflow.
 - "Update available" surface inside the Library overlay (currently only on canvas composites). Would help users browsing recipes; low priority since the Library detail panel already shows the current version.
+
+## ADR-0061 — Cookbook Library Phase D1: assistant role overlays + role picker
+
+- **Date**: 2026-06-01
+- **Context**: The original motivation that led to Phase A of the Cookbook Library was specialist assistant personas — the user asked whether the assistant should have specialist roles (Storyboard Director, Timeline Director, etc.). Phases A / B1 / B2 built the recipe + library infrastructure that those specialists will exercise; Phase D1 ships the persona system itself. Three coupled questions: (1) where does the role's specialization land in the system prompt without breaking prompt caching, (2) how does the user pick / switch roles without making the chat-sheet header noisy, (3) what's the right granularity for the first roles we ship?
+
+### Question 1 — overlay placement + caching
+
+Phase 7.2 / Slice 1 of "Smarter assistant" introduced a static prefix / dynamic suffix split on the system prompt. The static prefix carries identity + vocabulary + node catalog + tool definitions + reasoner instructions; on caching-capable models (Anthropic, Gemini) it gets a `cache_control: { type: "ephemeral", ttl: "1h" }` marker so subsequent turns are billed at a fraction of the prefix's input cost. We pay the full price once per session, then ride the cache.
+
+The role overlay needs to live somewhere in this prompt. Three positions:
+
+- **(a) Inside the static prefix, BEFORE `REASONER_INSTRUCTIONS`.** Reads as "context the assistant has before it learns its operating instructions." Awkward — the operating instructions assume a generic assistant; pre-context that says "you are a Storyboard Director" then has to be reconciled against later "you are operating in a tool-calling loop, narrate sparingly, …" content.
+- **(b) Inside the static prefix, AFTER `REASONER_INSTRUCTIONS`.** Reads as "specialization layer applied on top of the base assistant." Clean priority — base instructions are foundation, role overlay specializes (and can override individual rules if it really needs to). Cached just like (a). Cache invalidates on role switch.
+- **(c) Outside the static prefix, in the dynamic suffix.** Cheaper per switch (no cache invalidation on role change) but pays the overlay's full input cost on EVERY turn rather than once per session.
+
+Picked **(b)**. The overlay is small (500-1500 chars per role, less than 0.5% of the typical static prefix) so the cache invalidation cost on a switch is trivial. Role switches are rare relative to turn cadence — once-per-task is typical, often zero per session for users who pick a role and stick. (c) would pay a small cost on EVERY turn forever; (b) pays a one-time cost per role switch and gets the discount thereafter.
+
+### Question 2 — role picker placement + UX
+
+Three contenders for where the picker lives:
+
+- **(a) In the prompt-bar.** Always-visible, even when the chat-sheet is closed. Right-of-input chip would be visually heavy with the model selector + attach + @ + send already there.
+- **(b) In the chat-sheet header next to the model selector.** Hidden when chat-sheet is closed (which is fine — role decisions are deliberate, not per-turn). The two pickers form a "personality + brain" pair that reads naturally.
+- **(c) In the assistant settings / preferences panel.** Even more buried. Wrong — role is a per-task choice, not a preference.
+
+Picked **(b)**. The pair-with-model-selector rationale is strong: both are persisted, both apply on the next submit, both are something the user picks deliberately and rarely changes. Prompt-bar real estate is precious; the chat-sheet header has the budget.
+
+For the picker shape itself, mirroring `<ModelSelector />` (compact ghost trigger + popover with one row per option + descriptions + check-mark on active) keeps the UI consistent and reuses the user's existing mental model. The General role gets a subdued label color in the popover so "no specialization" reads visually distinct from specialists.
+
+### Question 3 — which roles ship first
+
+The persona space is conceptually unbounded. To avoid a ten-role launch where users don't know which to pick, ship a small curated set. Five chosen for D1:
+
+- **General** (default, empty overlay) — the no-specialization choice. Important to ship explicitly: gives the user an obvious "turn it off" action without forcing the rest of the system to handle null roles.
+- **Prompt Engineer** — modality-agnostic prompt-craft. Universal grammar, applies to any task involving a model.
+- **Storyboard Director** — multi-shot narrative sequences. 10 continuity rules + panel template. Pairs with the Phase D2 Storyboard Director recipe.
+- **Timeline Director** — multi-beat single shot scenes. 5 setup blocks + `[mm:ss-mm:ss]` timeline slots. Pairs with the Phase D2 Timeline Director recipe.
+- **Recipe Architect** — Cookbook-internals specialist. Knows the recipe shape (composite, exposed I/O, exposedParams, versioning, fork-edit flow). Phase E will use this as a handoff target during orchestration.
+
+Five is a sweet spot: more than three (so the picker has visible curated diversity) but few enough that the popover fits without scrolling and the user can read every option in 5 seconds. Future roles ship per release as the user surfaces gaps.
+
+### Persistence + hydration safety
+
+`useAssistantRoleStore` persists in localStorage as `cookbook.assistant-role`. A stale id (registry-pruned role from a future release) falls back to General via `resolveRole`; the raw value stays in the persisted blob, so re-introducing the id later restores the user's choice unchanged. Empty / whitespace input also resolves to General — both at the store level (`setRoleId("")` writes "general") and at the read level (`getRoleId` returns "general" for empty stored values). Defense in depth so a typo or bug never produces an empty overlay paired with a non-General label.
+
+### Consequences
+
+**Wins.**
+- The original Phase D motivation (specialist personas) finally ships. The recipe library + the persona system can now compose: user picks Storyboard Director, drops the Storyboard Director recipe (Phase D2), and the assistant's chatter + the recipe's prompt template share the same continuity vocabulary.
+- The overlay lives inside the cached static prefix, so the cost is paid once per session-per-role and amortized across every subsequent turn. Switching roles invalidates the cache — explicit cost, paid back across the next 10+ turns.
+- The picker mirrors the model selector, so users learn it instantly. No new UI primitives, no new mental model.
+- General-as-empty-overlay is a clean default. Picking it explicitly turns off specialization without having to special-case "no role" anywhere.
+
+**Trade-offs we accept.**
+- **Role overlay can disagree with the base prompt.** Mitigated by overlay design discipline (specialists are *additive* — they layer rules ON TOP, not remove base rules) and the placement order (base first, overlay second — overlay can override but the base is what the model reads first). Spot-check via tests on the system content text. Future roles will need the same discipline.
+- **Cache invalidation per role switch.** Acceptable cost; switches are rare. Telemetry (already present from Slice 1) will surface if this becomes a hot path.
+- **Recipe Architect overlay is the largest (~1500 chars).** Still well within the cache budget. If we add more codebase-aware roles later we'll need to factor out a shared "Cookbook awareness" module to avoid duplication; for D1's single Recipe Architect that's premature.
+- **Five roles only.** Some users will want a Photographer role, a Game-Designer role, a UX-Writer role. We accept the gap as the price of a curated launch; future releases add roles per-user-feedback. The registry is extension-friendly — adding a role is one new file + one entry in the index.
+
+**What's parked for later.**
+- Per-recipe role suggestion ("when this recipe is selected, suggest switching to Storyboard Director"). Would close the persona / recipe loop more tightly. Phase D2 / E concern.
+- Role-aware tool gating (e.g. Recipe Architect can call `propose_refactor` while General can't). Currently every role has access to every tool. Could be useful as a guardrail, but adds complexity that's unjustified at D1's scale.
+- Custom user-defined roles. Defer indefinitely; the curated five are a much stronger starting point than a freeform editor.
+- Role-aware prompt cache fingerprinting / pre-warming. Phase E concern when orchestration starts hopping between roles within a single turn.

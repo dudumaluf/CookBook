@@ -173,7 +173,27 @@ When this ships:
 
 This is genuinely powerful — and risk-managed: human in the loop on every change.
 
-### Phase D — Specialist recipes + assistant roles
+### Phase D — Specialist recipes + assistant roles (split into D1 → D2)
+
+Phase D splits into two independent tracks. D1 (roles) shipped first; D2 (recipes) is upcoming.
+
+#### Phase D1 — Assistant role overlays + role picker (shipped 2026-06-01)
+
+When this shipped:
+
+- **Five roles available** in `src/lib/assistant/roles/`: **General** (default — empty overlay, no specialization), **Prompt Engineer** (universal prompt-craft principles for any modality), **Storyboard Director** (10 continuity rules + panel template for multi-shot scenes), **Timeline Director** (5 setup blocks + `[mm:ss-mm:ss]` timeline slots for multi-beat single shots), **Recipe Architect** (deep Cookbook recipe-engineering knowledge — composite shape, exposed I/O, versioning, fork-edit flow).
+- **`useAssistantRoleStore`** (`src/lib/stores/assistant-role-store.ts`) — Zustand store persisted in localStorage as `cookbook.assistant-role`. Read-with-fallback (`getRoleId`) so a stale id never produces an empty overlay paired with a non-General label.
+- **Reasoner overlay injection** — `runReasoner` reads the active role and concatenates its overlay into the static prefix AFTER `REASONER_INSTRUCTIONS`. The overlay is a specialization layer that can override base behavior. On caching-capable models (Anthropic, Gemini) the overlay rides inside the cached static prefix, so the cost is paid once per session-per-role and discounted on every subsequent turn. Switching roles invalidates the cache by design (~$0.01-0.03 one-time cost depending on model).
+- **`<RolePicker />`** (`src/components/assistant/role-picker.tsx`) — compact dropdown in the chat-sheet header next to `<ModelSelector />`. Trigger: ghost button with `UserCog` icon + active label + chevron. Popover lists 5 roles with one-line descriptions; active marked with check. General styled subdued so "no specialization" reads visually distinct from specialists.
+
+What D1 does NOT include yet:
+
+- ❌ Three Phase D2 specialist recipes (Storyboard Director recipe, Simple Scene Prompter, Timeline Director recipe).
+- ❌ Seedance Prompt Director's 6th Animation / Timed Segments template.
+- ❌ Per-recipe role suggestions ("when this recipe is selected, suggest switching to Storyboard Director" — Phase E concern).
+- ❌ Role-aware tool gating (every role still has access to every tool).
+
+#### Phase D2 — Specialist recipes (upcoming)
 
 Three new specialist recipes (mirror the Seedance Prompt Director architecture):
 
@@ -183,15 +203,7 @@ Three new specialist recipes (mirror the Seedance Prompt Director architecture):
 
 Plus extending the existing Seedance Prompt Director with a 6th template (Animation / Timed Segments) for multi-beat Seedance scenes.
 
-In parallel, an `assistantRole` setting on the assistant chat. Role chip next to the model selector. Roles available:
-
-- **General** (default) — current behavior.
-- **Prompt Engineer** — universal grammar from Structure 1 + Structure 2 templates.
-- **Storyboard Director** — 10 continuity rules, panel-by-panel discipline.
-- **Timeline Director** — 5 setup blocks + slot-by-slot discipline + 15-second budget.
-- **Recipe Architect** — knows the codebase's recipe shape; proposes new recipes given a workflow.
-
-How roles work technically: each role's system prompt is a *fragment* layered onto the base assistant prompt. Same caching, same tools, same parallel dispatch — only the discipline-overlay changes per role.
+D2 pairs with D1 — the Storyboard Director recipe and the Storyboard Director role share the same continuity vocabulary, so they compose: pick the role + drop the recipe and both surfaces speak the same language.
 
 ### Phase E — Orchestration
 
@@ -311,8 +323,9 @@ When you add a new feature that introduces a prompt or a recipe, two steps make 
 | A — Read-only Library | ✅ Shipped | 2026-06-01 |
 | B1 — Recipe edit + versioning core | ✅ Shipped | 2026-06-01 |
 | B2 — Update-available + history/diff propagation | ✅ Shipped | 2026-06-01 |
+| D1 — Assistant role overlays + role picker | ✅ Shipped | 2026-06-01 |
+| D2 — Storyboard / Simple Scene / Timeline specialist recipes | 📋 Planned | — |
 | C — Personal prompt overrides + assistant-as-co-author | 📋 Planned | — |
-| D — Specialist recipes + assistant roles | 📋 Planned | — |
 | E — Orchestration | 📋 Planned | — |
 
 This section gets updated whenever a phase ships. Always keep it accurate.

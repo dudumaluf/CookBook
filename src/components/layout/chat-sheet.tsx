@@ -13,6 +13,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { ModelSelector } from "@/components/assistant/model-selector";
+import { RolePicker } from "@/components/assistant/role-picker";
 import { Button } from "@/components/ui/button";
 import type { ReasonerEvent } from "@/lib/assistant/reasoner";
 import { executePlan } from "@/lib/assistant/run";
@@ -69,6 +70,7 @@ export function ChatSheet() {
           <span className="font-medium">Conversation</span>
         </div>
         <div className="flex items-center gap-1">
+          <RolePicker />
           <ModelSelector />
           <Button
             variant="ghost"

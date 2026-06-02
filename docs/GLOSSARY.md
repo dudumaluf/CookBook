@@ -255,6 +255,19 @@ See [`docs/COOKBOOK-LIBRARY.md`](./COOKBOOK-LIBRARY.md) for the full design + ro
 - **`<RecipeVersionDiff />`** — `src/components/cookbook/recipe-version-diff.tsx`. Renders the `SubgraphDiff` as plain English: Added (green +) / Removed (red −) / Changed (amber ~) sections, with per-field diffs and char-level highlights for prompt text, plus an edge-count one-liner.
 - **`<RecipeVersionHistory />`** — `src/components/cookbook/recipe-version-history.tsx`. Embedded section in `<RecipeDetail />`. Hidden on v1 recipes. Collapsed by default; expand lazy-loads `repository.listVersions(recipeId)`. Lists Current (top, emerald) + prior versions descending; click any version selects it and renders the diff vs current. Re-keyed on `recipe.id` so switching recipes resets state.
 
+## Cookbook Library (Phase D1)
+
+- **`AssistantRole`** — `src/lib/assistant/roles/types.ts`. Contract: `{id, label, description, systemPromptOverlay}`. Stable id (kebab-case) used by the role store; label fits in a ~22-char trigger pill; description is a one-line user-facing blurb shown in the popover; overlay is a 500-1500 char markdown block appended to the static prefix of the system prompt AFTER `REASONER_INSTRUCTIONS`.
+- **Role registry** — `src/lib/assistant/roles/index.ts`. `ROLES` is an ordered readonly array (General first, specialists after). `DEFAULT_ROLE_ID = "general"`. `resolveRole(id)` returns the registered role or falls back to General for null / empty / unknown ids — covers stale localStorage values from a pruned role.
+- **General role** — empty overlay; the default. Picking it explicitly is the "turn off specialization" action.
+- **Prompt Engineer role** — universal prompt-craft principles (layered structure, specificity, model-family conventions, length sweet spots, negation handling). Modality-agnostic.
+- **Storyboard Director role** — 10 continuity rules + panel template (Camera / Subject / Setting / Continuity tag). For multi-shot narrative sequences. Pairs with the Phase D2 Storyboard Director recipe.
+- **Timeline Director role** — 5 setup blocks (Character / Setting / Tone / Constraints / Goal) + `[mm:ss-mm:ss]` timeline slots. For multi-beat single-shot scenes. Pairs with the Phase D2 Timeline Director recipe.
+- **Recipe Architect role** — deep Cookbook awareness (composite nodes, exposed I/O, exposedParams, recipe versioning, fork-edit flow, save-from-canvas, Phase A/B1/B2 flows). For users designing or refactoring recipes.
+- **`useAssistantRoleStore`** — `src/lib/stores/assistant-role-store.ts`. Zustand store persisted in localStorage as `cookbook.assistant-role`. Holds `roleId`. Methods: `setRoleId` (trims; empty → General), `reset`, `getRoleId` (read-with-fallback), `getRole` (resolved record). Two module-level helpers `getActiveRole()` + `getActiveRoleOverlay()` for the reasoner.
+- **Role overlay injection** — `runReasoner` reads the active role's overlay and concatenates it into the static prefix AFTER `REASONER_INSTRUCTIONS`. The overlay is a specialization layer that can override base behavior. Cached on Anthropic / Gemini via the same `cache_control` marker as the rest of the static prefix; switching roles invalidates the cache by design.
+- **`<RolePicker />`** — `src/components/assistant/role-picker.tsx`. Compact dropdown mounted in the chat-sheet header next to `<ModelSelector />`. Trigger: ghost button with `UserCog` icon + active label + chevron. Popover lists 5 roles with descriptions; active marked with check; General styled subdued.
+
 ## Chat attachments + @-mentions (ADR-0053)
 
 - **PromptReference** — `src/lib/assistant/prompt-references.ts`. A tiny descriptor (`kind: asset | generation`, `refId`, `label`, `mediaType`, `url?`) for a file the user attached or @-mentioned. `buildReferencesNote(refs)` renders them into the user turn so the assistant uses the exact items (by id/url).
