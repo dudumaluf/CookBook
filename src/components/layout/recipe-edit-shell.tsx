@@ -20,6 +20,7 @@ import {
   closeRecipeEdit,
   openRecipeForEdit,
 } from "@/lib/project/recipe-edit-session";
+import { useAssistantPromptOverridesHydration } from "@/lib/stores/assistant-prompt-overrides-store";
 import { useRecipeWatcherHydration } from "@/lib/stores/recipe-watcher-store";
 
 /**
@@ -52,6 +53,7 @@ export function RecipeEditShell({ recipeId }: { recipeId: string }) {
   // the recipe currently being edited — that's the whole point of this
   // shell — but cross-recipe references inside this one need it.)
   useRecipeWatcherHydration({ userId });
+  useAssistantPromptOverridesHydration({ userId });
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromUrl = searchParams.get("from");

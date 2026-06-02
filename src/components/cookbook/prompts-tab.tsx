@@ -6,21 +6,28 @@ import {
   ExternalLink,
   FileText,
   Package,
+  Pencil,
   Search,
   Wand2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { CopyButton } from "@/components/cookbook/copy-button";
+import { PromptEditor } from "@/components/cookbook/prompt-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { useSession } from "@/lib/auth/use-session";
 import { useRecipes } from "@/lib/hooks/use-recipes";
 import { extractAllRecipePrompts } from "@/lib/prompts/extract-from-recipe";
 import { getCodePrompts } from "@/lib/prompts/registry";
 import type { PromptEntry, PromptSection } from "@/lib/prompts/types";
 import { useLayoutStore } from "@/lib/stores/layout-store";
+import {
+  useHasPromptOverride,
+  useOverrideBody,
+} from "@/lib/stores/assistant-prompt-overrides-store";
 import { cn } from "@/lib/utils";
 
 type FilterId = "all" | PromptSection;
@@ -211,6 +218,13 @@ function PromptCard({
     : ICON_BY_SECTION[prompt.section];
   const sectionLabel =
     FILTER_DEFS.find((f) => f.id === prompt.section)?.label ?? prompt.section;
+  // Phase C — only code-defined assistant prompts can be overridden.
+  // Recipe-internal + node-default entries get their custom version
+  // through the recipe edit flow (Phase B) so we don't show the
+  // Custom badge for them here.
+  const overridable = prompt.section === "assistant";
+  const hasOverride = useHasPromptOverride(prompt.key);
+  const showCustomBadge = overridable && hasOverride;
 
   return (
     <button
@@ -229,6 +243,14 @@ function PromptCard({
         <span className="flex-1 truncate text-xs font-medium text-foreground">
           {prompt.title}
         </span>
+        {showCustomBadge ? (
+          <span
+            data-testid={`cookbook-prompt-card-custom-${prompt.key}`}
+            className="rounded-sm border border-emerald-500/40 bg-emerald-500/10 px-1 py-px text-[9px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400"
+          >
+            Custom
+          </span>
+        ) : null}
         <span className="rounded-sm border border-border/40 bg-background/80 px-1 py-px text-[9px] uppercase tracking-wider text-muted-foreground/80">
           {sectionLabel}
         </span>
@@ -247,9 +269,43 @@ function PromptDetail({
   prompt: PromptEntry;
   onJumpToRecipe: () => void;
 }) {
+  // Use the prompt key as a remount key so per-prompt local state
+  // (`editing`) resets cleanly when the user navigates between
+  // prompts — no in-effect setState needed.
+  return (
+    <PromptDetailInner
+      key={prompt.key}
+      prompt={prompt}
+      onJumpToRecipe={onJumpToRecipe}
+    />
+  );
+}
+
+function PromptDetailInner({
+  prompt,
+  onJumpToRecipe,
+}: {
+  prompt: PromptEntry;
+  onJumpToRecipe: () => void;
+}) {
   const Icon = prompt.internalNodeKind === "llm-text"
     ? Cpu
     : ICON_BY_SECTION[prompt.section];
+  const { user } = useSession();
+  const ownerId = user?.id ?? null;
+  // Only code-defined assistant prompts are user-overridable. Recipe
+  // internal + node-default flows live elsewhere.
+  const overridable = prompt.section === "assistant";
+  const hasOverride = useHasPromptOverride(prompt.key);
+  const overrideBody = useOverrideBody(prompt.key);
+  const [editing, setEditing] = useState(false);
+
+  // Display body: when an override exists, show it (so users see what
+  // their assistant is actually using); fall back to the code default
+  // otherwise.
+  const displayedContent = overridable && overrideBody !== null
+    ? overrideBody
+    : prompt.content;
 
   return (
     <ScrollArea className="h-full">
@@ -262,12 +318,38 @@ function PromptDetail({
                 <h2 className="truncate text-base font-medium text-foreground">
                   {prompt.title}
                 </h2>
+                {overridable && hasOverride ? (
+                  <span
+                    data-testid={`cookbook-prompt-detail-custom-${prompt.key}`}
+                    className="rounded-sm border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400"
+                  >
+                    Custom
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {prompt.description}
               </p>
             </div>
-            <CopyButton text={prompt.content} label="Copy prompt as plain text" />
+            <div className="flex items-center gap-1.5">
+              <CopyButton
+                text={displayedContent}
+                label="Copy prompt as plain text"
+              />
+              {overridable && !editing ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditing(true)}
+                  disabled={!ownerId}
+                  className="gap-1.5 text-[11px]"
+                  data-testid={`cookbook-prompt-edit-${prompt.key}`}
+                >
+                  <Pencil className="h-3 w-3" />
+                  {hasOverride ? "Edit custom" : "Customize"}
+                </Button>
+              ) : null}
+            </div>
           </div>
 
           {prompt.section === "recipe-internal" && prompt.recipeId ? (
@@ -288,23 +370,39 @@ function PromptDetail({
               ) : null}
             </div>
           ) : null}
+
+          {overridable && hasOverride && !editing ? (
+            <p className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 text-[10.5px] leading-relaxed text-emerald-800 dark:text-emerald-300">
+              You&apos;re running a customized version of this prompt. The
+              assistant uses this body on every turn until you Reset to default.
+            </p>
+          ) : null}
         </header>
 
         <Separator />
 
-        <section className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
-              Plain text
-            </h3>
-            <span className="text-[10.5px] tabular-nums text-muted-foreground/70">
-              {prompt.content.length.toLocaleString()} chars
-            </span>
-          </div>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border/50 bg-background/40 p-4 font-mono text-[11.5px] leading-relaxed text-foreground/90">
-            {prompt.content}
-          </pre>
-        </section>
+        {editing ? (
+          <PromptEditor
+            promptKey={prompt.key}
+            defaultContent={prompt.content}
+            ownerId={ownerId}
+            onClose={() => setEditing(false)}
+          />
+        ) : (
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+                {overridable && hasOverride ? "Your custom prompt" : "Plain text"}
+              </h3>
+              <span className="text-[10.5px] tabular-nums text-muted-foreground/70">
+                {displayedContent.length.toLocaleString()} chars
+              </span>
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-border/50 bg-background/40 p-4 font-mono text-[11.5px] leading-relaxed text-foreground/90">
+              {displayedContent}
+            </pre>
+          </section>
+        )}
       </div>
     </ScrollArea>
   );
@@ -319,9 +417,8 @@ function DetailEmptyState() {
       </p>
       <p className="max-w-md text-[11px] leading-relaxed text-muted-foreground/70">
         Every prompt is plain text — copy it into ChatGPT, Claude, or any other
-        LLM to discuss improvements. Phase B will let you edit prompts in
-        recipes you own; Phase C lets you customize the assistant&apos;s base
-        instructions.
+        LLM to discuss improvements. Click any assistant prompt and use
+        Customize to override it for your account.
       </p>
     </div>
   );

@@ -13,6 +13,11 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
 import { ModelSelector } from "@/components/assistant/model-selector";
+import {
+  isPromptEditProposal,
+  PromptEditProposalCard,
+} from "@/components/assistant/prompt-edit-proposal-card";
+import { PromptOverrideBadge } from "@/components/assistant/prompt-override-badge";
 import { RolePicker } from "@/components/assistant/role-picker";
 import { Button } from "@/components/ui/button";
 import type { ReasonerEvent } from "@/lib/assistant/reasoner";
@@ -70,6 +75,7 @@ export function ChatSheet() {
           <span className="font-medium">Conversation</span>
         </div>
         <div className="flex items-center gap-1">
+          <PromptOverrideBadge />
           <RolePicker />
           <ModelSelector />
           <Button
@@ -163,6 +169,24 @@ function LiveTrace({ events }: { events: ReasonerEvent[] }) {
       {events.map((e, i) => {
         if (e.type === "tool_call") {
           const result = resultsById.get(e.callId);
+          // Phase C — `propose_prompt_edit` returns a structured
+          // proposal we render as a dedicated card instead of the
+          // generic ToolCallRow. The user clicks Apply / Reject on
+          // the card; the assistant only suggested.
+          if (
+            result?.type === "tool_result" &&
+            isPromptEditProposal(result.result)
+          ) {
+            return (
+              <div
+                key={`call-${e.callId}`}
+                className="flex flex-col gap-1.5"
+              >
+                <ToolCallRow call={e} result={result} />
+                <PromptEditProposalCard proposal={result.result} />
+              </div>
+            );
+          }
           return (
             <ToolCallRow
               key={`call-${e.callId}`}

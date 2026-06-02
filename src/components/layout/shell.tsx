@@ -24,6 +24,7 @@ import { CookbookOverlay } from "@/components/cookbook/cookbook-overlay";
 import { useSession } from "@/lib/auth/use-session";
 import { useLayoutShortcuts } from "@/lib/hooks/use-layout-shortcuts";
 import { closeProject, openProject } from "@/lib/project/session";
+import { useAssistantPromptOverridesHydration } from "@/lib/stores/assistant-prompt-overrides-store";
 import { useRecipeWatcherHydration } from "@/lib/stores/recipe-watcher-store";
 
 /**
@@ -59,6 +60,10 @@ export function AppShell({ projectId }: { projectId: string }) {
   // can show "Update available" badges. Hydrates on mount + on every
   // window focus (covers cross-tab + cross-device edits).
   useRecipeWatcherHydration({ userId });
+  // Phase C — hydrate the per-user prompt-overrides snapshot once on
+  // sign-in so the chat-sheet badge + Library editor can render
+  // without round-tripping the DB on every component mount.
+  useAssistantPromptOverridesHydration({ userId });
   const router = useRouter();
   // Start in `loading` (not `idle`) so the canvas never flashes empty
   // before the project document is applied on mount.

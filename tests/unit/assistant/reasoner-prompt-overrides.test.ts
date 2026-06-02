@@ -40,6 +40,11 @@ const { useAssistantRoleStore } = await import(
 const { useAssetStore } = await import("@/lib/stores/asset-store");
 const { useExecutionStore } = await import("@/lib/stores/execution-store");
 const { useWorkflowStore } = await import("@/lib/stores/workflow-store");
+const { setPromptOverridesRepositoryForTests } = await import(
+  "@/lib/repositories/supabase-prompt-overrides-repository"
+);
+
+const fakeOverrides = new Map<string, { body: string; updatedAt: string }>();
 
 beforeEach(() => {
   callOpenRouterMock.mockReset();
@@ -60,39 +65,105 @@ beforeEach(() => {
     selectedAssetIds: [],
     selectionAnchorId: null,
   });
-  useExecutionStore.setState({
-    runId: 0,
-    isRunning: false,
-    records: new Map(),
+  useExecutionStore.setState({ runId: 0, isRunning: false, records: new Map() });
+  fakeOverrides.clear();
+  setPromptOverridesRepositoryForTests({
+    list: async () => Array.from(fakeOverrides.entries()).map(([k, v]) => ({
+      ownerId: "u1",
+      promptKey: k,
+      body: v.body,
+      createdAt: v.updatedAt,
+      updatedAt: v.updatedAt,
+    })),
+    get: async (_owner, key) => {
+      const v = fakeOverrides.get(key);
+      if (!v) return null;
+      return {
+        ownerId: "u1",
+        promptKey: key,
+        body: v.body,
+        createdAt: v.updatedAt,
+        updatedAt: v.updatedAt,
+      };
+    },
+    upsert: async (_owner, key, body) => {
+      fakeOverrides.set(key, { body, updatedAt: "now" });
+      return {
+        ownerId: "u1",
+        promptKey: key,
+        body,
+        createdAt: "now",
+        updatedAt: "now",
+      };
+    },
+    remove: async (_owner, key) => {
+      fakeOverrides.delete(key);
+    },
   });
 });
 
 afterEach(() => {
   callOpenRouterMock.mockReset();
+  setPromptOverridesRepositoryForTests(undefined as never);
 });
 
-/**
- * Phase D1 — verifies the role overlay actually lands in the system
- * prompt seen by the LLM call layer. We mock callOpenRouter and
- * inspect the outgoing `messages[0]` (the system message) for the
- * overlay's signature heading.
- */
-describe("runReasoner — Phase D1 role overlay", () => {
-  it("injects the General role's orchestrator overlay by default", async () => {
+describe("runReasoner — Phase C prompt overrides", () => {
+  it("uses the bundled REASONER_INSTRUCTIONS when no override row exists", async () => {
     await runReasoner({
       userMessage: "hi",
       ownerId: "u1",
       projectId: "p1",
       signal: new AbortController().signal,
     });
-    expect(callOpenRouterMock).toHaveBeenCalled();
     const args = callOpenRouterMock.mock.calls[0]![0];
     const systemContent = systemTextFromArgs(args);
-    expect(systemContent).toMatch(/ROLE OVERLAY: General/);
-    expect(systemContent).toMatch(/suggest_recipes_for_intent/);
+    expect(systemContent).toMatch(/## OPERATING INSTRUCTIONS/);
   });
 
-  it("injects the Storyboard Director overlay when that role is active", async () => {
+  it("substitutes the override body when one exists for the active user", async () => {
+    fakeOverrides.set("assistant.reasoner", {
+      body: "## OPERATING INSTRUCTIONS\n\nMY-CUSTOM-OPS-MARKER",
+      updatedAt: "now",
+    });
+    await runReasoner({
+      userMessage: "hi",
+      ownerId: "u1",
+      projectId: "p1",
+      signal: new AbortController().signal,
+    });
+    const args = callOpenRouterMock.mock.calls[0]![0];
+    const systemContent = systemTextFromArgs(args);
+    expect(systemContent).toMatch(/MY-CUSTOM-OPS-MARKER/);
+  });
+
+  it("fails open — falls back to default when the override repo throws", async () => {
+    setPromptOverridesRepositoryForTests({
+      list: async () => [],
+      get: async () => {
+        throw new Error("network down");
+      },
+      upsert: async () => {
+        throw new Error("not used");
+      },
+      remove: async () => {},
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await runReasoner({
+      userMessage: "hi",
+      ownerId: "u1",
+      projectId: "p1",
+      signal: new AbortController().signal,
+    });
+    const args = callOpenRouterMock.mock.calls[0]![0];
+    const systemContent = systemTextFromArgs(args);
+    expect(systemContent).toMatch(/## OPERATING INSTRUCTIONS/);
+  });
+
+  it("composes the override body BEFORE the role overlay (specialization on top of override)", async () => {
+    fakeOverrides.set("assistant.reasoner", {
+      body: "## OPERATING INSTRUCTIONS\n\nCUSTOM-OPS-BASE",
+      updatedAt: "now",
+    });
     useAssistantRoleStore.getState().setRoleId("storyboard-director");
     await runReasoner({
       userMessage: "hi",
@@ -102,51 +173,14 @@ describe("runReasoner — Phase D1 role overlay", () => {
     });
     const args = callOpenRouterMock.mock.calls[0]![0];
     const systemContent = systemTextFromArgs(args);
-    expect(systemContent).toMatch(/ROLE OVERLAY: Storyboard Director/);
-    expect(systemContent).toMatch(/10 continuity rules/);
-  });
-
-  it("places the overlay AFTER the base reasoner instructions (specialization layer)", async () => {
-    useAssistantRoleStore.getState().setRoleId("recipe-architect");
-    await runReasoner({
-      userMessage: "hi",
-      ownerId: "u1",
-      projectId: "p1",
-      signal: new AbortController().signal,
-    });
-    const args = callOpenRouterMock.mock.calls[0]![0];
-    const systemContent = systemTextFromArgs(args);
-    const operatingIdx = systemContent.indexOf("## OPERATING INSTRUCTIONS");
-    const overlayIdx = systemContent.indexOf("ROLE OVERLAY: Recipe Architect");
-    expect(operatingIdx).toBeGreaterThanOrEqual(0);
+    const customIdx = systemContent.indexOf("CUSTOM-OPS-BASE");
+    const overlayIdx = systemContent.indexOf("ROLE OVERLAY: Storyboard Director");
+    expect(customIdx).toBeGreaterThanOrEqual(0);
     expect(overlayIdx).toBeGreaterThanOrEqual(0);
-    expect(overlayIdx).toBeGreaterThan(operatingIdx);
-  });
-
-  it("falls back to General when an unknown role id is in the store (defensive)", async () => {
-    useAssistantRoleStore.setState({ roleId: "the-deleted-role" });
-    await runReasoner({
-      userMessage: "hi",
-      ownerId: "u1",
-      projectId: "p1",
-      signal: new AbortController().signal,
-    });
-    const args = callOpenRouterMock.mock.calls[0]![0];
-    const systemContent = systemTextFromArgs(args);
-    // Falls back to General — General now ships an orchestrator
-    // overlay (Phase E), so we look for that signature instead of
-    // asserting the absence of any overlay.
-    expect(systemContent).toMatch(/ROLE OVERLAY: General/);
-    expect(systemContent).not.toMatch(/Storyboard Director|Timeline Director|Recipe Architect|Prompt Engineer/);
+    expect(overlayIdx).toBeGreaterThan(customIdx);
   });
 });
 
-/**
- * Pull the system text from the outgoing call args, regardless of
- * whether it landed as a string (caching-incapable path) or as
- * cache_control content blocks (Anthropic / Gemini path). Same
- * semantic content either way; tests can grep without branching.
- */
 function systemTextFromArgs(args: { messages?: unknown[] }): string {
   const msgs = (args.messages ?? []) as Array<{ role: string; content: unknown }>;
   const sys = msgs.find((m) => m.role === "system");

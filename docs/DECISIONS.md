@@ -2763,3 +2763,94 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 - **Custom user templates inside system recipes.** Currently locked to the migration-shipped 5. Users who need a 6th fork the whole recipe — fine for now.
 - **Recipe gallery / recommendations.** When you have N recipes, "show me the relevant ones for what I'm doing" becomes useful. Phase E concern.
 - **Live template preview in the recipe detail panel.** Click "Storyboard Director", see the rendered system prompt for cursor=2 (8 panels) without instantiating. Useful for power users; deferred.
+
+---
+
+## ADR-0063 — Cookbook Library Phase C: personal prompt overrides + assistant-as-co-author
+
+- **Date**: 2026-06-02
+- **Context**: Phases A → B2 + D1 + D2 made every prompt + recipe in the system visible and editable. The remaining black box was the assistant's own base operating instructions (`REASONER_INSTRUCTIONS`). Users couldn't customize how the assistant behaves, couldn't see the actual current text being injected on each turn, and the "make yourself smarter" loop wasn't possible because the assistant had no way to read its own prompt or propose edits to it. Phase C closes this — turns the assistant from a configured-by-engineering surface into a co-authored surface, while keeping the user as the only principal that can commit changes.
+
+### Options considered
+
+**(a) Edit `REASONER_INSTRUCTIONS` in code, ship a new app version per change.** Status quo. Engineering bottleneck. No per-user customization possible. Discarded immediately — defeats the whole premise of the Library.
+
+**(b) Per-user prompt overrides via DB (`app_prompt_overrides`), assistant proposes edits but never applies, user clicks Apply in the chat.** What we shipped. Three core surfaces: a Library editor (Yours vs Default side-by-side), a chat-sheet badge that shouts when you're running custom, and two assistant tools (`read_my_system_prompt` to close the black box + `propose_prompt_edit` to enable "make yourself smarter" with explicit user approval).
+
+**(c) Free-form prompt-overrides + agentic auto-apply.** Tempting (the assistant could just learn from feedback), rejected outright. The boundary between "agent can edit its own behavior" and "agent has fully escaped supervision" is exactly one missing user-confirm step away. We keep the explicit Apply / Reject UI as the safety boundary.
+
+**(d) Keep overrides anonymous / global / shareable.** Tempting (a marketplace of custom REASONER_INSTRUCTIONS). Rejected for v1 — privacy, moderation, and quality control would all need answers we don't have yet. Overrides are personal-private. Sharing is a future phase if the demand emerges.
+
+### Decision: (b)
+
+- **DB.** New `app_prompt_overrides` table keyed by `(owner_id, prompt_key)`. RLS = owner only. `body` is unbounded TEXT. Touch trigger keeps `updated_at` honest.
+- **Resolution helper (`resolvePrompt(key, ownerId)`).** Override-or-default lookup with fail-open semantics on DB errors. The reasoner reads through this — never imports `REASONER_INSTRUCTIONS` directly anymore.
+- **Reasoner integration.** The static prefix now layers `KNOWLEDGE` → `RESOLVED REASONER INSTRUCTIONS (default OR override)` → `ROLE OVERLAY (General OR specialist)`. Editing the override invalidates the cache by definition (same explicit cost as a role switch — and just as worth it because overrides are the slow-changing layer).
+- **Library editor (`<PromptEditor />`).** Side-by-side Yours / Default with Save / Reset / Cancel. Save is disabled when body matches default to prevent no-op rows.
+- **Chat-sheet badge (`<PromptOverrideBadge />`).** Emerald "Custom prompt" pill that only renders when an override is active. Click → opens the Library on the Prompts tab. Three places light up emerald (card / detail header / chat header) so the user is never confused about which version is running.
+- **Tools.** `read_my_system_prompt` returns the resolved body + role overlay so the assistant can see itself; `propose_prompt_edit` returns a structured payload with `__proposal: "prompt_edit"` sentinel that the chat renders as a dedicated card with Apply / Reject buttons. The tool NEVER writes — Apply only fires on the user's click.
+- **In-tab cache (`useAssistantPromptOverridesStore`).** Hydrated on sign-in; updated locally after Save / Reset / Apply. Used ONLY by UI surfaces — the reasoner never reads this store. This split prevents "stale local snapshot says I have a custom prompt but the DB row is gone" desync.
+
+### Consequences
+
+**Wins.**
+- The black box is closed: ask the assistant *"what's your system prompt?"* and you get the actual text it's running with.
+- The "make yourself smarter" loop works end-to-end: the assistant reads its own prompt, proposes a structured edit + rationale, the user clicks Apply in the chat, the next turn runs with the new body. No engineering involvement.
+- The user sees clearly when they're running custom (3 emerald badges across 3 surfaces) and can reset to default in one click from any of them.
+- The safety boundary is explicit and visible: every edit to the assistant's behavior shows up in the chat as an Apply / Reject card. Easy to audit; easy to reject.
+- Builds cleanly on Phase D1 — the role overlay still composes after the override, so a user who's customized REASONER_INSTRUCTIONS can still pick Storyboard Director and get specialist behavior on top.
+
+**Trade-offs we accept.**
+- **DB on every reasoner turn.** `getResolvedPromptBody` hits the DB on each call instead of reading from the in-tab store. We chose correctness (no stale "thought I'm using my custom prompt" desync) over latency. Roundtrip cost is small (~30ms p50 single-row indexed read) and dwarfed by the LLM call latency.
+- **Override invalidates the cached static prefix.** Same as a role switch. One-time cache miss per save (~$0.01-0.03 depending on model). Worth it for the customization power.
+- **Recipe-internal + node-default prompts are NOT overridable through this surface.** Those flow through Phase B's edit + version path: fork the recipe, edit the inner Text node, save as new version. Different mental model + different governance (composite-instance versioning is the right tool there). The Library editor only exposes the Customize button on Section = "assistant".
+- **Single body per (owner, key).** No history; rolls forward on every Save. Phase B's `cookbook_recipe_versions` lookup pattern would work here too if user demand emerges, but we ship the simpler shape first.
+
+**What's parked for later.**
+- **Override sharing.** Today an override is private to its owner. A future phase could add a "share my custom assistant prompt as a recipe-like artifact" flow. Needs moderation + visibility model first.
+- **More overridable keys.** Today only `assistant.reasoner` is overridable. Specialist role overlays could be overridable too — but we want to see how users interact with the base override first before exposing N more knobs.
+- **History viewer for overrides.** Phase B2 shipped a recipe version history; the analogous flow for prompt overrides ("show me my last three edits to the assistant prompt; let me roll back to the second-most-recent") is feasible but not yet justified by usage.
+
+---
+
+## ADR-0064 — Cookbook Library Phase E: orchestration
+
+- **Date**: 2026-06-02
+- **Context**: Phases A → D2 + C made the Cookbook fully operable: every prompt + recipe is visible, every recipe is editable, every assistant prompt is overridable, and the assistant has 5 specialist personas. But the General role was empty — it had no awareness of the recipes available or the specialists waiting in the role picker. Users on a fresh install would write *"make me an 8-panel storyboard"* and get a generic construct-from-scratch flow instead of *"the Storyboard Director recipe + role pair handles this"*. Phase E closes the loop: the General role becomes a recommendation system, the assistant can hand off to specialists mid-conversation, and the user is always in control of which role is active.
+
+### Options considered
+
+**(a) Hard-code an intent classifier in `runReasoner`.** Read the user message, regex-match for known patterns ("storyboard", "panels", "scene"), inject a hidden `recommended_recipe_id` field into the system prompt. Tightly coupled, no transparency, hard to extend. Discarded — the registry-based approach below is more honest about the heuristic and easier to test/iterate.
+
+**(b) Two new tools (`suggest_recipes_for_intent` + `switch_role`) + a General role overlay nudge.** What we shipped. The assistant calls the scoring tool early in a turn, sees the candidates + role hints, and decides whether to recommend a recipe + propose a role switch. Transparent (the user sees the tool call in the trace), extensible (more recipes auto-score; more roles get hint entries in one map), and bounded (idle switches forbidden by overlay copy + idempotent same-role no-op).
+
+**(c) Embedding-based recipe match.** Better recall on long-tail intent but adds an embedding pipeline + RAG infra + cost-per-turn. Discarded for v1 — the keyword scorer covers the common cases (recipes are intentionally named with the matching intent vocabulary) and we can swap in embeddings later behind the same tool surface without changing the assistant's interface. Re-engage if telemetry shows the keyword scorer missing obvious matches.
+
+**(d) Auto-switch-roles without user awareness.** Same boundary problem as Phase C — silently changing the assistant's persona mid-conversation is exactly the kind of "agent escapes supervision" we're avoiding. The assistant can SUGGEST switching, the user sees the trace, but the role change always shows up in the role picker UI so the user knows what's happening.
+
+### Decision: (b)
+
+- **`suggest_recipes_for_intent` tool.** Scores recipes by keyword overlap on `name` (×3) + `description` (×1) + `category` (×0.5). Returns top N + role-pairing hints derived from matched tokens. Empty result = explicit "fall back to construct" hint in the response. Pure helper `scoreRecipesForIntent` exported alongside the tool for tests + future reuse.
+- **`switch_role` tool.** Idempotent, validated, stateful. Writes to `useAssistantRoleStore` (persisted localStorage). Critical decision: the new role kicks in on the NEXT user turn, not this one — the static prefix on this turn was already built with the old overlay, and trying to switch mid-turn would either invalidate the cache or produce inconsistent behavior. The `hint` in the response payload tells the assistant to phrase its message accordingly.
+- **General role overlay.** Previously empty. Now a ~200-word orchestrator nudge that points at the two new tools and prescribes when to use them: call `suggest_recipes_for_intent` near the start of any non-trivial creative request; if `roleHints` clearly converge, call `switch_role` with a short reason. Idle switches forbidden. The user's explicit picker choice is always respected.
+- **Length-bounded overlay.** ~200 words deliberately. Long overlays burn tokens on every turn and dilute the base reasoner instructions. The tools' own descriptions + return payloads carry the detailed contract; the overlay just pokes the assistant in the right direction.
+
+### Consequences
+
+**Wins.**
+- The user fresh-installs and writes *"make me an 8-panel storyboard"* — the assistant calls `suggest_recipes_for_intent`, sees the Storyboard Director recipe match, sees the storyboard-director role hint, and proposes both. The persona/recipe pairing from Phase D2 actually surfaces in conversation.
+- Transparent orchestration: the trace shows the suggestion + the role switch as discrete tool calls, not magic. Easy to audit, easy to debug, easy to disable (if a user dislikes the recommendation, they ignore it — the user is always in control).
+- The General role becomes useful as a default. Before Phase E, picking General was "no specialization, no help finding the right specialist." Now it's "default + recommender" — the right starting point for any user who hasn't picked a role yet.
+- The closing of the Cookbook Library project. A → B1 → B2 → C → D1 → D2 → E all shipped. The system is internally complete: every prompt visible, every recipe editable, every assistant behavior tunable + co-author-able, every specialist reachable via recommendation.
+
+**Trade-offs we accept.**
+- **Keyword scoring missess long-tail intent.** A user who writes *"I want to tell a visual story across multiple shots"* will not match `storyboard` despite that being exactly the storyboard recipe's domain. Acceptable for v1 — the embedding upgrade slots in behind the same tool surface. Telemetry on empty results will tell us when to do that work.
+- **The General overlay adds tokens to every turn.** ~200 words is ~250 tokens. On caching-capable models, paid once per session-per-role then discounted; on caching-incapable models, paid every turn. Worth it because the orchestration win is on the FIRST turn of a session — exactly the moment when the user hasn't picked a role yet and the recommendation matters most.
+- **Role switches take effect on the NEXT turn.** A user who reads *"switching to Storyboard Director for the next step"* and then asks a follow-up gets the specialist on the second message, not the first. Slight UX friction but the alternative (mid-turn cache invalidation) is worse.
+- **Recommendation quality is heuristic.** The token scorer is dumb on purpose — it's a starter that we'll tune via real-use feedback, not an ML pipeline. Phase E ships v1 of orchestration; iteration via `ROLE_HINTS` map + recipe-name conventions is the path forward.
+
+**What's parked for later.**
+- **Multi-recipe orchestration.** *"Make me a 15s product launch"* → General → Storyboard Director plans panels → Continuity Architect locks rules → Seedance Director per-panel. Single-step recommend + hand-off ships first; chained orchestration is a future iteration once we see how users actually use the basic recommender.
+- **Role-aware tool gating.** Today every role has access to every tool. A future phase could restrict tools per role (e.g. Storyboard Director can't call construct-graph-from-scratch tools because that's the Recipe Architect's job). Premature given how few roles exist.
+- **Embedding-based recipe match.** Slot-in upgrade behind the same tool surface. Re-engage when keyword scoring misses become measurable.
+- **Recipe success-rate telemetry.** "Users who picked the Storyboard Director recipe got high-quality output 80% of the time; users who took the recommendation but ignored the role hint got 60%." Real signal but requires telemetry plumbing we don't have yet.

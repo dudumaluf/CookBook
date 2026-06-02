@@ -24,8 +24,12 @@ import { readNodeStateTool } from "./read/read-node-state";
 import { readRecipeTool } from "./read/read-recipe";
 import { askUserTool } from "./reasoning/ask-user";
 import { narrateTool } from "./reasoning/narrate";
+import { proposePromptEditTool } from "./reasoning/propose-prompt-edit";
+import { readMySystemPromptTool } from "./reasoning/read-my-system-prompt";
+import { switchRoleTool } from "./reasoning/switch-role";
 import { instantiateRecipeTool } from "./recipe/instantiate-recipe";
 import { saveSelectionAsRecipeTool } from "./recipe/save-selection-as-recipe";
+import { suggestRecipesForIntentTool } from "./recipe/suggest-recipes-for-intent";
 import { unpackCompositeTool } from "./recipe/unpack-composite";
 import { proposeRefactorTool } from "./refactor/propose-refactor";
 import { cancelRunTool } from "./run/cancel-run";
@@ -108,6 +112,8 @@ const tools: AssistantTool[] = [
   instantiateRecipeTool,
   saveSelectionAsRecipeTool,
   unpackCompositeTool,
+  // Phase E — recipe-driven orchestration.
+  suggestRecipesForIntentTool,
   // Phase 3 — preview-gated bulk refactor.
   proposeRefactorTool,
   // Slice 7.3 — run tools.
@@ -117,6 +123,11 @@ const tools: AssistantTool[] = [
   // Slice 7.3 — reasoning helpers.
   narrateTool,
   askUserTool,
+  // Phase C — assistant-as-co-author for its own prompt.
+  readMySystemPromptTool,
+  proposePromptEditTool,
+  // Phase E — role hand-off.
+  switchRoleTool,
   // Slice 7.4 — vision evaluation.
   evaluateResultTool,
   compareResultsTool,

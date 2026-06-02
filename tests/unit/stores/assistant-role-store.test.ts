@@ -56,8 +56,10 @@ describe("useAssistantRoleStore", () => {
 });
 
 describe("getActiveRoleOverlay / getActiveRole helpers", () => {
-  it("returns the empty string for the default General role", () => {
-    expect(getActiveRoleOverlay()).toBe("");
+  it("returns the General role's orchestrator overlay by default (Phase E)", () => {
+    const overlay = getActiveRoleOverlay();
+    expect(overlay).toMatch(/ROLE OVERLAY: General/);
+    expect(overlay).toMatch(/suggest_recipes_for_intent/);
   });
 
   it("returns a non-empty overlay for a specialist role", () => {

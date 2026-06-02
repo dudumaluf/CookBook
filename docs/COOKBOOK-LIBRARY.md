@@ -161,17 +161,24 @@ When this ships:
 - **Plain-English diff** — added/removed/changed internal nodes; for changed Text + LLM Text nodes, a small char-level diff of the system/user prompt text. Visual subgraph diff is parked.
 - **System recipe instance behaviour** — composites pinned to a system recipe show *"Update available"* whenever the system recipe is bumped via migration; clicking Update silently re-fetches.
 
-### Phase C — Personal prompt overrides + assistant-as-co-author
+### Phase C — Personal prompt overrides + assistant-as-co-author (shipped 2026-06-02)
 
-| Capability | Behavior |
-|---|---|
-| **Per-user overrides** | A new `app_prompt_overrides` table keyed by `(user_id, prompt_key)`. Code reads from this with the bundled default as fallback. |
-| **Edit assistant prompt in Library** | The Prompts tab Assistant section gets an Edit button. Clicking opens a side-by-side "yours vs default" editor. Save writes to `app_prompt_overrides`. Reset removes the row. |
-| **Override badge in chat** | Small chip in the assistant chat header: "using custom General prompt" — so you always know if you're running a modified version. |
-| **`read_my_system_prompt` tool** | Adds a tool the assistant can call to read its own current prompt text. Asking *"what's your system prompt?"* returns the actual current text — no more black box. |
-| **Assistant suggests, doesn't apply** | Asking *"make yourself smarter"* returns a proposed diff + reasoning. UI shows the diff. User clicks Apply. The assistant never silently writes to its own prompt. |
+When this shipped:
 
-This is genuinely powerful — and risk-managed: human in the loop on every change.
+- **`app_prompt_overrides` table** (`supabase/migrations/20260602_app_prompt_overrides.sql`) — keyed by `(owner_id, prompt_key)`. RLS gates each row to its owner — overrides are private (no marketplace). `created_at` + `updated_at` trigger so the Library can show "saved 3 hours ago".
+- **Override resolution helper** (`src/lib/prompts/resolve-prompt.ts`) — `resolvePrompt(key, ownerId)` reads the override row first; falls back to the bundled default. Fail-open on a transient DB error so the assistant never breaks because the override system is briefly unreachable.
+- **Reasoner integration** — `runReasoner` reads through `getResolvedPromptBody(PROMPT_KEYS.ASSISTANT_REASONER, ownerId)` instead of importing `REASONER_INSTRUCTIONS` directly. The role overlay still composes AFTER the resolved body, so specialist behavior stacks on top of the user's customized base.
+- **Library Prompts tab Edit / Save / Reset** (`src/components/cookbook/prompt-editor.tsx`) — clicking Customize on the Assistant prompt opens a side-by-side editor (yours vs default). Save upserts the override; Reset deletes the row (back to default); Cancel discards. Save is disabled when the body matches the default to keep the table free of no-op rows.
+- **Custom badges** — emerald chip on the prompt card + detail header when an override exists, and a "Custom prompt" pill in the chat-sheet header (`src/components/assistant/prompt-override-badge.tsx`) so you always know if you're running a modified version. Click the chip to open the Library on the Prompts tab.
+- **`useAssistantPromptOverridesStore`** — Zustand snapshot of all the user's overrides, hydrated once on sign-in (`useAssistantPromptOverridesHydration` in AppShell + RecipeEditShell). The reasoner does NOT read this store — it goes straight to the DB so a stale local snapshot never causes "thought I'm using my custom prompt but I'm actually on default."
+- **`read_my_system_prompt` tool** (`src/lib/assistant/tools/reasoning/read-my-system-prompt.ts`) — assistant reads the resolved REASONER_INSTRUCTIONS the next turn would inject, plus the active role overlay. Closes the black box: ask *"what's your system prompt?"* and you get the actual current text, not a guess.
+- **`propose_prompt_edit` tool** (`src/lib/assistant/tools/reasoning/propose-prompt-edit.ts`) — assistant proposes a structured edit + rationale + diff summary. Result includes a `__proposal: "prompt_edit"` sentinel so the chat-sheet renderer can swap in the dedicated Apply / Reject card (`src/components/assistant/prompt-edit-proposal-card.tsx`). The tool NEVER writes — Apply only fires on the user's click. This is the explicit safety boundary: every edit to the assistant's own behavior is user-approved.
+
+What C does NOT include yet:
+
+- ❌ Per-recipe-internal prompt overrides (those flow through Phase B's edit + version path: fork the recipe, edit the inner Text node, save as new version).
+- ❌ Sharing a customized prompt to another user (intentionally — overrides are personal).
+- ❌ Versioned override history (single body per key; rolls forward on every Save).
 
 ### Phase D — Specialist recipes + assistant roles (split into D1 → D2)
 
@@ -210,13 +217,21 @@ What D2 does NOT include yet:
 - ❌ Recipe → role chaining ("the recipe just ran; want me to keep iterating in the matching role?" — Phase E).
 - ❌ Custom user-defined templates inside system recipes (the cursor lists are fixed by migration; users who want different templates fork to their own version via Phase B1 edit + save).
 
-### Phase E — Orchestration
+### Phase E — Orchestration (shipped 2026-06-02)
 
-The General role learns to:
+When this shipped:
 
-1. **Recommend recipes** when intent matches: *"this sounds like a Timeline scene — should I drop the Timeline Director recipe with these pre-filled fields?"*
-2. **Hand off to specialist roles** for conversational work: *"Switching to Storyboard Director role to walk you through panels one at a time."*
-3. **Chain specialists** for multi-step work: *"Make me a 15s product launch"* → General orchestrates Storyboard Director (plan the panels) → Continuity Architect (lock the rules) → Seedance Director (one shot per panel).
+- **`suggest_recipes_for_intent` tool** (`src/lib/assistant/tools/recipe/suggest-recipes-for-intent.ts`) — heuristic scorer matches the user's stated intent against every recipe's name (×3 weight), description (×1), and category (×0.5). Returns top N suggestions + role-pairing hints derived from matched tokens (e.g. *"storyboard"* → recommend `storyboard-director` role). Empty result = green light to construct fresh from the schema registry.
+- **`switch_role` tool** (`src/lib/assistant/tools/reasoning/switch-role.ts`) — assistant changes its own active role mid-conversation. Idempotent (no-op when already in target role); rejects unknown role ids and returns the known-roles inventory so the caller can recover. Side effect: writes to `useAssistantRoleStore` (persisted to localStorage). The new role applies starting the NEXT user turn — the static prefix on this turn was already built with the old overlay, so the assistant phrases its message as *"switching to <Label> for the next step"* rather than acting as if the new specialist is already in effect.
+- **General role overlay** — Phase E gives the previously empty General overlay a ~200-word orchestrator nudge: call `suggest_recipes_for_intent` near the start of any non-trivial creative request; if `roleHints` converge on a clear specialist match, call `switch_role` with a short reason. Idle switches are forbidden — only switch when both the recipe match AND the role hint converge. The user's explicit role choice via the picker is always respected.
+
+This is a recommendation system, not autonomy. The user is always in control of which role is active and which recipes are dropped on the canvas.
+
+What E does NOT include yet:
+
+- ❌ Multi-recipe orchestration (*"make me a 15s product launch"* → General → Storyboard Director plans panels → Continuity Architect locks rules → Seedance Director per-panel). The single-step recommend + hand-off ships first; chained orchestration is a future iteration once we see how users actually use the basic recommender.
+- ❌ Role-aware tool gating (every role still has access to every tool).
+- ❌ Embedding-based recipe match (current scorer is keyword-overlap on tokenized name/description/category).
 
 ---
 
@@ -250,7 +265,15 @@ A block of text instructions sent to an LLM. The Library tracks four kinds:
 
 ### Role
 
-A specialist persona the assistant can adopt. Each role is a focused system prompt overlaid on the assistant's base prompt. Roles ship in Phase D. Today there's only one implicit role: General.
+A specialist persona the assistant can adopt. Each role is a focused system prompt overlaid on the assistant's base prompt. Phase D1 ships five roles (General + 4 specialists). Phase E gives the General role an orchestrator nudge that recommends recipes + role hand-offs.
+
+### Override
+
+A user's personal customization of a code-defined prompt (assistant base today; specialist roles in a future phase). Stored in `app_prompt_overrides` keyed by `(owner_id, prompt_key)`. Doesn't change the prompt for anyone else. Always reversible by clicking *Reset to default*. The chat-sheet shows a *Custom prompt* chip whenever an override is active so you always know if you're running a modified version.
+
+### Proposal (assistant-as-co-author)
+
+A structured edit the assistant SUGGESTS to one of its overridable prompts via `propose_prompt_edit`. The tool emits a `__proposal: "prompt_edit"` payload with rationale + diff summary; the chat renders it as a card with Apply / Reject buttons. The assistant never writes to `app_prompt_overrides` — only the user's click can. This is the explicit safety boundary for the "make yourself smarter" workflow.
 
 ### Version
 
@@ -264,7 +287,11 @@ When a recipe is edited, a new version is created. The old version is preserved 
 
 ### Override
 
-A user's personal customization of a code-defined prompt (assistant base, specialist role). Stored in `app_prompt_overrides`. Doesn't change the prompt for anyone else. Always reversible by clicking "Restore default."
+A user's personal customization of a code-defined prompt (assistant base today; specialist roles in a future phase). Stored in `app_prompt_overrides` keyed by `(owner_id, prompt_key)`. Doesn't change the prompt for anyone else. Always reversible by clicking *Reset to default*. The chat-sheet shows a *Custom prompt* chip whenever an override is active so you always know if you're running a modified version.
+
+### Proposal (assistant-as-co-author)
+
+A structured edit the assistant SUGGESTS to one of its overridable prompts via `propose_prompt_edit`. The tool emits a `__proposal: "prompt_edit"` payload with rationale + diff summary; the chat renders it as a card with Apply / Reject buttons. The assistant never writes to `app_prompt_overrides` — only the user's click can. This is the explicit safety boundary for the "make yourself smarter" workflow.
 
 ### System prompt vs user prompt
 
@@ -330,7 +357,7 @@ When you add a new feature that introduces a prompt or a recipe, two steps make 
 | B2 — Update-available + history/diff propagation | ✅ Shipped | 2026-06-01 |
 | D1 — Assistant role overlays + role picker | ✅ Shipped | 2026-06-01 |
 | D2 — Storyboard / Simple Scene / Timeline specialist recipes | ✅ Shipped | 2026-06-01 |
-| C — Personal prompt overrides + assistant-as-co-author | 📋 Planned | — |
-| E — Orchestration | 📋 Planned | — |
+| C — Personal prompt overrides + assistant-as-co-author | ✅ Shipped | 2026-06-02 |
+| E — Orchestration | ✅ Shipped | 2026-06-02 |
 
 This section gets updated whenever a phase ships. Always keep it accurate.

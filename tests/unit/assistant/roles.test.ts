@@ -49,8 +49,13 @@ describe("ROLES registry", () => {
     }
   });
 
-  it("General has an empty overlay (no specialization)", () => {
-    expect(GENERAL_ROLE.systemPromptOverlay).toBe("");
+  it("General has a non-empty overlay (Phase E orchestrator nudge)", () => {
+    expect(GENERAL_ROLE.systemPromptOverlay.length).toBeGreaterThan(100);
+    expect(GENERAL_ROLE.systemPromptOverlay).toMatch(/General — Orchestrator/);
+    expect(GENERAL_ROLE.systemPromptOverlay).toMatch(
+      /suggest_recipes_for_intent/,
+    );
+    expect(GENERAL_ROLE.systemPromptOverlay).toMatch(/switch_role/);
   });
 
   it("every specialist role has a non-empty overlay", () => {
@@ -60,12 +65,9 @@ describe("ROLES registry", () => {
     }
   });
 
-  it("every specialist overlay starts with a clear ROLE OVERLAY heading", () => {
-    const specialists = ROLES.filter((r) => r.id !== "general");
-    for (const role of specialists) {
-      expect(role.systemPromptOverlay).toMatch(
-        /^## ROLE OVERLAY: /,
-      );
+  it("every role's overlay starts with a clear ROLE OVERLAY heading", () => {
+    for (const role of ROLES) {
+      expect(role.systemPromptOverlay).toMatch(/^## ROLE OVERLAY: /);
     }
   });
 });
