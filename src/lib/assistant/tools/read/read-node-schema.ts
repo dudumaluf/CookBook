@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { kindPitfalls } from "@/lib/engine/node-health";
 import { nodeRegistry } from "@/lib/engine/registry";
 import type { NodeIO } from "@/types/node";
 
@@ -9,9 +10,15 @@ import type { AssistantTool } from "../index";
  * read_node_schema — Slice 2 of "Smarter assistant".
  *
  * Returns the full schema for ONE node kind: title, description,
- * category, reactivity / iterator flags, inputs, outputs, and the
- * shape of `defaultConfig` (so the assistant knows what knobs the
- * kind exposes before reaching for `add_node`).
+ * category, reactivity / iterator flags, inputs, outputs, the shape
+ * of `defaultConfig` (so the assistant knows what knobs the kind
+ * exposes before reaching for `add_node`), and any recorded
+ * `pitfalls` — known-bad patterns the assistant has been observed
+ * producing for that kind (e.g. `array.separator` phantom field,
+ * fal-image's `fal-ai/<id>` endpoint-id mistake). Pitfalls land in
+ * the response BEFORE the LLM commits to a config patch so the
+ * mistake gets prevented, not just caught later by
+ * `check_workflow_health`.
  *
  * The lazy-catalog companion to `buildNodeCatalogKnowledge` — the
  * system prompt now ships one-line summaries; this tool fills in
@@ -42,7 +49,7 @@ function describeHandle(h: NodeIO): {
 export const readNodeSchemaTool: AssistantTool = {
   name: "read_node_schema",
   description:
-    "Read the full schema for one node kind: title, description, category, reactivity, inputs, outputs, and the shape of defaultConfig (so you know what knobs to set in `add_node`). Use this when the one-line summary in the NODE CATALOG isn't enough — e.g. before configuring a node you haven't worked with before.",
+    "Read the full schema for one node kind: title, description, category, reactivity, inputs, outputs, the shape of defaultConfig (so you know what knobs to set in `add_node`), and any recorded `pitfalls` (known-bad patterns this kind has been observed producing — e.g. phantom field names, endpoint-id mistakes). Use this when the one-line summary in the NODE CATALOG isn't enough, AND always before configuring a kind you haven't worked with before.",
   parameters: {
     type: "object",
     properties: {
@@ -71,6 +78,7 @@ export const readNodeSchemaTool: AssistantTool = {
     } catch {
       defaultConfig = null;
     }
+    const pitfalls = kindPitfalls(schema.kind);
     return {
       found: true,
       kind: schema.kind,
@@ -82,6 +90,10 @@ export const readNodeSchemaTool: AssistantTool = {
       inputs: schema.inputs.map(describeHandle),
       outputs: schema.outputs.map(describeHandle),
       defaultConfig,
+      // Only include `pitfalls` when the kind has any. Keeps the typical
+      // response one field smaller and signals to the LLM that absence
+      // means "no recorded gotchas for this kind".
+      ...(pitfalls.length > 0 ? { pitfalls } : {}),
     };
   },
 };

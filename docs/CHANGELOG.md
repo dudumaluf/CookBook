@@ -2,6 +2,43 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — `check_workflow_health` tool: anti-confabulation receipt the assistant can't talk around
+
+Three "the assistant said it did but didn't" incidents in one session:
+
+1. `update_node_config` writing `fal-image.config.model = "fal-ai/<id>"` (the Fal endpoint id) — runtime fell back to default, project loading crashed.
+2. `update_node_config` writing `array.config.separator = "**"` — phantom field, the runtime splits by `delimiter` (default `,`); the patch was a literal no-op against the real semantics.
+3. `Perfect! everything is wired correctly ✅` after a single `read_canvas` call — the user reported invisible edges that blocked new connections, which would point to a `targetHandle` that doesn't exist in the target node's dynamic `getInputs(config)`.
+
+Common pattern: tools accepted JSON without per-kind awareness, the assistant had no concrete signal that a write didn't take effect, and `read_canvas` shows JSON without verifying that ports / handles / required inputs actually resolve. Fixing the symptoms one at a time leaves the root cause — no atomic "is this graph healthy?" surface.
+
+This ships that surface as a single tool the assistant is required to call before any verification claim:
+
+**`check_workflow_health`** ([`src/lib/assistant/tools/read/check-workflow-health.ts`](src/lib/assistant/tools/read/check-workflow-health.ts)) — read-only inspection of `useWorkflowStore`. No arguments. Returns `{ ok, issueCount, errorCount, issues[], summary }`. The summary is one paragraph the assistant copies verbatim into its reply; each issue carries a stable `code` + `nodeId/edgeId` + `message` + `hint` so the LLM can't paraphrase a problem out of existence.
+
+Generic checks (always run):
+- `unknown_kind` — node kind not in registry; renderer skips it.
+- `dangling_target_handle` — edge whose `targetHandle` doesn't exist in the target's dynamic `getInputs(config)`. **Captures the "invisible edge that blocks new connections" symptom directly** — React Flow can't draw the path but still treats the port as occupied.
+- `dangling_source_handle` — same for outputs.
+- `single_arity_duplicate` — single-arity input with 2+ incident edges (data corruption — addEdge guards against it on write).
+- `unwired_required_input` — well-known required input handle on an executable node has no incoming edge (e.g. `llm-text.user`, `fal-image.prompt`, `higgsfield-image-gen.prompt`). The node would throw at run time.
+- `self_loop` — `source === target`.
+
+Per-kind drift checks delegated to a new `runKindHealth(node)` registry ([`src/lib/engine/node-health.ts`](src/lib/engine/node-health.ts)):
+- `array`: phantom `separator` field (warn — real field is `delimiter`).
+- `fal-image`: `model` startsWith `fal-ai/` (warn — endpoint id, not literal); unknown non-prefixed model (warn).
+- `llm-text`: stale `userPorts` field (warn — multi-user smart-input was rolled back).
+
+The companion `kindPitfalls(kind)` exports the same intent as proactive prose — surfaced via `read_node_schema`'s response so the assistant sees the gotcha BEFORE writing a config patch. Pitfalls are only included when the kind has any (absence = "no recorded gotchas").
+
+**System-prompt discipline** ([`src/lib/assistant/instructions.ts`](src/lib/assistant/instructions.ts)). New `## VERIFICATION` section: when the user asks "is this connected / ready / configured right?", the assistant MUST call `check_workflow_health` first AND open its reply with the literal `summary`. If `issueCount > 0`, every issue gets listed verbatim (severity + code + nodeId + message + hint) before any other prose. Three concrete patterns the prompt names so the model knows what gets caught: `array.separator` phantom field, `fal-image` endpoint-id-as-model, dangling target handles.
+
+A second nudge in `## OPERATING INSTRUCTIONS` strengthens the existing `read_node_schema` rule: ALWAYS call it for kinds you haven't worked with before — the response includes `pitfalls` for that kind, which is how confabulation gets prevented at write time vs. just caught after.
+
+**Tests added** (37 new): `tests/unit/engine/node-health.test.ts` (per-kind checkers + pitfalls); `tests/unit/assistant/tools/check-workflow-health.test.ts` (registration, happy path mirroring the user's now-patched workflow, every generic issue code, per-kind drift surfacing, error-first ordering); extended `tests/unit/assistant/tools/read-node-schema.test.ts` to assert `pitfalls` rounds-trip (`array` and `fal-image` populated, `text` omitted entirely).
+
+Lint + typecheck + 1745 unit tests + production build all clean.
+
 ## 2026-06-02 — Array node: heal phantom `separator` field that silently broke fan-out
 
 User asked the assistant to set the array node's split character to `**` (the divider in their LLM's structured output). Assistant replied "done" but the array kept emitting one item — splitting by the default `","` instead. Root cause: the assistant patched `config.separator: "**"` via `update_node_config`, but the Array schema only declares `delimiter` + `trim`. `separator` is a **phantom field** the runtime ignores. The patch shallow-merged into the existing config (which already had a stale `separator` from earlier proposals), so the call was literally a no-op against the runtime — but the LLM had no signal that it failed because `update_node_config` accepted the JSON without complaint.

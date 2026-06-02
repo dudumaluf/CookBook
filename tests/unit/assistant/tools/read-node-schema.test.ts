@@ -102,4 +102,38 @@ describe("read_node_schema tool — Slice 2", () => {
     const tool = getTool("read_node_schema")!;
     await expect(tool.execute({ kind: "" }, {})).rejects.toBeDefined();
   });
+
+  it("includes `pitfalls` for kinds that have recorded gotchas", async () => {
+    const tool = getTool("read_node_schema")!;
+    const arrOut = (await tool.execute({ kind: "array" }, {})) as {
+      found: boolean;
+      pitfalls?: string[];
+    };
+    expect(arrOut.found).toBe(true);
+    expect(Array.isArray(arrOut.pitfalls)).toBe(true);
+    expect(arrOut.pitfalls!.length).toBeGreaterThan(0);
+    // Mentions both the right field (delimiter) and the phantom one
+    // (separator) — that's the whole point of the pitfall.
+    expect(arrOut.pitfalls!.join(" ")).toMatch(/delimiter/);
+    expect(arrOut.pitfalls!.join(" ")).toMatch(/separator/);
+
+    const falOut = (await tool.execute({ kind: "fal-image" }, {})) as {
+      found: boolean;
+      pitfalls?: string[];
+    };
+    expect(falOut.found).toBe(true);
+    expect(falOut.pitfalls!.join(" ")).toMatch(/fal-ai/);
+  });
+
+  it("omits `pitfalls` for kinds with no recorded gotchas", async () => {
+    const tool = getTool("read_node_schema")!;
+    const out = (await tool.execute({ kind: "text" }, {})) as {
+      found: boolean;
+      pitfalls?: string[];
+    };
+    expect(out.found).toBe(true);
+    // `text` has no recorded pitfalls — the field should be omitted
+    // entirely so the LLM reads "no gotchas" from the absence.
+    expect(out.pitfalls).toBeUndefined();
+  });
 });
