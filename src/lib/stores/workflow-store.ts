@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import {
+  migrateArrayLegacyDelimiter,
   migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
@@ -598,11 +599,19 @@ export const useWorkflowStore = create<WorkflowState>()(
         // endpoint-id strings the assistant occasionally writes by
         // mistake). Runs first so the per-node max-refs lookup downstream
         // sees a sanitized model.
+        //
+        // v15.5 (2026-06-02): heal Array `config.separator` phantom
+        // fields — the schema only declares `delimiter` + `trim`, but
+        // the assistant writes `separator: "**"` etc. via
+        // update_node_config. The runtime ignores `separator` so the
+        // user gets a single-item output. Copy into `delimiter` (when
+        // delimiter is still default) and drop the phantom field.
         const v9_5 = migrateFalImageModelNormalization(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
         );
-        const v10 = migrateVideoConcatClips(v9_5.nodes, v9_5.edges);
+        const v9_6 = migrateArrayLegacyDelimiter(v9_5.nodes, v9_5.edges);
+        const v10 = migrateVideoConcatClips(v9_6.nodes, v9_6.edges);
         const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
         const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
         const v13 = migrateFalImageSmartInputs(v12.nodes, v12.edges);

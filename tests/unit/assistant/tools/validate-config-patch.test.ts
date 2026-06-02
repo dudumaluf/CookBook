@@ -47,4 +47,18 @@ describe("validateConfigPatch", () => {
     expect(err).toBeTruthy();
     expect(err).toContain("must be a string");
   });
+
+  it("rejects array.separator with a hint pointing at delimiter", () => {
+    const err = validateConfigPatch("array", { separator: "**" });
+    expect(err).toBeTruthy();
+    expect(err).toContain("array");
+    expect(err).toContain("separator");
+    expect(err).toContain("delimiter");
+  });
+
+  it("does not reject array.delimiter (the real field)", () => {
+    expect(
+      validateConfigPatch("array", { delimiter: "**", trim: true }),
+    ).toBeNull();
+  });
 });

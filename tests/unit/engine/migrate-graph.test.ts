@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  migrateArrayLegacyDelimiter,
   migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
@@ -447,6 +448,75 @@ describe("migrateFalImageModelNormalization", () => {
       "nano-banana-2",
     );
     // The text node passes through unchanged.
+    expect(out.nodes[1]).toBe(nodes[1]);
+  });
+});
+
+describe("migrateArrayLegacyDelimiter", () => {
+  const arrayNode = (
+    id: string,
+    config: Record<string, unknown> = {},
+  ): NodeInstance => ({
+    id,
+    kind: "array",
+    position: { x: 0, y: 0 },
+    config,
+  });
+
+  it("copies separator into delimiter when delimiter is the default ','", () => {
+    const nodes = [
+      arrayNode("a1", { trim: true, delimiter: ",", separator: "**" }),
+    ];
+    const out = migrateArrayLegacyDelimiter(nodes, []);
+    expect(out.nodes[0]!.config).toEqual({ trim: true, delimiter: "**" });
+  });
+
+  it("copies separator into delimiter when delimiter is unset entirely", () => {
+    const nodes = [arrayNode("a1", { trim: true, separator: "---" })];
+    const out = migrateArrayLegacyDelimiter(nodes, []);
+    expect(out.nodes[0]!.config).toEqual({ trim: true, delimiter: "---" });
+  });
+
+  it("preserves an explicitly-set delimiter and only drops the phantom separator", () => {
+    // User explicitly chose `delimiter: "|"`. Even if a phantom
+    // separator slipped in alongside it, we don't second-guess the
+    // user — the separator gets dropped silently, the delimiter stays.
+    const nodes = [
+      arrayNode("a1", { trim: true, delimiter: "|", separator: "**" }),
+    ];
+    const out = migrateArrayLegacyDelimiter(nodes, []);
+    expect(out.nodes[0]!.config).toEqual({ trim: true, delimiter: "|" });
+  });
+
+  it("drops a non-string / empty separator without touching delimiter", () => {
+    const nodes = [
+      arrayNode("a1", { trim: true, delimiter: ",", separator: "" }),
+    ];
+    const out = migrateArrayLegacyDelimiter(nodes, []);
+    expect(out.nodes[0]!.config).toEqual({ trim: true, delimiter: "," });
+  });
+
+  it("is a no-op when no array carries a separator field", () => {
+    const nodes = [arrayNode("a1", { trim: true, delimiter: "," })];
+    const edges: WorkflowEdge[] = [];
+    const out = migrateArrayLegacyDelimiter(nodes, edges);
+    expect(out.nodes).toBe(nodes);
+    expect(out.edges).toBe(edges);
+  });
+
+  it("ignores nodes of other kinds", () => {
+    const nodes: NodeInstance[] = [
+      arrayNode("a1", { trim: true, delimiter: ",", separator: "**" }),
+      {
+        id: "t",
+        kind: "text",
+        position: { x: 0, y: 0 },
+        config: { separator: "should-stay" }, // text node is free to use whatever
+      },
+    ];
+    const out = migrateArrayLegacyDelimiter(nodes, []);
+    expect(out.nodes[0]!.config).toEqual({ trim: true, delimiter: "**" });
+    // Text node config untouched — separator is meaningful only on array.
     expect(out.nodes[1]).toBe(nodes[1]);
   });
 });

@@ -143,6 +143,43 @@ describe("update_node_config tool", () => {
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { model: string }).model).toBe("flux-2-pro");
   });
+
+  it("rejects array.separator with a hint pointing at delimiter", async () => {
+    // 2026-06-02 regression: assistant kept writing
+    // `update_node_config({ nodeId: arr, config: { separator: "**" } })`
+    // — phantom field, runtime ignored it, the user's array silently
+    // kept splitting by ",". Validator now rejects so the LLM gets
+    // immediate feedback.
+    const id = useWorkflowStore
+      .getState()
+      .addNode("array", { x: 0, y: 0 }, { delimiter: ",", trim: true });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { separator: "**" } },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("array");
+    expect(out.error).toContain("delimiter");
+    // State unchanged — phantom didn't slip through.
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
+    expect((node.config as { delimiter: string }).delimiter).toBe(",");
+    expect("separator" in (node.config as object)).toBe(false);
+  });
+
+  it("accepts the real array.delimiter field", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("array", { x: 0, y: 0 }, { delimiter: ",", trim: true });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { delimiter: "**" } },
+      {},
+    )) as { ok: boolean };
+    expect(out.ok).toBe(true);
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
+    expect((node.config as { delimiter: string }).delimiter).toBe("**");
+  });
 });
 
 describe("remove_node tool", () => {

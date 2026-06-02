@@ -226,6 +226,57 @@ export function migrateFalImageModelNormalization(
   return { nodes: nextNodes, edges };
 }
 
+const ARRAY_DEFAULT_DELIMITER = ",";
+
+/**
+ * Heal Array node configs that carry a phantom `separator` field
+ * (2026-06-02). The Array schema only declares `delimiter` + `trim`,
+ * but the assistant has been observed writing `separator: "**"` etc.
+ * via `update_node_config`. The store accepts any JSON, so the bad
+ * field gets persisted, but the runtime ignores it — the array keeps
+ * splitting by the default `","` and the user gets one item back
+ * instead of N.
+ *
+ * Heuristic:
+ *   - If `separator` is set AND `delimiter` is unset OR equal to the
+ *     default `","`, copy `separator` into `delimiter` (the user
+ *     clearly meant to override the split character; the assistant
+ *     just used the wrong field name).
+ *   - If `delimiter` was explicitly set to something else, leave it
+ *     alone — the user is explicit and we shouldn't second-guess.
+ *   - In BOTH cases drop `separator` from the config: it's noise the
+ *     runtime ignores and lingering on disk just invites confusion.
+ *
+ * No-op when no array carries a `separator` field — happy path stays
+ * cheap.
+ */
+export function migrateArrayLegacyDelimiter(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  let changed = false;
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "array") return n;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    if (!("separator" in cfg)) return n;
+    changed = true;
+    const separator = cfg.separator;
+    const delimiter = cfg.delimiter;
+    const next: Record<string, unknown> = { ...cfg };
+    delete next.separator;
+    if (
+      typeof separator === "string" &&
+      separator.length > 0 &&
+      (delimiter === undefined || delimiter === ARRAY_DEFAULT_DELIMITER)
+    ) {
+      next.delimiter = separator;
+    }
+    return { ...n, config: next };
+  });
+  if (!changed) return { nodes, edges };
+  return { nodes: nextNodes, edges };
+}
+
 /**
  * Fal Image moved from a single `image` (multi) handle to numbered
  * `image-0..N` sockets that auto-grow as you wire (smart inputs). Rewrite

@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — Array node: heal phantom `separator` field that silently broke fan-out
+
+User asked the assistant to set the array node's split character to `**` (the divider in their LLM's structured output). Assistant replied "done" but the array kept emitting one item — splitting by the default `","` instead. Root cause: the assistant patched `config.separator: "**"` via `update_node_config`, but the Array schema only declares `delimiter` + `trim`. `separator` is a **phantom field** the runtime ignores. The patch shallow-merged into the existing config (which already had a stale `separator` from earlier proposals), so the call was literally a no-op against the runtime — but the LLM had no signal that it failed because `update_node_config` accepted the JSON without complaint.
+
+Three fixes ship together, mirroring the fal-image defensive-lookup pattern:
+
+**1. Write-time validation** (`src/lib/assistant/tools/construct/validate-config-patch.ts`). New rule: if `kind === "array"` and the patch sets `separator`, reject with a hint that names the right field (`delimiter`) and points at `read_node_schema` for the canonical config shape. The LLM gets immediate, actionable feedback the next time it tries.
+
+**2. Load-time auto-heal** (`migrateArrayLegacyDelimiter` in `src/lib/engine/migrate-graph.ts`). Walks every array node; if `config.separator` is present, copies it into `config.delimiter` (only when delimiter is unset OR equal to the schema default `","` — we never overwrite an explicitly-set delimiter), then drops the phantom field unconditionally. Wired into both persistence funnels (the cloud-load `applyProjectDocument` path AND the workflow-store persist `migrate` v9.6 stage). One other project on disk had the same phantom field — it self-heals on next load.
+
+**3. User's project patched in DB** so they're unblocked immediately: both arrays now have `delimiter: "**"` and `delimiter: "---"` respectively, with `separator` removed.
+
+The validator scope stays narrow on purpose — only fields the assistant has been observed corrupting in the wild get explicit checks. Adding more cases later is one tiny `if` per kind, no per-kind Zod schemas needed.
+
+**Tests added.** `tests/unit/assistant/tools/validate-config-patch.test.ts` (rejects `array.separator`, accepts `array.delimiter`). `tests/unit/engine/migrate-graph.test.ts` (`migrateArrayLegacyDelimiter` block: copy-when-default, copy-when-unset, preserve-explicit-delimiter, drop-empty-separator, no-op happy path, ignores other kinds). `tests/unit/assistant/construct-tools.test.ts` (`update_node_config` rejects `array.separator` and accepts the real `delimiter` field).
+
 ## 2026-06-02 — Refactor proposals: idempotent add_edge + already-wired dedup
 
 Sequel to today's earlier "Refactor proposals: cascade-aware applies + chat-driven retry" entry. Same trap, different op: the user highlighted nodes and asked the assistant to "finish + connect the edges of the workflow", got a 9-op proposal, clicked **Apply all**, and saw `Op 1 (add_edge) failed: Edge from text_mpfxyfea.text → llm-text_p6i5gud6.user rejected.` The first two `add_edge` ops in the bundle were exact duplicates of edges the user had already wired manually; the workflow store's `addEdge` rejects duplicate wires into single-arity handles, the executor surfaced the rejection as a hard error, and the entire batch rolled back.

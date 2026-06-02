@@ -19,6 +19,7 @@
  */
 
 import {
+  migrateArrayLegacyDelimiter,
   migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
@@ -263,7 +264,14 @@ export function applyProjectDocument(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
-    const m1 = migrateVideoConcatClips(m0.nodes, m0.edges);
+    // Array delimiter healing: the assistant has been observed writing
+    // `separator` instead of `delimiter` on Array node configs. Phantom
+    // field — the runtime ignores it. This pass copies `separator` into
+    // `delimiter` (when delimiter is the default ",") and drops the
+    // phantom field. Order-independent w/ the other migrations since
+    // they don't read array config.
+    const m0a = migrateArrayLegacyDelimiter(m0.nodes, m0.edges);
+    const m1 = migrateVideoConcatClips(m0a.nodes, m0a.edges);
     const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
     const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
     const m4 = migrateFalImageSmartInputs(m3.nodes, m3.edges);
