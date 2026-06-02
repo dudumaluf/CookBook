@@ -29,6 +29,7 @@ import { textIteratorNodeSchema } from "@/components/nodes/node-text-iterator";
 import { textNodeSchema } from "@/components/nodes/node-text";
 import { videoAudioMergeNodeSchema } from "@/components/nodes/node-video-audio-merge";
 import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
+import { videoPadNodeSchema } from "@/components/nodes/node-video-pad";
 import { videoSlicerNodeSchema } from "@/components/nodes/node-video-slicer";
 
 import { nodeRegistry } from "./registry";
@@ -72,6 +73,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(frameExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(videoAudioMergeNodeSchema);
+  nodeRegistry.register(videoPadNodeSchema);
   nodeRegistry.register(imageConcatNodeSchema);
   nodeRegistry.register(textConcatNodeSchema);
   nodeRegistry.register(imageCropNodeSchema);

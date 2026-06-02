@@ -57,3 +57,12 @@ export { sliceVideo } from "./slice-video";
 export { concatVideos } from "./concat";
 
 export { replaceVideoAudio } from "./replace-audio";
+
+export {
+  padVideoToMinDuration,
+  splitPadDuration,
+  type PadMode,
+  type PadVideoOptions,
+  type PadVideoResult,
+  type PadVideoSplit,
+} from "./pad-video";
