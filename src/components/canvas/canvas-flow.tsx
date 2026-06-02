@@ -38,14 +38,20 @@ import {
   parseRecipeDrag,
 } from "@/lib/library/recipe-drag";
 import { cleanupGroupIfOrphan } from "@/lib/library/cleanup-orphan-group";
+import { handleExternalFilesDrop } from "@/lib/library/handle-external-files-drop";
 import { instantiateRecipeOnCanvas } from "@/lib/recipes/instantiate";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import { handleAssetDrop } from "@/lib/library/handle-asset-drop";
-import { setSpawnPositionGetter } from "@/lib/canvas/spawn-position";
+import { getSpawnPosition, setSpawnPositionGetter } from "@/lib/canvas/spawn-position";
 import { tryHandleClipboardKey } from "@/lib/canvas/clipboard";
+import {
+  extractImagesFromClipboard,
+  isEditablePasteTarget,
+} from "@/lib/canvas/handle-canvas-paste";
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 import { BaseNode } from "@/components/nodes/base-node";
+import { toast } from "sonner";
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Keyboard handler — exported for unit testing                               */
@@ -586,6 +592,37 @@ function CanvasFlowInner() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
+  // Image paste — when the user copies an image off a webpage and
+  // hits ⌘V (or Ctrl+V) over the canvas, we treat it as a "paste an
+  // image input node" gesture. Skips when the user is typing in an
+  // input / textarea / contentEditable so plain text paste in the
+  // prompt bar / node textareas keeps working. Falls through (no
+  // preventDefault) when the clipboard has no image content so the
+  // node-clipboard handler above still gets a shot at the event for
+  // node copy/paste.
+  useEffect(() => {
+    function handler(event: ClipboardEvent) {
+      if (isEditablePasteTarget(event.target)) return;
+      const images = extractImagesFromClipboard(event.clipboardData);
+      if (images.length === 0) return;
+      event.preventDefault();
+      const position = getSpawnPosition();
+      void handleExternalFilesDrop({
+        files: images,
+        position,
+      }).then((res) => {
+        if (res.spawned.length > 0) {
+          toast.success(
+            `Pasted ${res.spawned.length} image${res.spawned.length === 1 ? "" : "s"}`,
+          );
+        }
+        for (const err of res.errors) toast.error(err);
+      });
+    }
+    document.addEventListener("paste", handler);
+    return () => document.removeEventListener("paste", handler);
+  }, []);
+
   // Shift+drag = always selection box, regardless of where it starts.
   //
   // Why: React Flow's default lets a node "claim" a shift+mousedown event
@@ -619,15 +656,18 @@ function CanvasFlowInner() {
   }, []);
 
   // Library asset drag OR Gallery generation drag (Slice 6.5) — accept
-  // iff one of our custom MIMEs is present; ignore foreign drags (OS
-  // files, other apps' URLs) so they fall through to the browser's
-  // default behaviour.
+  // iff one of our custom MIMEs is present. We ALSO accept native OS
+  // file drags (Files MIME, set by the browser when the user drags
+  // images/videos/audio off the desktop or another app) so the canvas
+  // can spawn the right input node automatically. Other foreign drags
+  // still fall through to the browser's default behaviour.
   const onDragOver = useCallback((event: React.DragEvent) => {
     const types = event.dataTransfer.types;
     if (
       types.includes(ASSET_DRAG_MIME) ||
       types.includes(GENERATION_DRAG_MIME) ||
-      types.includes(RECIPE_DRAG_MIME)
+      types.includes(RECIPE_DRAG_MIME) ||
+      types.includes("Files")
     ) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
@@ -722,7 +762,40 @@ function CanvasFlowInner() {
       }
 
       const raw = event.dataTransfer.getData(ASSET_DRAG_MIME);
-      if (!raw) return;
+
+      // External files dragged from the OS / another app — no in-app
+      // MIME claimed the drop, but `dataTransfer.files` is populated.
+      // Hand off to the shared drop helper so MIME / size policy and
+      // the asset → node mapping stay in one place. Runs only when no
+      // custom in-app MIME was set above so internal drags keep their
+      // existing semantics untouched.
+      if (!raw) {
+        const externalFiles = Array.from(event.dataTransfer.files ?? []);
+        if (externalFiles.length > 0) {
+          event.preventDefault();
+          const dropPos = screenToFlowPosition({
+            x: event.clientX,
+            y: event.clientY,
+          });
+          void handleExternalFilesDrop({
+            files: externalFiles,
+            position: dropPos,
+          }).then((res) => {
+            if (res.spawned.length > 0) {
+              toast.success(
+                `Added ${res.spawned.length} node${res.spawned.length === 1 ? "" : "s"} to canvas`,
+              );
+            }
+            for (const err of res.errors) toast.error(err);
+            if (res.skipped > 0) {
+              toast.error(
+                `${res.skipped} file${res.skipped === 1 ? "" : "s"} skipped — unsupported type`,
+              );
+            }
+          });
+        }
+        return;
+      }
       event.preventDefault();
 
       const payload = parseAssetDrag(raw);

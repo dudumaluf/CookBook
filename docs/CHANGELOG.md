@@ -2,6 +2,29 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — Canvas: drop external files + paste images from the web
+
+The canvas now accepts files dragged in from the user's desktop (or any other app / browser tab) and images copied off the web — both spawn the right input node automatically. Both flows route through the existing Library import pipeline (`importImageFiles` / `importMediaFiles`) so MIME / size policy stays in one place; this layer only adds the drop ergonomics + the asset → node spawn step that was previously only reachable via the Library asset drag.
+
+**1. `classifyDroppedFile` (`src/lib/library/classify-file.ts`).** Pure helper that maps a single `File` to `"image" | "video" | "audio" | "unsupported"`. MIME prefix wins; falls back to extension when `file.type` is empty (Safari clipboard images, some legacy file dialogs). Curated extension allow-lists (`png/jpg/jpeg/gif/webp/bmp/svg/avif/heic/heif` for images, `mp4/mov/webm/mkv/m4v/avi` for video, `mp3/wav/ogg/m4a/flac/aac/opus` for audio) keep policy explicit and review-able. Adding a new media kind (e.g. 3D files or text-from-PDF) means adding one entry here + one entry in `assetToNode` — nothing else changes.
+
+**2. `handleExternalFilesDrop` (`src/lib/library/handle-external-files-drop.ts`).** Takes a `File[]` + a flow-coordinate `position`, classifies + groups, runs each batch through the existing importer, then spawns one canvas node per imported asset using `assetToNode`. Returns a structured envelope `{ spawned, imported, errors, skipped }` so the caller can render whichever toast story makes sense for its surface (drop vs. paste). Every dependency is injectable via test hooks (`importImage` / `importMedia` / `getAssetById` / `addNode`) so unit tests don't need Zustand or Supabase. Order of spawn fanout is image → video → audio with +24/+24 jitter per node, matching the Library asset / Gallery generation drop conventions.
+
+**3. `extractImagesFromClipboard` + `isEditablePasteTarget` (`src/lib/canvas/handle-canvas-paste.ts`).** Pure helpers for the paste path. `extractImagesFromClipboard` walks `DataTransfer.files` first, then falls back to `DataTransfer.items` (Safari and a couple of older WebKit-derived browsers populate clipboard images on `items` but not on `files`). Non-image clipboard content is ignored — paste is image-only by design (drop is the multi-media path). `isEditablePasteTarget` is the same input/textarea/contentEditable guard the keyboard clipboard handler uses, locally duplicated to keep the modules independent.
+
+**4. Canvas wiring (`src/components/canvas/canvas-flow.tsx`).**
+- `onDragOver` now also `preventDefault`s when `dataTransfer.types.includes("Files")` so the browser doesn't fall back to opening the file. Cursor reads `copy` (the same affordance Library and Gallery drags use).
+- `onDrop` adds a new branch that fires when none of the in-app MIMEs (`ASSET_DRAG_MIME` / `GENERATION_DRAG_MIME` / `RECIPE_DRAG_MIME`) are present but `dataTransfer.files` is non-empty. The drop position uses `screenToFlowPosition` (same as Library asset drops). Toasts: green "Added N node(s) to canvas" on success, red per-error from the import pipeline, red "N file(s) skipped — unsupported type" for the unsupported bucket.
+- A new document-level `paste` listener calls `extractImagesFromClipboard` + `handleExternalFilesDrop` at `getSpawnPosition()` (viewport center). Skips when focus is on an editable target so plain-text paste in the prompt bar / node textareas keeps working. Falls through (no `preventDefault`) when the clipboard has no image content so the existing node-clipboard ⌘V handler still receives the event.
+
+**Tests +24** (`tests/unit/library/classify-file.test.ts` 6, `tests/unit/library/handle-external-files-drop.test.ts` 6, `tests/unit/canvas/handle-canvas-paste.test.ts` 12). Coverage:
+- classifier: MIME wins / extension fallback / unknown cases / MIME beats conflicting extension
+- drop helper: empty input / single image happy path / multi-file fanout offsets / classification routing / unsupported skip count / per-file error aggregation
+- paste extractor: null clipboard / empty / files-only path / Safari `items` fallback / non-image / files-wins-over-items
+- editable-target guard: input / textarea / select / contentEditable / plain elements / null
+
+**Lint, typecheck (full, no incremental cache), full vitest suite (1633 / 1633 passing), and `next build` all green.**
+
 ## 2026-06-02 — Cookbook Library hotfix: scrollable panes + always-visible Delete
 
 Two fixes wrapped into one ship after user feedback on the Phase C+E test guide.
