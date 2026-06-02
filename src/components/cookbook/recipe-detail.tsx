@@ -18,8 +18,12 @@ import { toast } from "sonner";
 import { CopyButton } from "@/components/cookbook/copy-button";
 import { RecipeVersionHistory } from "@/components/cookbook/recipe-version-history";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getSpawnPosition } from "@/lib/canvas/spawn-position";
 import { extractRecipePrompts } from "@/lib/prompts/extract-from-recipe";
 import { forkRecipe } from "@/lib/recipes/fork-recipe";
@@ -191,7 +195,10 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
   /* ──────────── Render ──────────── */
 
   return (
-    <ScrollArea className="h-full">
+    <div
+      data-testid="cookbook-recipe-detail-scroll"
+      className="h-full overflow-y-auto"
+    >
       <div className="flex flex-col gap-6 p-6">
         {/* Header */}
         <header className="flex flex-col gap-3">
@@ -262,6 +269,9 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
               <GitFork className="h-3.5 w-3.5" />
               {isSystem ? "Duplicate to your library" : "Duplicate"}
             </Button>
+            {/* Delete is destructive — always visible so the affordance is
+             *  discoverable, but disabled (with an explanatory tooltip) on
+             *  system recipes (RLS would reject) and on anonymous users. */}
             {isYours ? (
               <Button
                 variant="ghost"
@@ -274,7 +284,34 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete
               </Button>
-            ) : null}
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span tabIndex={0}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled
+                      className="gap-1.5 text-muted-foreground/60"
+                      data-testid="cookbook-recipe-delete-disabled"
+                      aria-label={
+                        isSystem
+                          ? "System recipes can't be deleted directly. Duplicate to your library and delete the duplicate."
+                          : "Sign in to delete recipes."
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[240px]">
+                  {isSystem
+                    ? "System recipes are bundled with the app and can't be deleted directly. Click Duplicate to copy this recipe to your library, then delete the duplicate."
+                    : "Sign in to delete recipes you own."}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </header>
 
@@ -392,7 +429,7 @@ export function RecipeDetail({ recipe, userId, onChanged }: RecipeDetailProps) {
         {/* Phase B2: version history (only renders for v > 1 recipes). */}
         <RecipeVersionHistory recipe={recipe} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 

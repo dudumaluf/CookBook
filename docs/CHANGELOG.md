@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — Cookbook Library hotfix: scrollable panes + always-visible Delete
+
+Two fixes wrapped into one ship after user feedback on the Phase C+E test guide.
+
+**1. Scroll inside the Cookbook Library overlay.** Both the recipes list (left column) and the recipe / prompt detail (right column) couldn't scroll past the viewport — long recipes (Storyboard / Simple Scene / Timeline / Seedance v2 with their ~5 KB system prompts) and long lists were silently clipped at the bottom. Root cause: the library panes nested `<ScrollArea>` (Base UI) inside a CSS grid whose row used implicit `auto` sizing. When the row height followed content, the inner `h-full` chained back to "size to content" and the ScrollArea Viewport got effectively unbounded, so the overflow never engaged. Fix: pin the grid row with `grid-rows-[minmax(0,1fr)]`, give each pane `min-h-0` (so flex children can shrink below content size), and replace the Base UI ScrollArea with native `overflow-y-auto` divs in `recipes-tab.tsx`, `recipe-detail.tsx`, and `prompts-tab.tsx`. Native overflow is more robust under nested flex/grid here and matches the chat-sheet's existing pattern. New `data-testid` hooks (`cookbook-recipes-list-scroll`, `cookbook-recipe-detail-scroll`, `cookbook-prompts-list-scroll`, `cookbook-prompt-detail-scroll`) make future regression tests easy.
+
+**2. Delete affordance is now always discoverable.** Previously the Delete button was conditionally rendered only when `isYours === true`, so users browsing system recipes couldn't tell whether deletion existed. Now Delete is ALWAYS visible in the recipe action row. For user-owned recipes: live + destructive-styled (unchanged behavior). For system recipes: disabled, muted, with a Tooltip explaining "System recipes are bundled with the app and can't be deleted directly. Click Duplicate to copy this recipe to your library, then delete the duplicate." For anonymous users: disabled with a Tooltip pointing to sign-in. RLS continues to be the actual security gate; this change is purely about UI discoverability.
+
+**Lint, typecheck (full, no incremental cache), full vitest suite (1609 / 1609), and `next build` all green.**
+
 ## 2026-06-02 — Cookbook Library Phase E: orchestration (ADR-0064)
 
 The Library closes its planned roadmap. The General role grows from a no-op default into a recipe + role recommender, backed by two new tools the assistant can call mid-conversation. The user is always in control — `switch_role` writes to the role store but the new role only kicks in on the NEXT turn, and `suggest_recipes_for_intent` returns CANDIDATES (the assistant decides + the user approves before anything lands on the canvas).
