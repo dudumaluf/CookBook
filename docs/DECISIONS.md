@@ -2684,3 +2684,82 @@ Five is a sweet spot: more than three (so the picker has visible curated diversi
 - Role-aware tool gating (e.g. Recipe Architect can call `propose_refactor` while General can't). Currently every role has access to every tool. Could be useful as a guardrail, but adds complexity that's unjustified at D1's scale.
 - Custom user-defined roles. Defer indefinitely; the curated five are a much stronger starting point than a freeform editor.
 - Role-aware prompt cache fingerprinting / pre-warming. Phase E concern when orchestration starts hopping between roles within a single turn.
+
+## ADR-0062 — Cookbook Library Phase D2: specialist recipes + Seedance v2
+
+- **Date**: 2026-06-01
+- **Context**: Phase D1 shipped the assistant role overlays (Storyboard Director / Timeline Director / Recipe Architect / Prompt Engineer) but the Library still only had the Seedance Prompt Director as a system recipe. The user picking the Storyboard Director role had nowhere to land — the role gave them the vocabulary but no recipe surface to drop on the canvas. Phase D2 closes the loop: ship three specialist recipes (Storyboard Director, Simple Scene Prompter, Timeline Director) that mirror the role overlays' vocabulary, plus extend Seedance Prompt Director with a 6th template that overlaps Timeline Director's `[mm:ss-mm:ss]` segment idea. Several coupled questions: (1) which recipes are first-class enough to ship, (2) how to keep the recipe + role vocabularies in sync without a shared source of truth, (3) how to bump an existing system recipe (Seedance v1 → v2) without breaking existing canvas instances or the Phase B2 history viewer.
+
+### Question 1 — which recipes ship
+
+Phase D's plan named four candidates: Storyboard Director (multi-shot narrative), Simple Scene Prompter (single shot), Timeline Director (multi-beat single shot), and a Seedance v2 update (animation template). All four ship. The four cover the canonical use cases users encounter in storytelling work: narrative sequences, one-off shots, cinematic single-shots with internal time progression, and the existing Seedance specialist getting one more arrow in its quiver. We deliberately resist shipping more — a Music Video Director, a Documentary Director, a Game Cutscene Director are all easy to imagine but each adds curatorial maintenance load AND increases analysis-paralysis in the Library. Five system recipes in the cookbook (Image Describer, Performance Video, Singer Performance, Soul Image Burst, Seedance Prompt Director) → eight after D2 is the right step size.
+
+### Question 2 — recipe ↔ role vocabulary sync
+
+Two ways to keep the role overlays + the recipe system prompts saying the same thing about the 10 continuity rules / 5 setup blocks / etc:
+
+- **(a) Single source of truth (e.g. a `STORYBOARD_PRINCIPLES` const referenced by both the role and the recipe migration).** Forces consistency by construction — change once, both update. But the recipe lives in raw SQL (a JSONB blob in a migration), so referencing a TypeScript const would mean a code-generation step or a runtime stitching pass. Both add tooling complexity for a cross-cutting that's small (~1500 chars per principle set).
+- **(b) Convention-only — duplicate the principles in role overlay + recipe system prompt; cross-link in comments.** No tooling. Drift is possible if a future edit touches one but not the other. Mitigated by tests that assert specific phrases land in both places (we already test the role overlays for "ROLE OVERLAY" headings; we now also test the recipe migrations for "10 CINEMATIC CONTINUITY RULES" / "FIVE SETUP BLOCKS" / etc).
+
+Picked **(b)**. The shared text is small enough that duplication is cheap, and the role+recipe overlap is precisely the point of the pairing (different surfaces, same vocabulary). Future audits via the test file flag drift if it happens. If recipe / role vocabularies grow significantly (e.g. 5+ shared principle sets at 5KB each) we revisit (a) with a code-gen step.
+
+### Question 3 — Seedance v1 → v2 update strategy
+
+Adding the 6th Animation template to the existing Seedance Prompt Director recipe is more delicate than shipping new recipes:
+
+- The recipe lives at `owner_id = null` in `cookbook_recipes` — it's a system recipe shared by all users.
+- Existing canvas composites are pinned to `recipeVersion = 1` (Phase B1 stamping).
+- Phase B2 surfaces "Update available → v2" badges + a version-history diff view, both of which need a `cookbook_recipe_versions` row capturing the old subgraph.
+
+Three options:
+
+- **(a) Drop + re-insert.** Simple but breaks foreign keys (the `recipe_id` on existing composites would point at a deleted row) and erases all history. Off the table.
+- **(b) Re-INSERT with `ON CONFLICT (name, owner_id) DO UPDATE SET subgraph = …`.** Preserves the row id, but doesn't write a history row, so the Phase B2 diff viewer has nothing to render.
+- **(c) DO block: archive current state to `cookbook_recipe_versions`, then UPDATE the live row + bump `version`.** Preserves history. Idempotent if guarded by `where curr_version = 1` so re-runs are no-ops. The migration becomes data-aware (reads old state, writes new state in two steps within a single transaction).
+
+Picked **(c)**. The DO block is the only option that produces a clean Phase B2 experience. Idempotency via `if curr_version >= 2 then return` makes the migration safe to re-run on databases that already received it.
+
+We also surgically rewrite the `templates-text` Text node's text via `jsonb_set` rather than re-emitting the entire subgraph. Reason: future Seedance edits between v1 and the v2 migration (a comma fix, a typo correction in a different node) shouldn't be lost. We touch only what we need. Same surgical approach for the `exposedParams` cursor knob — only the `cursor` knob's `label` + `max` change; other params are untouched.
+
+For the migration filename, we use `2026-06-02` (one day after the v1 insert) so alphabetical ordering inside `supabase/migrations/` puts the v1 insert strictly before the v2 update. A future "Seedance v3" migration would use `2026-06-03_seedance_director_v3_*.sql` etc.
+
+### Question 4 — recipe pattern reuse
+
+All four recipes (3 new + Seedance v1) share the same internal architecture:
+
+```
+[Templates Text] → [Array splits on ═══BREAK═══] → [List picks one]
+                                                           ↓
+                       [Base Principles Text] → [Text Concat] → [LLM Text]
+                                                           ↑
+                                                   briefing + image refs
+```
+
+Six nodes, five edges, five exposed inputs (briefing + 4 image refs), one exposed output, three exposed params (cursor + Model select + Temperature). We deliberately keep this shape rigid across recipes for two reasons:
+
+- **Cognitive load.** A user who learned one recipe knows all four. Same knobs, same behavior, only the slot content differs.
+- **Maintainability.** A pattern fix (e.g. extending all recipes to 5 image refs instead of 4) is a `update public.cookbook_recipes set subgraph = jsonb_set(...)` migration that lands in O(N) lines, not O(N × per-recipe-shape) lines.
+
+The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spot: more than 3 (so the user has meaningful curated choice) and few enough that the LLM can reliably pick one when given an integer in `0..4`. If a recipe genuinely needs 6+ choices, fork the recipe (Phase B1 edit + save) — don't extend the cursor list.
+
+### Consequences
+
+**Wins.**
+- The persona/recipe loop closes: a user picks Storyboard Director (the role) and drops Storyboard Director (the recipe) on the canvas; both surfaces speak the 10-continuity-rules vocabulary. Same for Timeline Director.
+- The Library jumps from 5 to 8 system recipes — meaningful coverage of the storytelling workflow stack without flooding the user.
+- Seedance v2 closes a known gap (multi-beat single shot wasn't a Seedance template before — the user had to switch to Higgsfield workflows or fall back to Freeform). The animation template captures the sweet spot.
+- The Phase B2 plumbing finally pays off — canvas instances of v1 Seedance Prompt Director will see "Update available → v2" badges + diff. The B2 surfaces stop being theoretical.
+- Test coverage validates JSON shape from migrations directly. Future recipe additions in this pattern get the same validation for free if they follow the cursor-template-carousel architecture.
+
+**Trade-offs we accept.**
+- **Vocabulary duplication between role overlays and recipe system prompts.** The 10 continuity rules / 5 setup blocks / 3-slot structure live in both places. Drift is possible but caught by phrase-asserting tests. Acceptable for the small overlap; revisit if it grows.
+- **Cursor lists are fixed at 5 by migration.** A user who wants 7 panel counts forks the recipe via Phase B1 edit. We don't ship a "user-extensible cursor template" surface; that's premature given how small the user pool is.
+- **Recipe quality is subjective.** The 10 rules / 5 setup blocks / aspect templates are curated from prompting guides + experience but the LLM output quality only fully reveals itself after real use. Phase D2 ships v1 of each recipe; iteration via Phase B1 edits is the path forward for "this template undercooks the climax beat" feedback. Fine — the recipes are designed to be edited.
+- **Default model is Gemini 2.5 Pro for all four recipes.** Multimodal + competitive on cost. A user who prefers Claude / GPT-4o switches via the Model exposed param. We don't ship four recipes × four models = 16 variants.
+
+**What's parked for later.**
+- **Per-recipe role suggestions.** "When the Storyboard Director recipe is selected, surface a hint to switch to that role too." Phase E concern (orchestration).
+- **Recipe → role chaining.** "The recipe just produced output; want me to keep iterating in the matching role?" Phase E.
+- **Custom user templates inside system recipes.** Currently locked to the migration-shipped 5. Users who need a 6th fork the whole recipe — fine for now.
+- **Recipe gallery / recommendations.** When you have N recipes, "show me the relevant ones for what I'm doing" becomes useful. Phase E concern.
+- **Live template preview in the recipe detail panel.** Click "Storyboard Director", see the rendered system prompt for cursor=2 (8 panels) without instantiating. Useful for power users; deferred.

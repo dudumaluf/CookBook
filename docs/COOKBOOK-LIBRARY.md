@@ -193,17 +193,22 @@ What D1 does NOT include yet:
 - ❌ Per-recipe role suggestions ("when this recipe is selected, suggest switching to Storyboard Director" — Phase E concern).
 - ❌ Role-aware tool gating (every role still has access to every tool).
 
-#### Phase D2 — Specialist recipes (upcoming)
+#### Phase D2 — Specialist recipes (shipped 2026-06-01)
 
-Three new specialist recipes (mirror the Seedance Prompt Director architecture):
+When this shipped:
 
-1. **Storyboard Director** — produces an image-gen prompt for an N-panel storyboard with the 10 continuity rules baked in.
-2. **Simple Scene Prompter** — Style + Action + Camera, single video shot.
-3. **Timeline Director** — 5 setup blocks + N timeline slots for multi-beat 15-second scenes.
+- **Storyboard Director recipe** (`supabase/migrations/20260601_storyboard_director_recipe.sql`) — produces an N-panel storyboard prompt (4 / 6 / 8 / 10 / 12 panels) with the 10 cinematic continuity rules baked in. Output is structured one block per panel: `PANEL N — beat / Camera / Subject / Setting / Continuity tag`. Pairs with the Phase D1 Storyboard Director assistant role — same vocabulary on both surfaces. Default 6 panels.
+- **Simple Scene Prompter recipe** (`supabase/migrations/20260601_simple_scene_prompter_recipe.sql`) — lightweight single-shot prompt (Subject + Action / Camera / Audio in 2-4 sentences). Aspect-ratio knob: 16:9 / 9:16 / 1:1 / 4:3 / 21:9. Use when the heavier Storyboard / Timeline Directors feel like overkill. Default 16:9.
+- **Timeline Director recipe** (`supabase/migrations/20260601_timeline_director_recipe.sql`) — multi-beat single-shot prompt for 5-15 second continuous shots. Output: 5 setup blocks (Character / Setting / Tone / Constraints / Goal) + N timeline slots in `[mm:ss-mm:ss]` format. Structure knob: 8s/3 / 10s/4 / 12s/4 / 15s/5 / 5s/3. Pairs with the Phase D1 Timeline Director assistant role. Default 10s / 4 slots.
+- **Seedance Prompt Director v2** (`supabase/migrations/20260602_seedance_director_v2_animation.sql`) — adds a 6th template (cursor = 5): "Animation / Timed Segments". Multi-beat single-shot scenes (e.g. character pours coffee, lifts cup, takes sip — three beats, one shot, no edit). 3-5 segments using `[mm:ss-mm:ss]` brackets. Cursor knob widened from 0-4 to 0-5; label updated to advertise the new template. Idempotent DO block — archives v1 to `cookbook_recipe_versions` so canvas composites pinned to v1 see the Phase B2 "Update available → v2" badge with a real diff.
 
-Plus extending the existing Seedance Prompt Director with a 6th template (Animation / Timed Segments) for multi-beat Seedance scenes.
+All 4 recipes share the Seedance pattern: `[Templates Text] → [Array splits on ═══BREAK═══] → [List picks one] → [Text Concat with Base Principles] → [LLM Text · Gemini 2.5 Pro]`. Each template carousel has 5 slices selected by the `cursor` exposed param — same UX shape across recipes. Default model is Gemini 2.5 Pro for all (multimodal — handles reference images); user can switch to Claude / GPT-4o / GPT-4o-mini via the Model knob.
 
-D2 pairs with D1 — the Storyboard Director recipe and the Storyboard Director role share the same continuity vocabulary, so they compose: pick the role + drop the recipe and both surfaces speak the same language.
+What D2 does NOT include yet:
+
+- ❌ Per-recipe role suggestions (Phase E concern — "when the Storyboard Director recipe is selected, suggest switching to that role").
+- ❌ Recipe → role chaining ("the recipe just ran; want me to keep iterating in the matching role?" — Phase E).
+- ❌ Custom user-defined templates inside system recipes (the cursor lists are fixed by migration; users who want different templates fork to their own version via Phase B1 edit + save).
 
 ### Phase E — Orchestration
 
@@ -324,7 +329,7 @@ When you add a new feature that introduces a prompt or a recipe, two steps make 
 | B1 — Recipe edit + versioning core | ✅ Shipped | 2026-06-01 |
 | B2 — Update-available + history/diff propagation | ✅ Shipped | 2026-06-01 |
 | D1 — Assistant role overlays + role picker | ✅ Shipped | 2026-06-01 |
-| D2 — Storyboard / Simple Scene / Timeline specialist recipes | 📋 Planned | — |
+| D2 — Storyboard / Simple Scene / Timeline specialist recipes | ✅ Shipped | 2026-06-01 |
 | C — Personal prompt overrides + assistant-as-co-author | 📋 Planned | — |
 | E — Orchestration | 📋 Planned | — |
 
