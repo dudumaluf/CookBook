@@ -52,11 +52,20 @@ export async function applyRefactor(
   // work. JSON round-trip ensures rollback gets a true deep clone (no
   // mutation aliasing the in-memory state).
   const nodesBackup = JSON.parse(JSON.stringify(snapshot.nodes));
-  const edgesBackup = JSON.parse(JSON.stringify(snapshot.edges));
+  const edgesBackup: WorkflowEdgeSnapshot[] = JSON.parse(
+    JSON.stringify(snapshot.edges),
+  );
   const selNodesBackup = [...snapshot.selectedNodeIds];
   const selEdgesBackup = [...snapshot.selectedEdgeIds];
 
   const newNodeIds: Record<string, string> = {};
+  // Track ids removed in this batch so a later `remove_edge` op for an
+  // edge that the cascade already swept can succeed instead of failing
+  // the whole batch. The construct-tool variant of `remove_edge` is
+  // already idempotent (`remove-edge.ts`); this matches the contract
+  // here while still surfacing genuinely-stale edge ids (typos) as
+  // errors.
+  const removedNodeIds = new Set<string>();
   let appliedCount = 0;
 
   function rollback() {
@@ -70,7 +79,7 @@ export async function applyRefactor(
 
   try {
     for (const op of refactor.operations) {
-      const opError = applyOne(op, newNodeIds);
+      const opError = applyOne(op, newNodeIds, removedNodeIds, edgesBackup);
       if (opError) {
         rollback();
         return {
@@ -94,14 +103,30 @@ export async function applyRefactor(
   }
 }
 
+interface WorkflowEdgeSnapshot {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle: string;
+  targetHandle: string;
+}
+
 /**
  * Apply a single op. Returns an error string on failure, or null on
  * success. Throws nothing — keeps the caller's try/catch free for
  * unexpected runtime failures only.
+ *
+ * `removedNodeIds` and `edgesBackup` are batch-level context: when a
+ * `remove_edge` op references an edge that no longer exists, we look
+ * back at the original snapshot to decide whether the disappearance
+ * was a legitimate cascade (a prior `remove_node` swept the edge) or
+ * a stale id we should surface to the user.
  */
 function applyOne(
   op: RefactorOperation,
   newNodeIds: Record<string, string>,
+  removedNodeIds: Set<string>,
+  edgesBackup: readonly WorkflowEdgeSnapshot[],
 ): string | null {
   const ws = useWorkflowStore.getState();
   switch (op.op) {
@@ -118,6 +143,7 @@ function applyOne(
       const exists = ws.nodes.find((n) => n.id === op.nodeId);
       if (!exists) return `No node with id '${op.nodeId}' to remove.`;
       ws.removeNode(op.nodeId);
+      removedNodeIds.add(op.nodeId);
       return null;
     }
     case "update_node_config": {
@@ -158,9 +184,21 @@ function applyOne(
     }
     case "remove_edge": {
       const exists = ws.edges.find((e) => e.id === op.edgeId);
-      if (!exists) return `No edge with id '${op.edgeId}' to remove.`;
-      ws.removeEdge(op.edgeId);
-      return null;
+      if (exists) {
+        ws.removeEdge(op.edgeId);
+        return null;
+      }
+      // Edge already gone. Was it cascade-removed by a prior
+      // `remove_node` in this same batch? If yes, the op is redundant
+      // (the cascade did the work) → silent success. If not, the id is
+      // truly stale (e.g. assistant typo) and we surface the failure.
+      const wasCascaded = edgesBackup.some(
+        (e) =>
+          e.id === op.edgeId &&
+          (removedNodeIds.has(e.source) || removedNodeIds.has(e.target)),
+      );
+      if (wasCascaded) return null;
+      return `No edge with id '${op.edgeId}' to remove.`;
     }
     default: {
       // Exhaustiveness guard. If a new op variant is added to the

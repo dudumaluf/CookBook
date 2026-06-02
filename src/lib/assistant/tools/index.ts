@@ -31,6 +31,7 @@ import { instantiateRecipeTool } from "./recipe/instantiate-recipe";
 import { saveSelectionAsRecipeTool } from "./recipe/save-selection-as-recipe";
 import { suggestRecipesForIntentTool } from "./recipe/suggest-recipes-for-intent";
 import { unpackCompositeTool } from "./recipe/unpack-composite";
+import { applyPendingRefactorTool } from "./refactor/apply-pending-refactor";
 import { proposeRefactorTool } from "./refactor/propose-refactor";
 import { cancelRunTool } from "./run/cancel-run";
 import { runFromTool } from "./run/run-from";
@@ -116,6 +117,7 @@ const tools: AssistantTool[] = [
   suggestRecipesForIntentTool,
   // Phase 3 — preview-gated bulk refactor.
   proposeRefactorTool,
+  applyPendingRefactorTool,
   // Slice 7.3 — run tools.
   runWorkflowTool,
   runFromTool,

@@ -162,3 +162,74 @@ describe("propose_refactor — validation", () => {
     expect(result.error?.toLowerCase()).toContain("invalid");
   });
 });
+
+describe("propose_refactor — cascade dedup", () => {
+  it("strips remove_edge ops that would already be cascaded by a prior remove_node", async () => {
+    // Wire up the workflow snapshot the proposer will look at: one
+    // edge whose source node will be removed, plus another edge that
+    // stays. Only the cascade-redundant op should be filtered.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "src", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "stay", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "dst", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "src-out-dst-user",
+          source: "src",
+          sourceHandle: "out",
+          target: "dst",
+          targetHandle: "user",
+        },
+        {
+          id: "stay-out-dst-system",
+          source: "stay",
+          sourceHandle: "out",
+          target: "dst",
+          targetHandle: "system",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "drop src + cleanup",
+      operations: [
+        { op: "remove_node", nodeId: "src" },
+        { op: "remove_edge", edgeId: "src-out-dst-user" }, // redundant
+        { op: "remove_edge", edgeId: "stay-out-dst-system" }, // keeps
+      ],
+    });
+    expect(result.ok).toBe(true);
+    const pending = useAssistantStore.getState().pendingRefactor!;
+    expect(pending.operations).toHaveLength(2);
+    expect(pending.operations).toEqual([
+      { op: "remove_node", nodeId: "src" },
+      { op: "remove_edge", edgeId: "stay-out-dst-system" },
+    ]);
+    expect(result.message).toContain("filtered");
+  });
+
+  it("leaves the proposal untouched when nothing is redundant", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "swap",
+      operations: [
+        { op: "add_node", kind: "text", position: { x: 0, y: 0 } },
+        { op: "remove_node", nodeId: "a" },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.message).not.toContain("filtered");
+    const pending = useAssistantStore.getState().pendingRefactor!;
+    expect(pending.operations).toHaveLength(2);
+  });
+});

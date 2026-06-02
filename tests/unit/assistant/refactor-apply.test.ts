@@ -250,6 +250,95 @@ describe("applyRefactor — rollback on failure", () => {
   });
 });
 
+describe("applyRefactor — cascade-aware remove_edge", () => {
+  it("treats remove_edge for an edge already swept by a prior remove_node as success", async () => {
+    // Setup: two nodes with one edge between them. The proposal removes
+    // the source node (cascading the edge) AND then explicitly tries to
+    // remove the same edge — the kind of redundant batch the LLM tends
+    // to emit when it can't see edge ids in its context.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "src", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "dst", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "src-out-dst-user",
+          source: "src",
+          sourceHandle: "out",
+          target: "dst",
+          targetHandle: "user",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([
+        { op: "remove_node", nodeId: "src" },
+        { op: "remove_edge", edgeId: "src-out-dst-user" },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.appliedCount).toBe(2);
+    const state = useWorkflowStore.getState();
+    expect(state.nodes.map((n) => n.id)).toEqual(["dst"]);
+    expect(state.edges).toEqual([]);
+  });
+
+  it("still surfaces a stale edge id (truly missing, no cascade explanation)", async () => {
+    // Edge id that doesn't exist in the snapshot AND is not incident to
+    // any node we're removing in the batch — surfacing the failure here
+    // protects against silent typos in the assistant's tool calls.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([{ op: "remove_edge", edgeId: "nonexistent-edge" }]),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.toLowerCase()).toContain("nonexistent-edge");
+  });
+
+  it("cascades correctly even when remove_node is interleaved with other ops", async () => {
+    // Proposal mirrors the real-world failure: remove a node, do other
+    // work, then explicitly remove an edge that was already cascaded
+    // out by the earlier remove_node. The original bug report had this
+    // exact shape (Op 1 remove_node, Op 8 remove_edge incident to it).
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "old", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "keep", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "old-out-keep-prompt",
+          source: "old",
+          sourceHandle: "out",
+          target: "keep",
+          targetHandle: "prompt",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([
+        { op: "remove_node", nodeId: "old" },
+        { op: "add_node", kind: "text", position: { x: 100, y: 100 } },
+        { op: "remove_edge", edgeId: "old-out-keep-prompt" },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.appliedCount).toBe(3);
+  });
+});
+
 describe("applyPendingRefactor — assistant-store integration", () => {
   it("flips status to applied on success", async () => {
     useAssistantStore.setState({

@@ -1,5 +1,7 @@
+import { dedupCascadeRedundantOps } from "@/lib/assistant/refactor-dedup";
 import { refactorProposalSchema } from "@/lib/assistant/refactor-types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
 
@@ -95,13 +97,23 @@ export const proposeRefactorTool: AssistantTool = {
       };
     }
 
+    // Strip cascade-redundant `remove_edge` ops so the modal preview
+    // matches what actually runs. Without this filter, a perfectly
+    // valid proposal that included both `remove_node X` and
+    // `remove_edge Y-out-…` (Y incident to X) would show up as N ops
+    // queued but execute as N-1 — confusing for the user. The applier
+    // also tolerates these cases at runtime; this is the cosmetic
+    // counterpart on the way in.
+    const ws = useWorkflowStore.getState();
+    const dedup = dedupCascadeRedundantOps(parsed.data.operations, ws.edges);
+
     const id = `refactor_${Date.now().toString(36)}_${Math.random()
       .toString(36)
       .slice(2, 7)}`;
     useAssistantStore.getState().setPendingRefactor({
       id,
       summary: parsed.data.summary,
-      operations: parsed.data.operations,
+      operations: dedup.operations,
       status: "pending",
       proposedAt: Date.now(),
     });
@@ -110,7 +122,9 @@ export const proposeRefactorTool: AssistantTool = {
       ok: true,
       id,
       message:
-        "Proposal queued. Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.",
+        dedup.removed.length > 0
+          ? `Proposal queued (${dedup.removed.length} cascade-redundant remove_edge op(s) filtered). Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.`
+          : "Proposal queued. Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.",
     };
   },
 };

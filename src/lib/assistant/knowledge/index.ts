@@ -3,6 +3,7 @@ import { buildGalleryKnowledge } from "./gallery";
 import { buildIdentityKnowledge } from "./identity";
 import { buildLibraryKnowledge } from "./library";
 import { buildNodeCatalogKnowledge } from "./node-catalog";
+import { buildPendingRefactorKnowledge } from "./pending-refactor";
 import { buildRecipeCatalogKnowledge } from "./recipes";
 import { buildSelectionKnowledge } from "./selection";
 import { buildVocabularyKnowledge } from "./vocabulary";
@@ -134,6 +135,11 @@ export async function buildKnowledgeBundle(
   // the push instead of branching on selection size here.
   const selectionMd = buildSelectionKnowledge({ skip: skip.selection });
   if (selectionMd) dynamicSections.push(selectionMd);
+  // Pending refactor — only present when there's a queued proposal.
+  // Lives in dynamic because its existence (and status) flips between
+  // turns. Cheap to recompute (single store read).
+  const pendingRefactorMd = buildPendingRefactorKnowledge();
+  if (pendingRefactorMd) dynamicSections.push(pendingRefactorMd);
   if (!skip.library) dynamicSections.push(buildLibraryKnowledge());
   if (galleryMd) dynamicSections.push(galleryMd);
 
