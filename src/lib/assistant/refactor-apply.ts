@@ -171,6 +171,29 @@ function applyOne(
       if (!ws.nodes.find((n) => n.id === target)) {
         return `No target node '${target}'.`;
       }
+      // Self-loops are always rejected by the workflow store; surface
+      // as a real error so the LLM sees the actionable message.
+      if (source === target) {
+        return `Edge from ${source}.${op.sourceHandle} → ${target}.${op.targetHandle} rejected (self-loop).`;
+      }
+      // Idempotency for exact duplicates: if the same logical edge
+      // (source, sourceHandle, target, targetHandle) is already wired,
+      // treat the op as a no-op success. Mirrors the cascade-aware
+      // `remove_edge` contract — proposals that touch already-correct
+      // edges shouldn't roll the entire batch back. Any OTHER reason
+      // `addEdge` returns undefined (port occupied by a DIFFERENT
+      // upstream — single-arity handle conflict) still surfaces as a
+      // real error so we don't mask wiring mistakes.
+      const exactDuplicate = ws.edges.find(
+        (e) =>
+          e.source === source &&
+          e.sourceHandle === op.sourceHandle &&
+          e.target === target &&
+          e.targetHandle === op.targetHandle,
+      );
+      if (exactDuplicate) {
+        return null;
+      }
       const id = ws.addEdge({
         source,
         sourceHandle: op.sourceHandle,
@@ -178,7 +201,19 @@ function applyOne(
         targetHandle: op.targetHandle,
       });
       if (!id) {
-        return `Edge from ${source}.${op.sourceHandle} → ${target}.${op.targetHandle} rejected.`;
+        // Not a duplicate (we checked above) and not a self-loop
+        // (checked above) → must be the single-arity port already
+        // occupied by a different upstream edge. Tell the LLM exactly
+        // which edge is in the way so it can propose a `remove_edge`
+        // first.
+        const occupant = ws.edges.find(
+          (e) =>
+            e.target === target && e.targetHandle === op.targetHandle,
+        );
+        const occupantHint = occupant
+          ? ` (port already wired from ${occupant.source}.${occupant.sourceHandle} via edge '${occupant.id}' — remove that edge first or pick a different target handle)`
+          : "";
+        return `Edge from ${source}.${op.sourceHandle} → ${target}.${op.targetHandle} rejected${occupantHint}.`;
       }
       return null;
     }

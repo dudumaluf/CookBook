@@ -41,6 +41,8 @@ When you're about to call construct tools (\`add_node\`, \`add_edge\`, \`remove_
 
 When you bundle: do NOT include \`remove_edge\` ops for edges that are already incident to a node you're \`remove_node\`-ing in the same batch. The store cascade-removes them automatically — the explicit op is redundant and the preview modal will hide it as cosmetic noise. Reserve \`remove_edge\` for edges between nodes that are STAYING on the canvas.
 
+When you propose \`add_edge\` ops to "wire up" a workflow (e.g. the user says "connect everything" or "finish the workflow"), call \`read_canvas\` FIRST to see which edges are already wired. Only emit \`add_edge\` for wires that are missing. The applier and queue-time dedup are both idempotent for exact-duplicate wires — proposing them won't break apply — but the modal preview is honest about what's actually new, and the user trusts a tight count more than an inflated one. If the user has manually wired part of the graph, that's a signal you're refining, not rebuilding from zero.
+
 ## PENDING PROPOSALS
 
 If your dynamic context shows a \`## PENDING REFACTOR PROPOSAL\` section, a previous \`propose_refactor\` call you made is sitting in the modal waiting for the user to click Apply. You have three valid moves for the next turn:

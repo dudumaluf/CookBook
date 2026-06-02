@@ -234,6 +234,119 @@ describe("propose_refactor — cascade dedup", () => {
   });
 });
 
+describe("propose_refactor — already-wired add_edge dedup", () => {
+  it("strips add_edge ops whose exact wire is already on the canvas", async () => {
+    // 2026-06-02 regression guard: assistant proposed a 9-edge "wire
+    // up the workflow" batch where the first 2 edges already existed.
+    // Without dedup, op 1 failed because addEdge rejects duplicates
+    // into single-arity handles, and the entire batch rolled back.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "ta", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "tb", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "lt", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "edge_existing_user",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+        {
+          id: "edge_existing_system",
+          source: "tb",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "system",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "wire up",
+      operations: [
+        // Both already exist — should be filtered.
+        {
+          op: "add_edge",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+        {
+          op: "add_edge",
+          source: "tb",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "system",
+        },
+        // Brand new — should survive.
+        {
+          op: "add_edge",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "image-0",
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("already-wired");
+    const pending = useAssistantStore.getState().pendingRefactor!;
+    expect(pending.operations).toHaveLength(1);
+    expect(pending.operations[0]).toMatchObject({
+      op: "add_edge",
+      targetHandle: "image-0",
+    });
+  });
+
+  it("reports both filter passes in the receipt when both fire", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "src", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "dst", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "edge_dup",
+          source: "src",
+          sourceHandle: "text",
+          target: "dst",
+          targetHandle: "user",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "remove + redundant + add-dup",
+      operations: [
+        { op: "remove_node", nodeId: "src" },
+        // Redundant remove — would be cascaded by remove_node.
+        { op: "remove_edge", edgeId: "edge_dup" },
+        // Duplicate add — same wire as the existing edge_dup. Note
+        // this is logically incoherent with the prior remove_node
+        // (the source is gone) but the dedup happens against the
+        // canvas SNAPSHOT, which doesn't reflect intra-bundle ops, so
+        // it's still flagged. Either way it's a no-op in this test.
+        {
+          op: "add_edge",
+          source: "src",
+          sourceHandle: "text",
+          target: "dst",
+          targetHandle: "user",
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("cascade-redundant");
+    expect(result.message).toContain("already-wired");
+  });
+});
+
 describe("propose_refactor — per-kind config validation", () => {
   it("rejects an update_node_config op that writes a bad fal-image model", async () => {
     useWorkflowStore.setState({

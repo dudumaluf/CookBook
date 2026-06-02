@@ -1,4 +1,7 @@
-import { dedupCascadeRedundantOps } from "@/lib/assistant/refactor-dedup";
+import {
+  dedupCascadeRedundantOps,
+  dedupExistingAddEdgeOps,
+} from "@/lib/assistant/refactor-dedup";
 import { refactorProposalSchema } from "@/lib/assistant/refactor-types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -108,6 +111,18 @@ export const proposeRefactorTool: AssistantTool = {
     const ws = useWorkflowStore.getState();
     const dedup = dedupCascadeRedundantOps(parsed.data.operations, ws.edges);
 
+    // Same idea, sibling pass: strip `add_edge` ops whose exact wire
+    // already exists on the canvas. Without this the assistant's
+    // "wire up the workflow" proposals fail apply-all whenever the
+    // user has already wired some of those edges manually — the
+    // workflow store rejects duplicate edges into a single-arity
+    // handle and the executor used to roll the whole batch back. The
+    // executor is now idempotent for exact duplicates too; this
+    // helper keeps the modal header honest.
+    const dedupAdd = dedupExistingAddEdgeOps(dedup.operations, ws.edges);
+    const filteredOps = dedupAdd.operations;
+    const totalFiltered = dedup.removed.length + dedupAdd.removed.length;
+
     // Per-kind validation of every config patch in the bundle (both
     // `add_node` initial configs and `update_node_config` patches). For
     // `add_node` we know the kind directly; for `update_node_config` we
@@ -117,12 +132,12 @@ export const proposeRefactorTool: AssistantTool = {
     // the LLM immediate feedback instead of letting a bad patch slip
     // into the modal where the user would just see the apply fail.
     const clientIdToKind = new Map<string, string>();
-    for (const op of dedup.operations) {
+    for (const op of filteredOps) {
       if (op.op === "add_node" && op.clientId) {
         clientIdToKind.set(op.clientId, op.kind);
       }
     }
-    for (const op of dedup.operations) {
+    for (const op of filteredOps) {
       if (op.op === "add_node" && op.config) {
         const err = validateConfigPatch(op.kind, op.config);
         if (err) return { ok: false, error: err };
@@ -147,17 +162,31 @@ export const proposeRefactorTool: AssistantTool = {
     useAssistantStore.getState().setPendingRefactor({
       id,
       summary: parsed.data.summary,
-      operations: dedup.operations,
+      operations: filteredOps,
       status: "pending",
       proposedAt: Date.now(),
     });
+
+    // Build a single human-readable note about what we filtered, so
+    // the LLM's receipt mentions both passes when both fired.
+    const noteParts: string[] = [];
+    if (dedup.removed.length > 0) {
+      noteParts.push(
+        `${dedup.removed.length} cascade-redundant remove_edge op(s)`,
+      );
+    }
+    if (dedupAdd.removed.length > 0) {
+      noteParts.push(
+        `${dedupAdd.removed.length} already-wired add_edge op(s)`,
+      );
+    }
 
     return {
       ok: true,
       id,
       message:
-        dedup.removed.length > 0
-          ? `Proposal queued (${dedup.removed.length} cascade-redundant remove_edge op(s) filtered). Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.`
+        totalFiltered > 0
+          ? `Proposal queued (${noteParts.join(" + ")} filtered). Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.`
           : "Proposal queued. Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.",
     };
   },

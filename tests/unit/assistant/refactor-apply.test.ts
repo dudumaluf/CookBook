@@ -339,6 +339,133 @@ describe("applyRefactor — cascade-aware remove_edge", () => {
   });
 });
 
+describe("applyRefactor — idempotent add_edge", () => {
+  it("treats add_edge for an exact-duplicate wire as success", async () => {
+    // 2026-06-02 regression: assistant proposed `add_edge ta.text →
+    // lt.user` but that exact wire already existed; addEdge in the
+    // store returned undefined; applyOne flagged it; whole batch
+    // rolled back. The fix: detect exact duplicates (same source +
+    // sourceHandle + target + targetHandle) and treat them as no-op
+    // success. Any OTHER reason addEdge can return undefined still
+    // surfaces as a real error.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "ta", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "lt", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "edge_ta_lt_user",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([
+        // Duplicate of the existing edge — should be silent success.
+        {
+          op: "add_edge",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+        // Brand new edge — should land for real.
+        {
+          op: "add_edge",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "image-0",
+        },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.appliedCount).toBe(2);
+    const state = useWorkflowStore.getState();
+    // Original edge stays + the new one was added; no duplicate row.
+    expect(state.edges).toHaveLength(2);
+    expect(
+      state.edges.some(
+        (e) =>
+          e.target === "lt" &&
+          e.targetHandle === "image-0" &&
+          e.source === "ta",
+      ),
+    ).toBe(true);
+  });
+
+  it("still rejects an add_edge whose target handle is occupied by a DIFFERENT upstream", async () => {
+    // Single-arity port already wired from a different source — the
+    // op is genuinely conflicting (not a duplicate), so the executor
+    // must surface the failure with an actionable hint instead of
+    // silently swallowing it.
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "ta", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "tb", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "lt", kind: "llm-text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [
+        {
+          id: "edge_ta_lt_user",
+          source: "ta",
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+      ],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([
+        {
+          op: "add_edge",
+          source: "tb", // different upstream
+          sourceHandle: "text",
+          target: "lt",
+          targetHandle: "user",
+        },
+      ]),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("rejected");
+    expect(result.error).toContain("port already wired");
+    // Hint mentions the existing occupant so the LLM knows what to remove.
+    expect(result.error).toContain("edge_ta_lt_user");
+  });
+
+  it("rejects an add_edge that would form a self-loop with a clear message", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "n1", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await applyRefactor(
+      refactor([
+        {
+          op: "add_edge",
+          source: "n1",
+          sourceHandle: "out",
+          target: "n1",
+          targetHandle: "in",
+        },
+      ]),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("self-loop");
+  });
+});
+
 describe("applyPendingRefactor — assistant-store integration", () => {
   it("flips status to applied on success", async () => {
     useAssistantStore.setState({

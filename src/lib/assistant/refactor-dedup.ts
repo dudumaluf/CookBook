@@ -1,6 +1,7 @@
 import type { RefactorOperation } from "@/lib/assistant/refactor-types";
 
 type RemoveEdgeOperation = Extract<RefactorOperation, { op: "remove_edge" }>;
+type AddEdgeOperation = Extract<RefactorOperation, { op: "add_edge" }>;
 
 /**
  * Pure helper that strips cascade-redundant `remove_edge` ops from a
@@ -44,6 +45,8 @@ export interface DedupEdgeSnapshot {
   id: string;
   source: string;
   target: string;
+  sourceHandle: string;
+  targetHandle: string;
 }
 
 export interface DedupResult {
@@ -87,5 +90,71 @@ export function dedupCascadeRedundantOps(
     kept.push(op);
   }
 
+  return { operations: kept, removed };
+}
+
+export interface DedupAddEdgeResult {
+  operations: RefactorOperation[];
+  /** `add_edge` ops we filtered because the exact wire already exists. */
+  removed: AddEdgeOperation[];
+}
+
+/**
+ * Strip `add_edge` ops that exactly match an edge already on the
+ * canvas — same `source`, `sourceHandle`, `target`, `targetHandle`.
+ *
+ * Why:
+ *   A proposal that "wires up the workflow" sometimes includes edges
+ *   the user already wired manually (or that an earlier proposal
+ *   added). The workflow store rejects duplicate edges into a
+ *   single-arity handle, the batch executor then surfaces the
+ *   rejection as a hard error, and the whole batch rolls back —
+ *   exactly the trap we hit on the cascade-remove case earlier.
+ *
+ *   The executor's `add_edge` step is now idempotent for exact
+ *   duplicates; this helper is the cosmetic counterpart so the modal
+ *   header ("9 changes queued") matches the executor's actual work.
+ *
+ * Limitations (intentional):
+ *   - `add_edge` ops that reference a clientId of a node added in the
+ *     SAME proposal are passed through untouched. By definition no
+ *     existing edge has that clientId as endpoint, so they can never
+ *     be exact duplicates of the snapshot.
+ *   - We don't try to dedup AGAINST other ops in the proposal (a
+ *     proposal that says "add edge X twice" is a real bug; the modal
+ *     should still preview both).
+ */
+export function dedupExistingAddEdgeOps(
+  operations: readonly RefactorOperation[],
+  existingEdges: readonly DedupEdgeSnapshot[],
+): DedupAddEdgeResult {
+  if (existingEdges.length === 0) {
+    return { operations: [...operations], removed: [] };
+  }
+  // Composite key — null bytes can't appear in node ids or handle ids,
+  // so this is a safe delimiter.
+  const key = (
+    s: string,
+    sh: string,
+    t: string,
+    th: string,
+  ): string => `${s}\x00${sh}\x00${t}\x00${th}`;
+  const haveEdge = new Set<string>();
+  for (const e of existingEdges) {
+    haveEdge.add(key(e.source, e.sourceHandle, e.target, e.targetHandle));
+  }
+
+  const kept: RefactorOperation[] = [];
+  const removed: AddEdgeOperation[] = [];
+  for (const op of operations) {
+    if (op.op === "add_edge") {
+      const k = key(op.source, op.sourceHandle, op.target, op.targetHandle);
+      if (haveEdge.has(k)) {
+        removed.push(op);
+        continue;
+      }
+    }
+    kept.push(op);
+  }
   return { operations: kept, removed };
 }
