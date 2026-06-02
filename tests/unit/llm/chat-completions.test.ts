@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { callChatCompletions } from "@/lib/llm/chat-completions";
+import {
+  callChatCompletions,
+  enrichUpstreamMessage,
+} from "@/lib/llm/chat-completions";
 
 /**
  * Slice 7.1 — chat-completions wrapper unit tests. Stub global.fetch
@@ -237,6 +240,68 @@ describe("callChatCompletions", () => {
     }
   });
 
+  it("appends model id + transient hint to 5xx upstream errors", async () => {
+    mockFetchOnce({
+      ok: false,
+      status: 500,
+      bodyText: JSON.stringify({ error: { message: "model overloaded" } }),
+    });
+    try {
+      await callChatCompletions(
+        { model: "anthropic/claude-sonnet-4.5", user: "Hi" },
+        new AbortController().signal,
+      );
+      throw new Error("expected throw");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain("model: anthropic/claude-sonnet-4.5");
+      expect(msg).toContain("usually transient");
+      expect(msg).toContain("Retry");
+    }
+  });
+
+  it("appends 404 hint pointing to the picker when the model is no longer routable", async () => {
+    mockFetchOnce({
+      ok: false,
+      status: 404,
+      bodyText: JSON.stringify({
+        error: { message: "not a valid model ID" },
+      }),
+    });
+    try {
+      await callChatCompletions(
+        { model: "anthropic/claude-opus-4-1", user: "Hi" },
+        new AbortController().signal,
+      );
+      throw new Error("expected throw");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain("not a valid model ID");
+      expect(msg).toContain("model: anthropic/claude-opus-4-1");
+      expect(msg).toContain("isn't currently routable");
+      expect(msg).toContain("picker");
+    }
+  });
+
+  it("appends rate-limit hint on HTTP 429", async () => {
+    mockFetchOnce({
+      ok: false,
+      status: 429,
+      bodyText: "",
+    });
+    try {
+      await callChatCompletions(
+        { model: "openai/gpt-5", user: "Hi" },
+        new AbortController().signal,
+      );
+      throw new Error("expected throw");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain("model: openai/gpt-5");
+      expect(msg).toContain("rate-limited");
+    }
+  });
+
   /* ────────────────────────────────────────────────────────────────── */
   /* Slice 1 of "Smarter assistant" — cache token telemetry              */
   /* ────────────────────────────────────────────────────────────────── */
@@ -335,5 +400,75 @@ describe("callChatCompletions", () => {
         ttl: "1h",
       });
     });
+  });
+});
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* enrichUpstreamMessage — pure helper, lives outside callChatCompletions
+   so the message shape can be pinned without spinning up fake fetch. */
+/* ──────────────────────────────────────────────────────────────────── */
+
+describe("enrichUpstreamMessage", () => {
+  it("appends the model id even when status has no hint", () => {
+    const out = enrichUpstreamMessage(
+      "fal-openai-compat HTTP 418",
+      418,
+      "openai/gpt-5",
+    );
+    expect(out).toBe(
+      "fal-openai-compat HTTP 418 (model: openai/gpt-5)",
+    );
+  });
+
+  it("flags 404 as 'not currently routable' and points to the picker", () => {
+    const out = enrichUpstreamMessage(
+      "fal-openai-compat: not a valid model ID",
+      404,
+      "anthropic/claude-opus-4-1",
+    );
+    expect(out).toContain("(model: anthropic/claude-opus-4-1)");
+    expect(out).toContain("isn't currently routable");
+    expect(out).toContain("picker");
+  });
+
+  it("flags 429 as rate-limited", () => {
+    const out = enrichUpstreamMessage(
+      "fal-openai-compat HTTP 429",
+      429,
+      "openai/gpt-5",
+    );
+    expect(out).toContain("rate-limited");
+  });
+
+  it("flags 5xx as transient with retry guidance", () => {
+    const out = enrichUpstreamMessage(
+      "fal-openai-compat HTTP 503",
+      503,
+      "anthropic/claude-sonnet-4.5",
+    );
+    expect(out).toContain("usually transient");
+    expect(out).toContain("Retry");
+  });
+
+  it("flags 401/403 as auth", () => {
+    const out401 = enrichUpstreamMessage(
+      "fal-openai-compat HTTP 401",
+      401,
+      "openai/gpt-5",
+    );
+    const out403 = enrichUpstreamMessage(
+      "fal-openai-compat HTTP 403",
+      403,
+      "openai/gpt-5",
+    );
+    expect(out401).toContain("auth rejected");
+    expect(out403).toContain("auth rejected");
+  });
+
+  it("flags 408/504 as timeouts", () => {
+    const out408 = enrichUpstreamMessage("HTTP 408", 408, "openai/gpt-5");
+    const out504 = enrichUpstreamMessage("HTTP 504", 504, "openai/gpt-5");
+    expect(out408).toContain("timed out");
+    expect(out504).toContain("timed out");
   });
 });

@@ -120,31 +120,53 @@ function smartInputs(config: LLMTextNodeConfig): NodeIO[] {
 }
 
 /**
- * Curated starter list of OpenRouter model ids. Order = priority (the
- * most commonly useful pick first). Slice 3.3+ swaps to a live list
- * from the Fal route — until then, custom ids still round-trip via
- * the dropdown's "(custom)" row.
+ * Curated list of OpenRouter model ids that Fal's OpenAI-compat router
+ * actively routes today. Order = priority (the most commonly useful pick
+ * first). Custom ids still round-trip via the dropdown's "(custom)" row.
  *
- * `google/gemini-2.5-pro` is back as of Slice 3.4 because the settings
- * popover wires `reasoning: true` so Fal stops rejecting it. We mark Pro
- * with `reasoningRequired: true` so the popover can surface a hint when
- * the user has Pro selected but reasoning unchecked (otherwise the call
- * would fail mid-run with "Reasoning is mandatory" — a paper-cut we'd
- * rather catch in the UI before pressing Run).
+ * 2026-06-02 refresh — OpenRouter migrated Anthropic ids from hyphen to
+ * dot notation around April 2026 (`claude-opus-4-1` → `claude-opus-4.6`).
+ * The old hyphen-suffixed ids now return "not a valid model ID" errors
+ * upstream, surfacing as `fal-openai-compat HTTP 404` in the node body.
+ * The list below tracks Fal's published example set
+ * (https://fal.ai/models/openrouter/router) plus the OpenAI / Google /
+ * xAI ids known to be live on OpenRouter as of this date.
+ *
+ * `google/gemini-2.5-pro` keeps `reasoningRequired: true` because Fal
+ * rejects it without `reasoning: true` in the body; the settings popover
+ * surfaces a hint when the user has Pro selected but reasoning unchecked
+ * so the run doesn't fail mid-flight with "Reasoning is mandatory".
  */
 const MODEL_OPTIONS: Array<{
   id: string;
   label: string;
   reasoningRequired?: boolean;
 }> = [
+  // Anthropic — flagship + fallbacks. 4.6 is the current dot-notation
+  // generation (Sonnet 4.6 + Opus 4.6); 4.5 stays as a known-good
+  // fallback. The hyphen-notation 4.1 ids were retired upstream.
+  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+  { id: "anthropic/claude-opus-4.6", label: "Claude Opus 4.6" },
   { id: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
-  { id: "anthropic/claude-opus-4.1", label: "Claude Opus 4.1" },
+  { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5 (cheap)" },
+  // OpenAI
   { id: "openai/gpt-5", label: "GPT-5" },
   { id: "openai/gpt-5-mini", label: "GPT-5 mini" },
-  { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", reasoningRequired: true },
+  { id: "openai/gpt-4.1", label: "GPT-4.1" },
+  // Google
+  {
+    id: "google/gemini-2.5-pro",
+    label: "Gemini 2.5 Pro",
+    reasoningRequired: true,
+  },
   { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { id: "x-ai/grok-4", label: "Grok 4" },
-  { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+  // xAI — Fal's published example list shows Grok 4 Fast as the
+  // currently routable id (the bare `x-ai/grok-4` is intermittently
+  // missing).
+  { id: "x-ai/grok-4-fast", label: "Grok 4 Fast" },
+  // Open-source / value-tier
+  { id: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick" },
+  { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
 ];
 
 /**
@@ -569,7 +591,7 @@ export const llmTextNodeSchema = defineNode<LLMTextNodeConfig>({
   getInputs: (config) => smartInputs(config),
   outputs: [{ id: "out", label: "out", dataType: "text" }],
   defaultConfig: {
-    model: "anthropic/claude-sonnet-4.5",
+    model: "anthropic/claude-sonnet-4.6",
   },
   // Executable (not reactive) — only runs when the user clicks Run.
   reactive: false,

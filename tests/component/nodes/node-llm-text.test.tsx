@@ -74,7 +74,7 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
     expect(llmTextNodeSchema.outputs[0]?.dataType).toBe("text");
 
     expect(llmTextNodeSchema.defaultConfig).toEqual({
-      model: "anthropic/claude-sonnet-4.5",
+      model: "anthropic/claude-sonnet-4.6",
     });
 
     expect(

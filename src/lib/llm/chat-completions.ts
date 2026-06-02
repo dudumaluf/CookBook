@@ -199,7 +199,20 @@ export async function callChatCompletions(
     } catch {
       // body wasn't JSON; keep the default upstreamMessage.
     }
-    const wrapped = new Error(upstreamMessage);
+    // Always append the model id + a status-class hint so the user can
+    // act on the error without digging through Fal's dashboard. The
+    // model id matters because the picker label drifts from the wire id
+    // ("Claude Sonnet 4.5" vs "anthropic/claude-sonnet-4.5"); Fal's
+    // OpenRouter compat 404s the moment OpenRouter retires an id (e.g.
+    // the April 2026 Anthropic dot-notation migration retired
+    // `claude-opus-4-1`). The hint nudges the user toward the fix
+    // without dressing it up.
+    const enriched = enrichUpstreamMessage(
+      upstreamMessage,
+      res.status,
+      args.model,
+    );
+    const wrapped = new Error(enriched);
     (wrapped as Error & { code?: string }).code = "upstream_error";
     throw wrapped;
   }
@@ -251,4 +264,54 @@ function makeAbort(): Error {
   const err = new Error("Aborted");
   err.name = "AbortError";
   return err;
+}
+
+/**
+ * Append a model id + status-class hint to an upstream error message.
+ *
+ * Pure (no I/O), exported so tests can pin the message shape.
+ *
+ * Status-class hints:
+ *   - 401/403 → auth/permission. Usually a misconfigured FAL_KEY or a
+ *     model the key isn't entitled to.
+ *   - 404     → "model not currently routable". Typical cause is an
+ *     OpenRouter id that got renamed upstream (the April 2026 Anthropic
+ *     dot-notation migration retired hyphen ids like
+ *     `anthropic/claude-opus-4-1`). User picks a different model from
+ *     the chip and moves on.
+ *   - 408/504 → timeout. Likely transient on long prompts.
+ *   - 429     → rate limit. Wait or switch model.
+ *   - 5xx     → upstream failure. Usually transient — retry first, then
+ *     try a different model if it persists.
+ *
+ * Other statuses pass through with the model id appended but no hint
+ * (we don't want to invent advice we can't back up).
+ */
+export function enrichUpstreamMessage(
+  base: string,
+  status: number,
+  model: string,
+): string {
+  const hint = httpStatusHint(status, model);
+  const head = `${base} (model: ${model})`;
+  return hint ? `${head} — ${hint}` : head;
+}
+
+function httpStatusHint(status: number, model: string): string | null {
+  if (status === 401 || status === 403) {
+    return `auth rejected — verify FAL_KEY has access to ${model}, or pick a different model from the picker.`;
+  }
+  if (status === 404) {
+    return `model "${model}" isn't currently routable on Fal/OpenRouter. Pick another model from the picker; the catalog rotates as providers come and go.`;
+  }
+  if (status === 408 || status === 504) {
+    return `request timed out. Retry, shorten the prompt, or pick a faster model.`;
+  }
+  if (status === 429) {
+    return `rate-limited. Wait a minute and retry, or switch to a different model.`;
+  }
+  if (status >= 500 && status < 600) {
+    return `upstream had an internal failure on "${model}" — usually transient. Retry once; if it persists, pick a different model from the picker.`;
+  }
+  return null;
 }

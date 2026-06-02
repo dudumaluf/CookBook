@@ -2,6 +2,41 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — LLM Text node: curated model list + actionable upstream errors
+
+Two paper-cuts surfacing today, same root: the picker had stale OpenRouter ids and the error body was a one-liner with no hint.
+
+**Symptoms (today's run, user's project):**
+- LLM Text on `anthropic/claude-sonnet-4.5` → Fal returned `HTTP 500` (model overloaded) and intermittently `HTTP 404` from OpenRouter's router. Node body showed `fal-openai-compat HTTP 500`. No model id, no "is this transient or permanent?", no "what should I do?".
+- Picker still listed `anthropic/claude-opus-4.1` — OpenRouter migrated Anthropic ids from hyphen (`claude-opus-4-1`) to dot notation (`claude-opus-4.6`) around April 2026. The hyphen ids 404 upstream now ([Claude Code issue #47298](https://github.com/anthropics/claude-code/issues/47298), [OpenRouter migration commit](https://github.com/gptme/gptme/commit/d66ac4ba7)). User would silently pick a model that can't route and see a HTTP 404 with no hint.
+
+**This ships:**
+
+1. **Curated `MODEL_OPTIONS` in [`src/components/nodes/node-llm-text.tsx`](src/components/nodes/node-llm-text.tsx)** — replaces the stale list with the verified-live set (June 2026):
+   - **Anthropic**: Sonnet 4.6 (new default), Opus 4.6, Sonnet 4.5 (kept as known-good fallback), Haiku 4.5 (cheap)
+   - **OpenAI**: GPT-5, GPT-5 mini, GPT-4.1
+   - **Google**: Gemini 2.5 Pro (reasoning-required), Gemini 2.5 Flash
+   - **xAI**: Grok 4 Fast (replaces bare `grok-4`, which Fal's example list dropped)
+   - **Open-source**: Llama 4 Maverick, Kimi K2.5
+   - The "(custom)" row still round-trips ids that aren't in the picker, so existing projects on retired ids keep working in read mode and surface a clear error if the user actually runs them.
+   - `defaultConfig.model` bumped from `claude-sonnet-4.5` → `claude-sonnet-4.6` (4.6 is the current dot-notation flagship; 4.5 stays selectable).
+
+2. **`enrichUpstreamMessage` in [`src/lib/llm/chat-completions.ts`](src/lib/llm/chat-completions.ts)** — pure helper (exported) that appends the model id + a status-class hint to whatever the provider returned:
+   - `404` → `"model "<id>" isn't currently routable on Fal/OpenRouter. Pick another model from the picker; the catalog rotates as providers come and go."` (the exact wording surfaces the picker as the action).
+   - `429` → `"rate-limited. Wait a minute and retry, or switch to a different model."`
+   - `5xx` → `"upstream had an internal failure on "<id>" — usually transient. Retry once; if it persists, pick a different model from the picker."`
+   - `401/403` → `"auth rejected — verify FAL_KEY has access to <id>, or pick a different model from the picker."`
+   - `408/504` → `"request timed out. Retry, shorten the prompt, or pick a faster model."`
+   - Other statuses pass through with `(model: <id>)` appended but no hint (we don't invent advice we can't back up).
+   - Model id is **always** appended (`(model: <id>)`) — that one detail alone closes the "I don't even know which model failed" gap that triggered the question.
+   - The node body's error panel (`role="alert"`, `whitespace-pre-wrap`) renders the multi-line message inline, selectable, in destructive tint.
+
+3. **Tests** — [`tests/unit/llm/chat-completions.test.ts`](tests/unit/llm/chat-completions.test.ts) gains a dedicated `enrichUpstreamMessage` block (status-class coverage: 404 / 429 / 5xx / 401-403 / 408-504 / pass-through) plus three integration cases pinning the wire-level message shape (5xx transient hint, 404 picker hint, 429 rate-limit hint).
+
+**Why we didn't bump in retroactive migration of existing project model ids:** the user said "*quero continuar a usar open router pelo fal.ai...so temos que dar uma lista certinha de modelos*" — picker + clear error is the contract, not silent rewrites of saved configs. If someone has a project pinned to `claude-opus-4.1` they keep it on screen and get an actionable 404 the moment they run it; they swap via the chip. The alternative (auto-rewrite on load) is the same shape of "thinks it did, didn't tell me" anti-pattern we just fixed in `check_workflow_health` — we know better than to repeat it for model strings.
+
+**Verification path the next assistant should follow if Fal acts up again:** Fal publishes the live example set at <https://fal.ai/models/openrouter/router>. The picker tracks that list; bump it when Fal/OpenRouter rotate the catalog (the migration cycle is roughly quarterly).
+
 ## 2026-06-02 — `check_workflow_health` tool: anti-confabulation receipt the assistant can't talk around
 
 Three "the assistant said it did but didn't" incidents in one session:
