@@ -38,10 +38,8 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
-import {
-  MediaPreviewImage,
-  MediaPreviewPlaceholder,
-} from "./media-preview";
+import { MediaPreviewPlaceholder } from "./media-preview";
+import { MultiImageView } from "./multi-image-view";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
@@ -91,6 +89,15 @@ export interface HiggsfieldImageGenNodeConfig {
    * and shows the hint "Disconnect the reference image to use a style."
    */
   styleId?: string;
+  /**
+   * Multi-image preview mode (2026-06-02). `batchSize: 4` (or fan-out
+   * across an array of prompts) produces N URLs in `output`.
+   * `"grid"` (default) shows the 2-col thumbnail grid; `"single"`
+   * shows one image at `previewIndex` with arrow + counter overlay.
+   */
+  viewMode?: "grid" | "single";
+  /** Focused image index in single-mode (0-based, clamped on render). */
+  previewIndex?: number;
 }
 
 const DEFAULT_ASPECT: SoulAspectRatio = "1:1";
@@ -104,6 +111,7 @@ const DEFAULT_BATCH: SoulBatchSize = 1;
 function HiggsfieldImageGenNodeBody({
   nodeId,
   config,
+  updateConfig,
 }: NodeBodyProps<HiggsfieldImageGenNodeConfig>) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
@@ -189,32 +197,22 @@ function HiggsfieldImageGenNodeBody({
         >
           <Loader2 className="h-5 w-5 animate-spin" />
         </MediaPreviewPlaceholder>
-      ) : imageUrls.length === 1 ? (
-        // Single-result path — config-driven aspect with `object-contain`
-        // (cover ≈ contain when ratio matches, but contain is safer if the
-        // model ever returns a slightly different size than requested).
-        <MediaPreviewImage
-          url={imageUrls[0]!}
-          alt="Generated"
+      ) : imageUrls.length > 0 ? (
+        // 1 image → plain preview; N images → grid that flips into a
+        // single-image carousel on click. Grid tiles use square aspect
+        // (consistent layout), single mode honours config.aspectRatio.
+        <MultiImageView
+          imageUrls={imageUrls}
+          viewMode={config.viewMode}
+          previewIndex={config.previewIndex}
           aspectRatio={configuredAspect}
-          fit="contain"
-          testId="higgsfield-result-single"
+          gridTileAspectRatio="1 / 1"
+          onViewModeChange={(next) => updateConfig({ viewMode: next })}
+          onPreviewIndexChange={(next) =>
+            updateConfig({ previewIndex: next })
+          }
+          testIdPrefix="higgsfield-result"
         />
-      ) : imageUrls.length > 1 ? (
-        // Multi-result grid: `aspect-square` cells with `object-contain`
-        // so portrait/landscape batches letterbox cleanly inside the
-        // square tile — never silently crops the user's content.
-        <div className="grid grid-cols-2 gap-1.5">
-          {imageUrls.map((url, i) => (
-            <MediaPreviewImage
-              key={`${url}-${i}`}
-              url={url}
-              alt={`Generated ${i + 1}`}
-              aspectRatio="1 / 1"
-              fit="contain"
-            />
-          ))}
-        </div>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <ImagePlus className="h-3 w-3" />

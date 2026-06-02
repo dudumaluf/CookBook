@@ -2,6 +2,27 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — Image generation nodes: grid ↔ single-image preview toggle
+
+Generators that emit multiple images per run (Fal Image with `numImages > 1` or fan-out across an array of prompts; Higgsfield with `batchSize: 4`) used to lock you into a 2-col thumbnail grid — fine for scanning, terrible for actually inspecting one image. Now each tile is clickable: click → flips the node into a single-image carousel focused on that index, with arrows + counter overlay (mirroring the existing generation-history navigation pattern). A small back-to-grid button returns to the thumbnails. View mode + focused index persist on the node config so the chosen view sticks across reload.
+
+**1. `MultiImageView` (`src/components/nodes/multi-image-view.tsx`).** Shared component. Three branches: empty (renders nothing — caller owns the empty state), single image (plain `MediaPreviewImage`, no overlay), N images (grid OR carousel based on `viewMode`). Grid tiles wrap each `MediaPreviewImage` in a button so click is owned by the wrapper (not the default `<a target="_blank">` from the preview); single mode keeps the open-in-new-tab affordance for "show me this full size". The bottom-of-preview overlay strip combines a `LayoutGrid` icon button (back to grid) on the left with an `IteratorCursor` (`‹ 2 / 4 ›`) on the right, both on a frosted-glass background so the preview underneath stays visible. Index is clamped on render so re-runs that return fewer images can't crash the body. Optional `gridTileAspectRatio` lets Higgsfield keep its curated 1/1 tile layout while letting single mode honor the configured aspect.
+
+**2. Fal Image config + body (`src/components/nodes/node-fal-image.tsx`).** Two new optional fields on `FalImageNodeConfig`: `viewMode: "grid" | "single"` and `previewIndex: number`. Body delegates the entire imageUrls.length >= 1 path to `MultiImageView` — single-result and multi-result branches collapse into one. Empty state and running placeholder are unchanged. The existing history-cursor overlay (top-right, navigates past runs) is untouched and composes cleanly with the new bottom overlay (single mode).
+
+**3. Higgsfield Image Gen config + body (`src/components/nodes/node-higgsfield-image-gen.tsx`).** Same two config fields, same `MultiImageView` delegation. The body now destructures `updateConfig` from `NodeBodyProps` (previously omitted because nothing in the body needed to write config). Grid tiles continue to use `1 / 1` via `gridTileAspectRatio="1 / 1"` so a 9:16 batch tiles as squares (curated layout choice); single mode honors `config.aspectRatio`.
+
+**Why this design**
+- **No new view-state container.** UI state lives on `config` (same as `node-text.tsx` `previewMode`, `node-list.tsx` `cursor`, `node-image-iterator.tsx` `cursor`). Persisting through the project document is free; we already JSON-serialize `config`. Keeps the `NodeInstance.uiState` shape we deliberately don't have.
+- **Reuses `IteratorCursor`.** Same component the history cursor uses, same component List / Image Iterator use. One pixel of UI to maintain across the app.
+- **Two cursors compose, don't conflict.** History cursor (top-right) navigates past runs; batch cursor (bottom, single mode only) navigates images inside the current run. Each lives in a different corner; both use the same visual language.
+- **Click-to-zoom is the discoverable in-path.** No grid-mode "switch to single" button (would be visual noise on every grid). Click any tile → enters single mode focused on it. Single mode has the explicit back-to-grid button.
+- **No downstream effect.** This is view-only — `record.output` is unchanged; downstream nodes still see the full array. Picking "image 3 of 4" in the UI doesn't promote that image to canonical output.
+
+**Tests +10** (`tests/component/nodes/multi-image-view.test.tsx`). Coverage: empty / single-image short circuits; grid default with N tiles; click-tile fires `onPreviewIndexChange + onViewModeChange`; single mode renders cursor + back-to-grid; back-to-grid emits `viewMode: "grid"`; arrows step the index; clamps stale indices (`9` clamped to `length - 1`); negative indices clamp to `0`; `gridTileAspectRatio` doesn't crash. Existing Fal Image (26) and Higgsfield (23) tests stay green — the `higgsfield-result-single` testid is preserved through `MultiImageView`'s `testIdPrefix`.
+
+**Lint, typecheck (full, no incremental cache), full vitest suite (1643 / 1643 passing), and `next build` all green.**
+
 ## 2026-06-02 — Canvas: drop external files + paste images from the web
 
 The canvas now accepts files dragged in from the user's desktop (or any other app / browser tab) and images copied off the web — both spawn the right input node automatically. Both flows route through the existing Library import pipeline (`importImageFiles` / `importMediaFiles`) so MIME / size policy stays in one place; this layer only adds the drop ergonomics + the asset → node spawn step that was previously only reachable via the Library asset drag.

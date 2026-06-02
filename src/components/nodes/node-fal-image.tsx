@@ -29,10 +29,8 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
-import {
-  MediaPreviewImage,
-  MediaPreviewPlaceholder,
-} from "./media-preview";
+import { MediaPreviewPlaceholder } from "./media-preview";
+import { MultiImageView } from "./multi-image-view";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
 /**
@@ -78,6 +76,21 @@ export interface FalImageNodeConfig {
    * is `MIN_IMAGE_PORTS` so a fresh node renders with two slots.
    */
   imagePorts?: number;
+  /**
+   * Multi-image preview mode (2026-06-02). Generators that emit a
+   * batch (`numImages > 1`) or fan out across an array of prompts
+   * end up with N URLs in `output`. `"grid"` (default) shows the
+   * 2-col thumbnail grid; `"single"` shows one image at
+   * `previewIndex` with arrow + counter overlay. Persists to the
+   * project document so the chosen view sticks across reload.
+   */
+  viewMode?: "grid" | "single";
+  /**
+   * Focused image index in single-mode (0-based). Clamped on render
+   * so re-runs returning fewer images don't crash the body. Only
+   * meaningful when `viewMode === "single"`.
+   */
+  previewIndex?: number;
 }
 
 const DEFAULT_MODEL: FalImageModel = "nano-banana-2";
@@ -310,31 +323,22 @@ function FalImageBody({
         <MediaPreviewPlaceholder aspectRatio={configuredAspect}>
           <Loader2 className="h-5 w-5 animate-spin" />
         </MediaPreviewPlaceholder>
-      ) : imageUrls.length === 1 ? (
-        // Single-result path — use the configured aspect and `object-contain`
-        // so a 16:9 / 9:16 / custom W×H output lands at its true shape inside
-        // the node (no silent crop, no warp).
-        <MediaPreviewImage
-          url={imageUrls[0]!}
-          alt="Generated"
+      ) : imageUrls.length > 0 ? (
+        // 1 image → plain preview; N images → grid that flips into a
+        // single-image carousel on click. Persisted view mode + index
+        // live on `config.viewMode` / `config.previewIndex` so the
+        // chosen view sticks across reload.
+        <MultiImageView
+          imageUrls={imageUrls}
+          viewMode={config.viewMode}
+          previewIndex={config.previewIndex}
           aspectRatio={configuredAspect}
-          fit="contain"
+          onViewModeChange={(next) => updateConfig({ viewMode: next })}
+          onPreviewIndexChange={(next) =>
+            updateConfig({ previewIndex: next })
+          }
+          testIdPrefix="fal-image-result"
         />
-      ) : imageUrls.length > 1 ? (
-        // Multi-result grid (Nano Banana / Seedream batch). Each tile uses
-        // the configured aspect (every image in a batch shares it) so a
-        // batch of 4 portraits doesn't get smashed into 4 squares.
-        <div className="grid grid-cols-2 gap-1.5">
-          {imageUrls.map((url, i) => (
-            <MediaPreviewImage
-              key={`${url}-${i}`}
-              url={url}
-              alt={`Generated ${i + 1}`}
-              aspectRatio={configuredAspect}
-              fit="contain"
-            />
-          ))}
-        </div>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <ImagePlus className="h-3 w-3" />
