@@ -233,3 +233,115 @@ describe("propose_refactor — cascade dedup", () => {
     expect(pending.operations).toHaveLength(2);
   });
 });
+
+describe("propose_refactor — per-kind config validation", () => {
+  it("rejects an update_node_config op that writes a bad fal-image model", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "f1",
+          kind: "fal-image",
+          position: { x: 0, y: 0 },
+          config: { model: "nano-banana-2" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "swap to endpoint id",
+      operations: [
+        {
+          op: "update_node_config",
+          nodeId: "f1",
+          config: { model: "fal-ai/nano-banana-2" },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("fal-image");
+    expect(useAssistantStore.getState().pendingRefactor).toBeNull();
+  });
+
+  it("rejects an add_node op whose initial config has a bad fal-image model", async () => {
+    const result = await run({
+      summary: "spawn fal-image with bad model",
+      operations: [
+        {
+          op: "add_node",
+          kind: "fal-image",
+          position: { x: 0, y: 0 },
+          config: { model: "fal-ai/nano-banana-2" },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("fal-image");
+    expect(useAssistantStore.getState().pendingRefactor).toBeNull();
+  });
+
+  it("validates update_node_config that targets a same-bundle add_node clientId", async () => {
+    const result = await run({
+      summary: "add then update",
+      operations: [
+        {
+          op: "add_node",
+          clientId: "newF",
+          kind: "fal-image",
+          position: { x: 0, y: 0 },
+        },
+        {
+          op: "update_node_config",
+          nodeId: "newF",
+          config: { model: "fal-ai/nano-banana-2" },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("fal-image");
+  });
+
+  it("returns a clear error when update_node_config targets an unknown nodeId", async () => {
+    const result = await run({
+      summary: "missing target",
+      operations: [
+        {
+          op: "update_node_config",
+          nodeId: "ghost",
+          config: { foo: "bar" },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ghost");
+  });
+
+  it("accepts a valid fal-image model patch and queues the proposal", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "f1",
+          kind: "fal-image",
+          position: { x: 0, y: 0 },
+          config: { model: "nano-banana-2" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    const result = await run({
+      summary: "swap models",
+      operations: [
+        {
+          op: "update_node_config",
+          nodeId: "f1",
+          config: { model: "flux-2-pro" },
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(useAssistantStore.getState().pendingRefactor).not.toBeNull();
+  });
+});

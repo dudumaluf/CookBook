@@ -159,6 +159,38 @@ export const FAL_IMAGE_MODELS = [
 
 export type FalImageModel = (typeof FAL_IMAGE_MODELS)[number];
 
+/** Default Fal Image model — used as a fallback when normalizing an
+ *  unknown / legacy `config.model` so the canvas never crashes on a
+ *  bad value. Mirrors `DEFAULT_MODEL` in `node-fal-image.tsx`. */
+export const FAL_IMAGE_DEFAULT_MODEL: FalImageModel = "nano-banana-2";
+
+/**
+ * Coerce a free-form `config.model` to a known {@link FalImageModel}. Tries
+ * exact match first, then strips the `fal-ai/` endpoint prefix (the
+ * assistant occasionally writes the endpoint id by mistake — see
+ * `image-api.ts` `gen: "fal-ai/nano-banana-2"`). Falls back to
+ * {@link FAL_IMAGE_DEFAULT_MODEL} for anything else so the canvas stays
+ * resilient to legacy / hand-edited project documents.
+ *
+ * Pure + dependency-free so both the runtime renderer AND the graph
+ * migrator can use it without pulling in the node registry.
+ */
+export function normalizeFalImageModel(raw: unknown): FalImageModel {
+  if (typeof raw !== "string" || raw.length === 0) {
+    return FAL_IMAGE_DEFAULT_MODEL;
+  }
+  if ((FAL_IMAGE_MODELS as readonly string[]).includes(raw)) {
+    return raw as FalImageModel;
+  }
+  if (raw.startsWith("fal-ai/")) {
+    const stripped = raw.slice("fal-ai/".length);
+    if ((FAL_IMAGE_MODELS as readonly string[]).includes(stripped)) {
+      return stripped as FalImageModel;
+    }
+  }
+  return FAL_IMAGE_DEFAULT_MODEL;
+}
+
 export const FAL_IMAGE_MODEL_LABELS: Record<FalImageModel, string> = {
   "nano-banana-2": "Nano Banana 2 (Google)",
   "flux-2-pro": "Flux 2 [pro]",

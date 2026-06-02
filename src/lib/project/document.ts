@@ -19,6 +19,7 @@
  */
 
 import {
+  migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
@@ -254,11 +255,15 @@ export function applyProjectDocument(
     // Cloud/file loads bypass the workflow-store persist migrate, so run the
     // graph-level forward-ports here too (ADR-0056: Video Concat clips →
     // clip-N; ADR-0058: Seedance reference handles; LLM Text smart inputs;
-    // LLM Text user smart-input rollback).
-    const m1 = migrateVideoConcatClips(
+    // LLM Text user smart-input rollback). Fal-image model normalization
+    // runs FIRST because `migrateFalImageSmartInputs` reads `config.model`
+    // to compute per-node max refs — feeding it a sanitized model means
+    // legacy `"fal-ai/<id>"` values don't fall back to the default cap.
+    const m0 = migrateFalImageModelNormalization(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
+    const m1 = migrateVideoConcatClips(m0.nodes, m0.edges);
     const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
     const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
     const m4 = migrateFalImageSmartInputs(m3.nodes, m3.edges);

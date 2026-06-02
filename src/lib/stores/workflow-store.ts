@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
 import {
+  migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
@@ -591,10 +592,17 @@ export const useWorkflowStore = create<WorkflowState>()(
         // smart-input rolled back — `user-N` collapses back to a single
         // `user` socket (Text Concat is the right primitive for combining
         // many texts upstream); image stays auto-growing.
-        const v10 = migrateVideoConcatClips(
+        //
+        // v15 (2026-06-02): heal Fal Image `config.model` values that
+        // don't match the runtime registry (e.g. `"fal-ai/<id>"`
+        // endpoint-id strings the assistant occasionally writes by
+        // mistake). Runs first so the per-node max-refs lookup downstream
+        // sees a sanitized model.
+        const v9_5 = migrateFalImageModelNormalization(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
         );
+        const v10 = migrateVideoConcatClips(v9_5.nodes, v9_5.edges);
         const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
         const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
         const v13 = migrateFalImageSmartInputs(v12.nodes, v12.edges);

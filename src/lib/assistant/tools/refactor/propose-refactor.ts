@@ -4,6 +4,7 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
+import { validateConfigPatch } from "../construct/validate-config-patch";
 
 /**
  * propose_refactor — Phase 3.
@@ -106,6 +107,39 @@ export const proposeRefactorTool: AssistantTool = {
     // counterpart on the way in.
     const ws = useWorkflowStore.getState();
     const dedup = dedupCascadeRedundantOps(parsed.data.operations, ws.edges);
+
+    // Per-kind validation of every config patch in the bundle (both
+    // `add_node` initial configs and `update_node_config` patches). For
+    // `add_node` we know the kind directly; for `update_node_config` we
+    // look up the target node in the current workflow state OR — when
+    // the op references a `clientId` declared earlier in the same
+    // bundle — we use that op's `kind`. Rejecting at queue-time gives
+    // the LLM immediate feedback instead of letting a bad patch slip
+    // into the modal where the user would just see the apply fail.
+    const clientIdToKind = new Map<string, string>();
+    for (const op of dedup.operations) {
+      if (op.op === "add_node" && op.clientId) {
+        clientIdToKind.set(op.clientId, op.kind);
+      }
+    }
+    for (const op of dedup.operations) {
+      if (op.op === "add_node" && op.config) {
+        const err = validateConfigPatch(op.kind, op.config);
+        if (err) return { ok: false, error: err };
+      }
+      if (op.op === "update_node_config") {
+        const existing = ws.nodes.find((n) => n.id === op.nodeId);
+        const kind = existing?.kind ?? clientIdToKind.get(op.nodeId);
+        if (!kind) {
+          return {
+            ok: false,
+            error: `update_node_config rejected: nodeId '${op.nodeId}' doesn't match any existing node or earlier add_node clientId in this proposal.`,
+          };
+        }
+        const err = validateConfigPatch(kind, op.config);
+        if (err) return { ok: false, error: err };
+      }
+    }
 
     const id = `refactor_${Date.now().toString(36)}_${Math.random()
       .toString(36)

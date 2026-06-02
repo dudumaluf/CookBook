@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  migrateFalImageModelNormalization,
   migrateFalImageSmartInputs,
   migrateLlmTextCollapseUserPorts,
   migrateLlmTextSmartInputs,
@@ -385,6 +386,68 @@ describe("migrateLlmTextCollapseUserPorts (v14 — single-user rollback)", () =>
     const out = migrateLlmTextCollapseUserPorts(nodes, edges);
     expect(out.edges).toBe(edges);
     expect(out.nodes).toBe(nodes);
+  });
+});
+
+describe("migrateFalImageModelNormalization", () => {
+  const falImage = (
+    id: string,
+    config: Record<string, unknown> = {},
+  ): NodeInstance => ({
+    id,
+    kind: "fal-image",
+    position: { x: 0, y: 0 },
+    config,
+  });
+
+  it("strips the `fal-ai/` prefix when the suffix is a known model", () => {
+    const nodes = [falImage("f1", { model: "fal-ai/nano-banana-2", seed: 7 })];
+    const out = migrateFalImageModelNormalization(nodes, []);
+    expect((out.nodes[0]!.config as { model: string }).model).toBe(
+      "nano-banana-2",
+    );
+    // Non-model fields stay put.
+    expect((out.nodes[0]!.config as { seed: number }).seed).toBe(7);
+  });
+
+  it("falls back to the default model for an unknown value", () => {
+    const nodes = [falImage("f1", { model: "totally-fake-model" })];
+    const out = migrateFalImageModelNormalization(nodes, []);
+    expect((out.nodes[0]!.config as { model: string }).model).toBe(
+      "nano-banana-2",
+    );
+  });
+
+  it("falls back to the default model when `config.model` is missing", () => {
+    const nodes = [falImage("f1", { seed: 1 })];
+    const out = migrateFalImageModelNormalization(nodes, []);
+    expect((out.nodes[0]!.config as { model: string }).model).toBe(
+      "nano-banana-2",
+    );
+  });
+
+  it("is a no-op when every fal-image already has a known model", () => {
+    const nodes = [
+      falImage("f1", { model: "nano-banana-2" }),
+      falImage("f2", { model: "flux-2-pro" }),
+    ];
+    const edges: WorkflowEdge[] = [];
+    const out = migrateFalImageModelNormalization(nodes, edges);
+    expect(out.nodes).toBe(nodes);
+    expect(out.edges).toBe(edges);
+  });
+
+  it("ignores nodes of other kinds", () => {
+    const nodes: NodeInstance[] = [
+      falImage("f1", { model: "fal-ai/nano-banana-2" }),
+      { id: "t", kind: "text", position: { x: 0, y: 0 }, config: {} },
+    ];
+    const out = migrateFalImageModelNormalization(nodes, []);
+    expect((out.nodes[0]!.config as { model: string }).model).toBe(
+      "nano-banana-2",
+    );
+    // The text node passes through unchanged.
+    expect(out.nodes[1]).toBe(nodes[1]);
   });
 });
 

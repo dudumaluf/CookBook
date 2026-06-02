@@ -112,6 +112,37 @@ describe("update_node_config tool", () => {
       .nodes.find((n) => n.id === id)!;
     expect((node.config as { text: string }).text).toBe("new");
   });
+
+  it("rejects an unknown fal-image model with a useful error", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("fal-image", { x: 0, y: 0 }, { model: "nano-banana-2" });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { model: "fal-ai/nano-banana-2" } },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("fal-image");
+    expect(out.error).toContain("nano-banana-2");
+    // State unchanged — bad value didn't slip through.
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
+    expect((node.config as { model: string }).model).toBe("nano-banana-2");
+  });
+
+  it("accepts a valid fal-image model swap", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("fal-image", { x: 0, y: 0 }, { model: "nano-banana-2" });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { model: "flux-2-pro" } },
+      {},
+    )) as { ok: boolean };
+    expect(out.ok).toBe(true);
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
+    expect((node.config as { model: string }).model).toBe("flux-2-pro");
+  });
 });
 
 describe("remove_node tool", () => {

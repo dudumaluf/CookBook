@@ -7,6 +7,7 @@ import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { callFalImage } from "@/lib/fal/call-fal-image";
 import {
+  FAL_IMAGE_DEFAULT_MODEL,
   FAL_IMAGE_MODEL_CAPS,
   FAL_IMAGE_MODEL_LABELS,
   FAL_IMAGE_MODELS,
@@ -15,6 +16,7 @@ import {
   type FalImageModel,
   type FalStyleReference,
   isRandomSeed,
+  normalizeFalImageModel,
   RANDOM_SEED,
   resolveSeed,
 } from "@/lib/fal/types";
@@ -93,7 +95,7 @@ export interface FalImageNodeConfig {
   previewIndex?: number;
 }
 
-const DEFAULT_MODEL: FalImageModel = "nano-banana-2";
+const DEFAULT_MODEL: FalImageModel = FAL_IMAGE_DEFAULT_MODEL;
 
 const IMAGE_PORT_PREFIX = "image-";
 const MIN_IMAGE_PORTS = 2;
@@ -109,9 +111,14 @@ const FIELD_DEFAULTS: Record<string, string> = {
  * single request. Both edit-mode (nano/flux/seedream) and style-mode (krea)
  * funnel through the same smart-input slots — the wrapper decides how to
  * forward them based on the model's caps.
+ *
+ * Accepts a free-form string and normalizes it via {@link normalizeFalImageModel}
+ * so legacy / hand-edited project documents (e.g. `"fal-ai/nano-banana-2"`
+ * — the endpoint id) don't crash the canvas with `Cannot read properties
+ * of undefined`.
  */
-function modelMaxRefs(model: FalImageModel): number {
-  const caps = FAL_IMAGE_MODEL_CAPS[model];
+function modelMaxRefs(model: FalImageModel | string | undefined): number {
+  const caps = FAL_IMAGE_MODEL_CAPS[normalizeFalImageModel(model)];
   return caps.editRefs?.max ?? caps.styleReferences?.max ?? 0;
 }
 
@@ -167,7 +174,10 @@ export function falImageConfiguredAspect(
   return "1 / 1";
 }
 
-function clampImagePorts(model: FalImageModel, requested: number): number {
+function clampImagePorts(
+  model: FalImageModel | string | undefined,
+  requested: number,
+): number {
   const max = modelMaxRefs(model);
   if (max === 0) return 0;
   return Math.min(max, Math.max(MIN_IMAGE_PORTS, requested));
@@ -179,7 +189,7 @@ function clampImagePorts(model: FalImageModel, requested: number): number {
  * UI renders, including the auto-grown trailing socket.
  */
 function falImageInputs(config: FalImageNodeConfig): NodeIO[] {
-  const model = config.model ?? DEFAULT_MODEL;
+  const model = normalizeFalImageModel(config.model);
   const inputs: NodeIO[] = [
     { id: "prompt", label: "prompt", dataType: "text" },
   ];
@@ -252,7 +262,7 @@ function FalImageBody({
     }
     return String(max);
   });
-  const model = config.model ?? DEFAULT_MODEL;
+  const model = normalizeFalImageModel(config.model);
   useEffect(() => {
     const maxConnected = Number(connectedKey);
     const wantPorts = clampImagePorts(
@@ -401,7 +411,7 @@ function ImageSizeControl({
   config: FalImageNodeConfig;
   updateConfig: (partial: Partial<FalImageNodeConfig>) => void;
 }) {
-  const model = config.model ?? DEFAULT_MODEL;
+  const model = normalizeFalImageModel(config.model);
   const caps = FAL_IMAGE_MODEL_CAPS[model];
   const widthId = useId();
   const heightId = useId();
@@ -522,7 +532,7 @@ function FalImageSettings({
   const seedId = useId();
   const strId = useId();
 
-  const model = config.model ?? DEFAULT_MODEL;
+  const model = normalizeFalImageModel(config.model);
   const caps = FAL_IMAGE_MODEL_CAPS[model];
   const maxRefs = modelMaxRefs(model);
 
@@ -706,7 +716,7 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
         "Prompt is empty — wire a Text node into the `prompt` handle.",
       );
     }
-    const model = config.model ?? DEFAULT_MODEL;
+    const model = normalizeFalImageModel(config.model);
     const caps = FAL_IMAGE_MODEL_CAPS[model];
     const maxRefs = modelMaxRefs(model);
 

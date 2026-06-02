@@ -1,4 +1,5 @@
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
+import { normalizeFalImageModel } from "@/lib/fal/types";
 
 /**
  * Forward-port graph-level shapes that span nodes + edges (ADR-0056).
@@ -6,6 +7,9 @@ import type { NodeInstance, WorkflowEdge } from "@/types/node";
  * Pure + registry-free so it can run from BOTH persistence funnels: the
  * workflow-store `persist` migrate (local rehydrate) AND
  * `applyProjectDocument` (cloud / file load, which bypasses persist).
+ *
+ * `@/lib/fal/types` is registry-free too (only zod + tiny constants), so
+ * importing `normalizeFalImageModel` doesn't pull in the node registry.
  */
 
 const MIN_CLIP_PORTS = 2;
@@ -185,6 +189,42 @@ const FAL_IMAGE_MAX_REFS: Record<string, number> = {
 };
 const FAL_IMAGE_DEFAULT_MODEL = "nano-banana-2";
 const FAL_IMAGE_MIN_PORTS = 2;
+
+/**
+ * Heal Fal Image node `config.model` values that don't match the runtime
+ * registry. Two cases in the wild (2026-06-02):
+ *
+ * 1. The assistant occasionally writes the Fal endpoint id (e.g.
+ *    `"fal-ai/nano-banana-2"`, the value used by `image-api.ts`) instead
+ *    of the literal (`"nano-banana-2"`). Pre-fix this would crash the
+ *    canvas with `Cannot read properties of undefined (reading 'editRefs')`
+ *    because `FAL_IMAGE_MODEL_CAPS["fal-ai/nano-banana-2"]` is undefined.
+ * 2. Hand-edited / older project files with a typo or removed model.
+ *
+ * Both cases are repaired here on load by funnelling the value through
+ * {@link normalizeFalImageModel} (strip `fal-ai/` prefix on match, fall
+ * back to the default). The next autosave persists the cleaned value.
+ *
+ * No-op when every fal-image node already has a known model — keeps the
+ * migrator cheap on the happy path.
+ */
+export function migrateFalImageModelNormalization(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  let changed = false;
+  const nextNodes = nodes.map((n) => {
+    if (n.kind !== "fal-image") return n;
+    const cfg = (n.config ?? {}) as { model?: unknown };
+    const raw = cfg.model;
+    const normalized = normalizeFalImageModel(raw);
+    if (raw === normalized) return n;
+    changed = true;
+    return { ...n, config: { ...cfg, model: normalized } };
+  });
+  if (!changed) return { nodes, edges };
+  return { nodes: nextNodes, edges };
+}
 
 /**
  * Fal Image moved from a single `image` (multi) handle to numbered

@@ -307,6 +307,39 @@ describe("fal-image smart-input ports", () => {
     expect(clampImagePorts("flux-2-pro", 50)).toBe(8);
     expect(clampImagePorts("nano-banana-2", 50)).toBe(14);
   });
+
+  it("does not crash when config.model is the Fal endpoint id (legacy bug)", () => {
+    // 2026-06-02 regression guard: a project written with
+    // `config.model = "fal-ai/nano-banana-2"` (the endpoint id —
+    // assistant slip) used to throw `Cannot read properties of
+    // undefined (reading 'editRefs')` here, which propagated through
+    // React Flow's `getInputs(config)` and bricked the canvas. Now
+    // `normalizeFalImageModel` falls back to the default model so the
+    // legacy value just renders as nano-banana-2.
+    //
+    // Cast to bypass FalImageNodeConfig's type contract — the whole
+    // point is to simulate a hand-edited / DB-deserialized value that
+    // doesn't match the runtime registry.
+    const badConfig = {
+      model: "fal-ai/nano-banana-2",
+      imagePorts: 5,
+    } as unknown as Parameters<typeof falImageInputs>[0];
+    expect(() => falImageInputs(badConfig)).not.toThrow();
+    const inputs = falImageInputs(badConfig);
+    expect(inputs.filter((i) => i.dataType === "image")).toHaveLength(5);
+    // Cast to string-typed arg so we exercise the defensive path in
+    // `modelMaxRefs(string | FalImageModel | undefined)`.
+    expect(modelMaxRefs("fal-ai/nano-banana-2" as string)).toBe(14);
+  });
+
+  it("falls back to the default model on any unknown string", () => {
+    const badConfig = {
+      model: "totally-fake-model",
+    } as unknown as Parameters<typeof falImageInputs>[0];
+    expect(() => falImageInputs(badConfig)).not.toThrow();
+    expect(modelMaxRefs("totally-fake-model" as string)).toBe(14);
+    expect(clampImagePorts("totally-fake-model" as string, 50)).toBe(14);
+  });
 });
 
 describe("falImageConfiguredAspect — preview aspect resolution", () => {
