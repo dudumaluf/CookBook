@@ -157,6 +157,17 @@ describe("kindPitfalls", () => {
     expect(joined).toMatch(/auto-grow/);
   });
 
+  it("returns the router pitfall warning the assistant it's a fan-out (not a switch)", () => {
+    const tips = kindPitfalls("router");
+    expect(tips.length).toBeGreaterThan(0);
+    const joined = tips.join(" ");
+    // Pin the most important confusion: assistant might think Router
+    // routes to ONE-of-N outputs based on some condition. It doesn't.
+    expect(joined).toMatch(/fan-out/i);
+    expect(joined).toMatch(/NOT a conditional switch/);
+    expect(joined).toMatch(/SAME value/);
+  });
+
   it("returns an empty array for kinds without recorded pitfalls", () => {
     expect(kindPitfalls("text")).toEqual([]);
     expect(kindPitfalls("totally-fake-kind")).toEqual([]);

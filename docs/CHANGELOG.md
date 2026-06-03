@@ -2,6 +2,33 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-02 — Router node: fan-out organizer (one input → N labeled exits)
+
+Asked for and shipped: a primitive that lets the user wire a single upstream once and then hand off N labeled outgoing edges instead of dragging N edges out of one source handle and getting a tangle.
+
+**Why this is purely a UX node, not an engine change:** the engine already broadcasts a node's output to every downstream edge regardless of which output handle the edge departs from — `run-workflow.ts` keys the per-run outputs map by source node id, not by `(nodeId, sourceHandle)`. So a Router node is conceptually a no-op pass-through; the value-add is purely visual organization (one tidy edge in, N labeled exits out, each going to its own destination instead of a fan of edges leaving the upstream's single socket).
+
+- **`src/components/nodes/node-router.tsx`** — new `defineNode<RouterNodeConfig>` schema:
+  - **Single input**: `{ id: "in", dataType: "any" }`. `any` means any `StandardizedOutput` flows through unchanged (text, image, video, audio, mesh, number, soul-id).
+  - **Auto-growing outputs** (`out-0`, `out-1`, …, `out-N`, `dataType: "any"`, labels `"out 1"` … `"out N"`). Mirrors Text Concat's input-side growth pattern but on the output side — body subscribes to `useWorkflowStore` for outgoing edges from this node, takes the max wired `out-N` index, and sets `config.portCount = max(MIN_PORTS=2, maxConnected + 2)` (cap `MAX_PORTS=8`) so there's always one trailing empty exit ready for the next connection.
+  - **`reactive: true`** — no Run button. Output recomputes whenever `inputs.in` changes.
+  - **`execute({ inputs })`** returns `inputs.in` verbatim. When the input has no incoming edge yet, returns a benign `{ type: "text", value: "" }` default so the node doesn't sit in `error` from the moment it lands; the moment the user wires it, real data flows.
+  - **Body**: tiny "N exits wired · type: text" chip + a one-sentence explainer. The Router doesn't render the value (each downstream does).
+  - **Size contract**: `defaultWidth: 240`, `minWidth: 200`, `maxWidth: 360`, `resizable: "horizontal"`. No vertical knob — body height is content-driven (a single explainer line + a chip).
+
+- **Registered in [`src/lib/engine/all-nodes.ts`](src/lib/engine/all-nodes.ts)** under `category: "compose"` (same group as Text Concat, Image Concat, Video Concat, Compare). Add Node popover and assistant catalog auto-pick it up via the registry.
+
+- **`kindPitfalls("router")` in [`src/lib/engine/node-health.ts`](src/lib/engine/node-health.ts)** — proactive teaching surfaced via `read_node_schema` so the assistant doesn't confabulate about Router's semantics:
+  > "Router is a fan-out organizer, NOT a conditional switch. All output handles ('out 1', 'out 2', …) carry the SAME value — every wired exit gets the same upstream payload. Use it when one upstream feeds many downstreams and you want clean labeled wiring instead of N edges leaving one socket. There's no per-output filter / condition / index — if you need that, use Array + List + cursor instead."
+
+  Plus a second pitfall flagging that `config.portCount` is recomputed from the live edge map — the assistant shouldn't write to it directly.
+
+- **Tests** — [`tests/unit/nodes/node-router.test.ts`](tests/unit/nodes/node-router.test.ts) covers schema basics (kind / category / reactive / single any-input / 2 starting outputs), `getOutputs` growth + clamp (MIN 2, MAX 8), execute pass-through for text / image / array (iterator fan-out propagates through naturally), the empty-input default, and the pure helpers (`portIndex`, `inferTypeChip`). [`tests/unit/engine/node-health.test.ts`](tests/unit/engine/node-health.test.ts) gains a router pitfall assertion pinning the "fan-out NOT a switch" wording so a future refactor that loosens it gets caught.
+
+**How fan-out from iterators flows through:** when the upstream is an iterator (`schema.iterator: true`), the engine fans out at the input — Router's `execute()` runs once per iterator item, the engine assembles per-iteration outputs into one array on the Router's output map, downstream consumers receive that array, and the next single-input downstream fans out again. Router stays unaware of iteration; the existing fan-out machinery in `run-workflow.ts` does the work.
+
+**Use it when:** a single LLM Text output feeds 4 downstream consumers (an Export, a Text Concat, two Higgsfield Image Gens). Drop a Router after the LLM, wire it once, then drag 4 labeled exits into their destinations. The canvas reads as a clean tree instead of a fan of edges leaving one socket.
+
 ## 2026-06-02 — LLM Text node: curated model list + actionable upstream errors
 
 Two paper-cuts surfacing today, same root: the picker had stale OpenRouter ids and the error body was a one-liner with no hint.

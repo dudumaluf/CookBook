@@ -22,6 +22,7 @@ import { listNodeSchema } from "@/components/nodes/node-list";
 import { llmTextNodeSchema } from "@/components/nodes/node-llm-text";
 import { numberNodeSchema } from "@/components/nodes/node-number";
 import { passthroughNodeSchema } from "@/components/nodes/node-passthrough";
+import { routerNodeSchema } from "@/components/nodes/node-router";
 import { videoNodeSchema } from "@/components/nodes/node-video";
 import { soulIdNodeSchema } from "@/components/nodes/node-soul-id";
 import { textConcatNodeSchema } from "@/components/nodes/node-text-concat";
@@ -82,6 +83,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(textIteratorNodeSchema);
   nodeRegistry.register(arrayNodeSchema);
   nodeRegistry.register(listNodeSchema);
+  nodeRegistry.register(routerNodeSchema);
   nodeRegistry.register(exportNodeSchema);
   // Slice 6.6 — composite + passthrough lands. `composite` is the
   // recipe-as-node primitive; `passthrough` is its internal injection

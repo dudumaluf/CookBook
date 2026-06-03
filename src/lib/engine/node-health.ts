@@ -144,6 +144,10 @@ const kindPitfallsMap: Record<string, string[]> = {
     `\`user\` is a single socket — the multi-user smart-input pattern was rolled back. Combine multiple text sources via Text Concat upstream, not via \`config.userPorts\` (which is now ignored).`,
     `\`image-N\` sockets auto-grow as you wire — don't write \`config.imagePorts\` directly.`,
   ],
+  router: [
+    `Router is a fan-out organizer, NOT a conditional switch. All output handles ("out 1", "out 2", ...) carry the SAME value — every wired exit gets the same upstream payload. Use it when one upstream feeds many downstreams and you want clean labeled wiring instead of N edges leaving one socket. There's no per-output filter / condition / index — if you need that, use Array + List + cursor instead.`,
+    `Output sockets auto-grow as you wire (\`out-N\` index goes up). Don't write \`config.portCount\` directly — it's recomputed from the live edge map.`,
+  ],
 };
 
 /**
