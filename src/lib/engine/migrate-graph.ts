@@ -421,3 +421,31 @@ export function migrateLlmTextCollapseUserPorts(
   if (!changed) return { nodes, edges };
   return { nodes: nextNodes, edges: nextEdges };
 }
+
+/**
+ * Run every graph-level migration in the canonical order
+ * `applyProjectDocument` uses (Fal Image model normalization first,
+ * then array delimiter, then the smart-input chain). Callers like the
+ * `repair_workflow` assistant tool invoke this on the live store
+ * to forward-port a graph that drifted mid-session (e.g. a hand-
+ * edited config field, a copy-paste from an old project export).
+ *
+ * Pure: input/output is `{ nodes, edges }` — no store mutation.
+ *
+ * This shares a single source-of-truth migration pipeline with
+ * `applyProjectDocument` so the canvas can never end up in a state
+ * "the project loader would heal but the in-session repair tool
+ * misses" (or vice versa).
+ */
+export function runAllGraphMigrations(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+): { nodes: NodeInstance[]; edges: WorkflowEdge[] } {
+  const m0 = migrateFalImageModelNormalization(nodes, edges);
+  const m0a = migrateArrayLegacyDelimiter(m0.nodes, m0.edges);
+  const m1 = migrateVideoConcatClips(m0a.nodes, m0a.edges);
+  const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
+  const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
+  const m4 = migrateFalImageSmartInputs(m3.nodes, m3.edges);
+  return migrateLlmTextCollapseUserPorts(m4.nodes, m4.edges);
+}

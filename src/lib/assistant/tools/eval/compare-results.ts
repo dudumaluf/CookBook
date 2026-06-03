@@ -8,14 +8,21 @@ import type { AssistantTool } from "../index";
 /**
  * compare_results — Slice 7.4 (ADR-0043).
  *
- * Send 2-8 generated images to a vision LLM along with the user's
- * criteria and ask the model to RANK them. Returns a structured
- * ranking with notes per image — useful when the user says "which
- * of the 4 is best?" or when the assistant wants to pick a winner
- * out of a batch before showing the user.
+ * Send 2-8 generated results (all images, or all text) to an LLM
+ * along with the user's criteria and ask the model to RANK them.
+ * Returns a structured ranking with notes per item — useful when
+ * the user says "which of the 4 is best?" or when the assistant
+ * wants to pick a winner out of a batch before showing the user.
+ *
+ * 2026-06: text-output support added. The original tool rejected
+ * any generation whose `output.type` wasn't `image`. With LLM Text
+ * + Seedance Prompt Director writing batches of variants, the
+ * assistant needs to be able to rank text outputs too. We require
+ * that all N generations share the same output kind (image or
+ * text) — comparing apples to oranges would give a noisy ranking.
  *
  * The compare prompt explicitly asks for distinct, evidence-backed
- * notes per image (not "image 1 is good"). This is the right level
+ * notes per item (not "image 1 is good"). This is the right level
  * of detail for the user to trust the ranking enough to act on it.
  */
 
@@ -27,7 +34,7 @@ const argsSchema = z
   })
   .strict();
 
-const COMPARE_SYSTEM = `You are comparing N images against the user's criteria. Rank them best to worst.
+const COMPARE_SYSTEM = `You are comparing N results (all images, or all text bodies) against the user's criteria. Rank them best to worst.
 
 Respond with ONLY a JSON object matching:
 
@@ -44,7 +51,7 @@ Respond with ONLY a JSON object matching:
   "summary": string                     // 1-2 sentences explaining the ranking shape
 }
 
-No markdown fences. Be specific (cite visible evidence per image).`;
+No markdown fences. Be specific (cite visible evidence per image, or quoted phrases / structural traits per text body).`;
 
 const compareSchema = z.object({
   ranking: z.array(
@@ -66,7 +73,7 @@ function stripFences(s: string): string {
 export const compareResultsTool: AssistantTool = {
   name: "compare_results",
   description:
-    "Rank 2-8 generated images against criteria using a vision LLM. Pass `generationIds[]` and `criteria`. Returns ranking with per-image notes + summary. Use to pick a winner from a batch before showing the user.",
+    "Rank 2-8 generated results (all images OR all text bodies) against criteria using an LLM. Pass `generationIds[]` and `criteria`. Returns ranking with per-item notes + summary. Use to pick a winner from a batch before showing the user. All generations must share the same output kind.",
   parameters: {
     type: "object",
     properties: {
@@ -91,6 +98,8 @@ export const compareResultsTool: AssistantTool = {
       args.generationIds.map((id) => repo.get(id)),
     );
     const urls: string[] = [];
+    const texts: string[] = [];
+    let mode: "image" | "text" | null = null;
     for (let i = 0; i < records.length; i++) {
       const r = records[i];
       if (!r) {
@@ -102,20 +111,52 @@ export const compareResultsTool: AssistantTool = {
       const out = r.output as
         | { type?: string; data?: unknown }
         | null;
-      if (out?.type !== "image" || typeof out.data !== "string") {
+      const t = out?.type;
+      if (t === "image" && typeof out?.data === "string") {
+        if (mode === "text") {
+          return {
+            ok: false,
+            error: `Mixed output kinds: generation ${r.id} is image but earlier generations were text. compare_results requires all generations share one kind.`,
+          };
+        }
+        mode = "image";
+        urls.push(out.data);
+      } else if (t === "text" && typeof out?.data === "string") {
+        if (mode === "image") {
+          return {
+            ok: false,
+            error: `Mixed output kinds: generation ${r.id} is text but earlier generations were image. compare_results requires all generations share one kind.`,
+          };
+        }
+        mode = "text";
+        texts.push(out.data);
+      } else {
         return {
           ok: false,
-          error: `Generation ${r.id} is not an image (type: ${out?.type ?? "unknown"}).`,
+          error: `Generation ${r.id} has unsupported output type: ${t ?? "unknown"} (supported: image, text).`,
         };
       }
-      urls.push(out.data);
     }
+
+    const isTextCompare = mode === "text";
+    const userMessage = isTextCompare
+      ? [
+          `Criteria: ${args.criteria}`,
+          ``,
+          `There are ${texts.length} text candidates, in order:`,
+          ``,
+          ...texts.map(
+            (body, i) =>
+              `--- TEXT ${i + 1} ---\n${body}\n--- END TEXT ${i + 1} ---`,
+          ),
+        ].join("\n")
+      : `Criteria: ${args.criteria}\n\nThere are ${urls.length} images. They are presented in the order they're attached.`;
 
     const response = await callOpenRouter({
       model: args.model ?? "anthropic/claude-haiku-4.5",
       system: COMPARE_SYSTEM,
-      user: `Criteria: ${args.criteria}\n\nThere are ${urls.length} images. They are presented in the order they're attached.`,
-      images: urls,
+      user: userMessage,
+      ...(isTextCompare ? {} : { images: urls }),
       temperature: 0,
       maxTokens: 1200,
       signal: ctx.signal ?? new AbortController().signal,
@@ -131,7 +172,6 @@ export const compareResultsTool: AssistantTool = {
         rawText: response.text,
       };
     }
-    // Map back to generation ids for caller convenience.
     const idByIndex = args.generationIds;
     const enriched = parsed.ranking.map((r) => ({
       ...r,

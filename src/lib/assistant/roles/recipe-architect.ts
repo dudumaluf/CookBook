@@ -63,7 +63,7 @@ well-designed?" walk through:
 
 ### When to suggest tools
 
-- \`save_recipe_from_selection\` — when the user has a selection that
+- \`save_selection_as_recipe\` — when the user has a selection that
   passes the design checklist.
 - \`instantiate_recipe\` — when the user wants to reuse an existing
   recipe in a fresh location.

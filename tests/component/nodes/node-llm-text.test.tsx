@@ -184,6 +184,76 @@ describe("llmTextNodeSchema (Slice 3.2 — real Fal OpenRouter wiring)", () => {
       _resetExecutionForTests();
     });
 
+    /**
+     * 2026-06-03 — Tier 2 regression pin for ADR-driven enriched
+     * upstream errors. `enrichUpstreamMessage` (in
+     * `src/lib/llm/chat-completions.ts`) appends `(model: <id>) — …
+     * usually transient; retry once or pick a different model` style
+     * hints to the raw provider error before the engine flips to
+     * `error`. We pin that the body renders that enriched payload
+     * VERBATIM — every byte the wrapper produced makes it to the
+     * user, no truncation, no reformat.
+     */
+    it("renders the full enriched upstream error verbatim (model id + status hint)", () => {
+      const Body = llmTextNodeSchema.Body;
+      const enriched =
+        "fal-openai-compat HTTP 500 (model: anthropic/claude-sonnet-4.6) — usually transient; retry once or pick a different model";
+      const next = new Map(useExecutionStore.getState().records);
+      next.set("llm_err_enriched", {
+        status: "error",
+        error: enriched,
+      });
+      useExecutionStore.setState({ records: next });
+
+      render(
+        withTooltip(
+          <Body
+            nodeId="llm_err_enriched"
+            config={{ model: "anthropic/claude-sonnet-4.6" }}
+            updateConfig={vi.fn()}
+            selected={false}
+          />,
+        ),
+      );
+      const alert = screen.getByRole("alert");
+      // Verbatim — the full enriched string lands in the alert exactly
+      // as the wrapper produced it. No reformatting / truncation /
+      // i18n. The user can copy-paste this into a bug report.
+      expect(alert).toHaveTextContent(enriched);
+      expect(alert).toHaveTextContent(
+        "model: anthropic/claude-sonnet-4.6",
+      );
+      expect(alert).toHaveTextContent("usually transient");
+      _resetExecutionForTests();
+    });
+
+    it("renders a 404 enriched error (model not routable hint) verbatim", () => {
+      const Body = llmTextNodeSchema.Body;
+      const enriched =
+        "fal-openai-compat HTTP 404 (model: anthropic/claude-opus-4-1) — model not routable; the id may be retired (Anthropic moved to dot-notation 4.6 in April 2026)";
+      const next = new Map(useExecutionStore.getState().records);
+      next.set("llm_err_404", {
+        status: "error",
+        error: enriched,
+      });
+      useExecutionStore.setState({ records: next });
+
+      render(
+        withTooltip(
+          <Body
+            nodeId="llm_err_404"
+            config={{ model: "anthropic/claude-opus-4-1" }}
+            updateConfig={vi.fn()}
+            selected={false}
+          />,
+        ),
+      );
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent(enriched);
+      expect(alert).toHaveTextContent(/dot-notation 4.6/);
+      _resetExecutionForTests();
+    });
+
     it("renders the placeholder when there's no execution record yet (idle)", () => {
       _resetExecutionForTests();
       const Body = llmTextNodeSchema.Body;

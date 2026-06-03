@@ -12,9 +12,11 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
  * multi-turn context — not just the latest user prompt.
  *
  * Cap: last 20 messages. After that, the assistant can call
- * `read_recent_chat({ before, limit })` (Slice 7.3 read tool) for
- * deeper history. Older context will eventually be summarized via
- * RAG (Slice 7.6).
+ * `read_recent_chat({ before, limit, query })` (read tool — see
+ * `src/lib/assistant/tools/read/read-recent-chat.ts`) to page
+ * deeper into the session log. Cross-session memory still goes
+ * through the RAG path (find_similar_generations,
+ * read_user_preferences).
  *
  * Notes:
  *   - We DO NOT include the conversation in the SYSTEM prompt — it

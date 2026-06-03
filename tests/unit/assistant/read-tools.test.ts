@@ -58,11 +58,12 @@ beforeEach(() => {
 });
 
 describe("tool registry", () => {
-  it("ships the 5 read tools (Slice 7.2)", () => {
+  it("ships the 6 read tools (Slice 7.2 + 2026-06 read_node_schema)", () => {
     const defs = getToolDefinitions();
     const names = defs.map((d) => d.function.name);
     expect(names).toContain("read_canvas");
     expect(names).toContain("read_node_state");
+    expect(names).toContain("read_node_schema");
     expect(names).toContain("read_library");
     expect(names).toContain("read_gallery");
     expect(names).toContain("read_recipe");
@@ -209,6 +210,66 @@ describe("read_library tool", () => {
     )) as { assets: { kind: string }[] };
     expect(out.assets).toHaveLength(1);
     expect(out.assets[0]?.kind).toBe("image");
+  });
+
+  it("filters by video and audio (multimodal arc — 2026-06)", async () => {
+    useAssetStore.setState({
+      assets: [
+        {
+          id: "vid-1",
+          kind: "video",
+          name: "clip",
+          tags: [],
+          scope: "project",
+          createdAt: 0,
+          updatedAt: 0,
+          source: {
+            type: "url",
+            url: "https://x.test/x.mp4",
+          },
+          durationMs: 4000,
+          width: 1920,
+          height: 1080,
+        } as never,
+        {
+          id: "aud-1",
+          kind: "audio",
+          name: "song",
+          tags: [],
+          scope: "global",
+          createdAt: 0,
+          updatedAt: 0,
+          source: { type: "url", url: "https://x.test/x.mp3" },
+          durationMs: 30000,
+        } as never,
+      ],
+      selectedAssetIds: [],
+      selectionAnchorId: null,
+    });
+    const tool = getTool("read_library")!;
+    const onlyVideos = (await tool.execute(
+      { kind: "video", includeUrls: true },
+      {},
+    )) as {
+      assets: {
+        id: string;
+        kind: string;
+        durationMs?: number;
+        width?: number;
+        height?: number;
+      }[];
+    };
+    expect(onlyVideos.assets).toHaveLength(1);
+    expect(onlyVideos.assets[0]?.kind).toBe("video");
+    expect(onlyVideos.assets[0]?.durationMs).toBe(4000);
+    expect(onlyVideos.assets[0]?.width).toBe(1920);
+
+    const onlyAudio = (await tool.execute(
+      { kind: "audio" },
+      {},
+    )) as { assets: { id: string }[] };
+    expect(onlyAudio.assets).toHaveLength(1);
+    expect(onlyAudio.assets[0]?.id).toBe("aud-1");
   });
 });
 

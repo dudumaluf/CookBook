@@ -58,17 +58,17 @@ beforeEach(() => {
 });
 
 describe("evaluate_result tool", () => {
-  it("rejects when neither generationId nor imageUrl is provided", async () => {
+  it("rejects when neither generationId nor imageUrl nor text is provided", async () => {
     const tool = getTool("evaluate_result")!;
     await expect(
       tool.execute({ criteria: "good photo" }, {}),
     ).rejects.toBeInstanceOf(Error);
   });
 
-  it("returns ok:false when generation isn't an image", async () => {
+  it("returns ok:false when generation has unsupported output type", async () => {
     generationRepoMocks.get.mockResolvedValue({
       id: "g1",
-      output: { type: "text", data: "blah" },
+      output: { type: "video", data: "blob://x" },
     });
     const tool = getTool("evaluate_result")!;
     const out = (await tool.execute(
@@ -76,7 +76,7 @@ describe("evaluate_result tool", () => {
       {},
     )) as { ok: boolean; error?: string };
     expect(out.ok).toBe(false);
-    expect(out.error).toMatch(/not an image/i);
+    expect(out.error).toMatch(/not a supported output type/i);
   });
 
   it("returns parsed eval JSON when LLM responds correctly", async () => {
@@ -106,6 +106,56 @@ describe("evaluate_result tool", () => {
     expect(out.ok).toBe(true);
     expect(out.score).toBe(0.8);
     expect(out.reasoning).toBe("matches the criteria");
+  });
+
+  it("evaluates a text generation: no images attached, body inlined", async () => {
+    generationRepoMocks.get.mockResolvedValue({
+      id: "g1",
+      output: { type: "text", data: "She turned the page slowly." },
+    });
+    callOpenRouterMock.mockResolvedValue({
+      text: JSON.stringify({
+        score: 0.7,
+        strengths: ["evocative pacing"],
+        weaknesses: [],
+        reasoning: "matches noir mood",
+      }),
+      costUsd: 0.0005,
+    });
+    const tool = getTool("evaluate_result")!;
+    const out = (await tool.execute(
+      { generationId: "g1", criteria: "noir mood" },
+      { signal: new AbortController().signal },
+    )) as { ok: boolean; score?: number };
+    expect(out.ok).toBe(true);
+    expect(out.score).toBe(0.7);
+    const callArgs = callOpenRouterMock.mock.calls[0]![0] as {
+      images?: unknown;
+      user: string;
+    };
+    expect(callArgs.images).toBeUndefined();
+    expect(callArgs.user).toContain("She turned the page slowly.");
+    expect(callArgs.user).toContain("Criteria: noir mood");
+  });
+
+  it("evaluates a raw text snippet without a generation id", async () => {
+    callOpenRouterMock.mockResolvedValue({
+      text: JSON.stringify({
+        score: 0.5,
+        strengths: [],
+        weaknesses: ["too generic"],
+        reasoning: "fails the bar",
+      }),
+      costUsd: 0,
+    });
+    const tool = getTool("evaluate_result")!;
+    const out = (await tool.execute(
+      { text: "lorem ipsum", criteria: "noir mood" },
+      { signal: new AbortController().signal },
+    )) as { ok: boolean; score?: number };
+    expect(out.ok).toBe(true);
+    expect(out.score).toBe(0.5);
+    expect(generationRepoMocks.get).not.toHaveBeenCalled();
   });
 
   it("returns ok:false when LLM emits invalid JSON", async () => {
@@ -158,6 +208,55 @@ describe("compare_results tool", () => {
       generationId: "g2",
     });
     expect(out.summary).toBe("image 2 wins");
+  });
+
+  it("ranks text-only generations: no images, bodies inlined", async () => {
+    generationRepoMocks.get.mockImplementation(async (id: string) => ({
+      id,
+      output: { type: "text", data: `body ${id}` },
+    }));
+    callOpenRouterMock.mockResolvedValue({
+      text: JSON.stringify({
+        ranking: [
+          { index: 1, rank: 1, score: 0.8, notes: "tighter" },
+          { index: 2, rank: 2, score: 0.6, notes: "wordier" },
+        ],
+        summary: "text 1 wins",
+      }),
+      costUsd: 0.001,
+    });
+    const tool = getTool("compare_results")!;
+    const out = (await tool.execute(
+      { generationIds: ["g1", "g2"], criteria: "concise" },
+      { signal: new AbortController().signal },
+    )) as { ok: boolean; ranking?: { generationId: string }[] };
+    expect(out.ok).toBe(true);
+    expect(out.ranking?.[0]?.generationId).toBe("g1");
+    const args = callOpenRouterMock.mock.calls[0]![0] as {
+      images?: unknown;
+      user: string;
+    };
+    expect(args.images).toBeUndefined();
+    expect(args.user).toContain("--- TEXT 1 ---");
+    expect(args.user).toContain("body g1");
+    expect(args.user).toContain("body g2");
+  });
+
+  it("rejects mixed image+text batches", async () => {
+    generationRepoMocks.get.mockImplementation(async (id: string) => ({
+      id,
+      output:
+        id === "g1"
+          ? { type: "image", data: "https://x.test/g1.png" }
+          : { type: "text", data: "wordy" },
+    }));
+    const tool = getTool("compare_results")!;
+    const out = (await tool.execute(
+      { generationIds: ["g1", "g2"], criteria: "x" },
+      { signal: new AbortController().signal },
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/mixed output kinds/i);
   });
 });
 

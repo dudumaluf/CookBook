@@ -142,6 +142,82 @@ describe("runReasoner — Phase D1 role overlay", () => {
 });
 
 /**
+ * Regression guard for the "phantom tool name in role overlay" bug
+ * class (2026-06-03). Three role overlays used to reference
+ * `save_recipe_from_selection`, a tool that never existed — the actual
+ * tool is `save_selection_as_recipe`. The LLM faithfully called the
+ * fake name and silently failed (no error UI; the user just thought
+ * "save as recipe" didn't work in those roles).
+ *
+ * The fix is in the overlay text itself; this test pins it forever.
+ * For each role overlay, every backtick-quoted snake_case identifier
+ * must be either:
+ *   1. The name of a registered assistant tool, OR
+ *   2. In `NON_TOOL_SNAKECASE_ALLOWLIST` (config keys, table names,
+ *      input handle names, etc. that legitimately appear in prose).
+ *
+ * Keep the allowlist tight. New entries should be obvious-on-sight
+ * non-tool identifiers; if a token is ambiguous, prefer to register
+ * the tool or rephrase the overlay.
+ */
+describe("role overlays — every backticked snake_case identifier resolves", async () => {
+  const { ROLES } = await import("@/lib/assistant/roles");
+  const { _internalToolList } = await import("@/lib/assistant/tools");
+
+  const registeredToolNames = new Set(
+    _internalToolList().map((t) => t.name),
+  );
+
+  /**
+   * Snake_case identifiers that legitimately appear in role overlay
+   * prose without being tool names. Anything else must be a tool.
+   */
+  const NON_TOOL_SNAKECASE_ALLOWLIST = new Set<string>([
+    // Recipe-architect: input handle name examples in prose.
+    "reference_image",
+    // Recipe-architect: Supabase table name reference.
+    "cookbook_recipes",
+  ]);
+
+  /**
+   * Strict snake_case: lowercase letters / digits with at least one
+   * underscore separator. Single-word lowercase tokens like `briefing`
+   * are excluded (they're never tool names, and snake_case requires
+   * the underscore by convention).
+   */
+  const SNAKECASE_RE = /`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g;
+
+  for (const role of ROLES) {
+    it(`${role.id}: every snake_case backtick is a registered tool or allowlisted`, () => {
+      const overlay = role.systemPromptOverlay;
+      const matches = new Set<string>();
+      for (const m of overlay.matchAll(SNAKECASE_RE)) {
+        matches.add(m[1]!);
+      }
+      const unresolved: string[] = [];
+      for (const ident of matches) {
+        if (registeredToolNames.has(ident)) continue;
+        if (NON_TOOL_SNAKECASE_ALLOWLIST.has(ident)) continue;
+        unresolved.push(ident);
+      }
+      // Concrete error message lists offenders so a future role-edit
+      // typo is debugged in seconds, not by reading the haystack.
+      expect(
+        unresolved,
+        `Role overlay "${role.id}" references snake_case identifier(s) that are neither registered tools nor allowlisted: [${unresolved.join(", ")}]. Either fix the typo, register the tool, or add the identifier to NON_TOOL_SNAKECASE_ALLOWLIST in this test.`,
+      ).toEqual([]);
+    });
+  }
+
+  it("the allowlist itself doesn't accidentally shadow a registered tool name", () => {
+    const conflicts = [...NON_TOOL_SNAKECASE_ALLOWLIST].filter((id) =>
+      registeredToolNames.has(id),
+    );
+    expect(conflicts, `Allowlist entries collide with registered tools: ${conflicts.join(", ")}`).toEqual([]);
+  });
+});
+
+/**
  * Pull the system text from the outgoing call args, regardless of
  * whether it landed as a string (caching-incapable path) or as
  * cache_control content blocks (Anthropic / Gemini path). Same

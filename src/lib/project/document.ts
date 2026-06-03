@@ -18,15 +18,7 @@
  * playbook as the workflow-store's local migrations.
  */
 
-import {
-  migrateArrayLegacyDelimiter,
-  migrateFalImageModelNormalization,
-  migrateFalImageSmartInputs,
-  migrateLlmTextCollapseUserPorts,
-  migrateLlmTextSmartInputs,
-  migrateSeedanceRefHandles,
-  migrateVideoConcatClips,
-} from "@/lib/engine/migrate-graph";
+import { runAllGraphMigrations } from "@/lib/engine/migrate-graph";
 import { PROJECT_STATE_VERSION } from "@/lib/repositories/project-repository";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import {
@@ -254,28 +246,13 @@ export function applyProjectDocument(
   }
   if (doc.workflow) {
     // Cloud/file loads bypass the workflow-store persist migrate, so run the
-    // graph-level forward-ports here too (ADR-0056: Video Concat clips →
-    // clip-N; ADR-0058: Seedance reference handles; LLM Text smart inputs;
-    // LLM Text user smart-input rollback). Fal-image model normalization
-    // runs FIRST because `migrateFalImageSmartInputs` reads `config.model`
-    // to compute per-node max refs — feeding it a sanitized model means
-    // legacy `"fal-ai/<id>"` values don't fall back to the default cap.
-    const m0 = migrateFalImageModelNormalization(
+    // graph-level forward-ports here too. Pipeline lives in
+    // `runAllGraphMigrations` so the in-session `repair_workflow` assistant
+    // tool runs the SAME chain — load and repair can't drift.
+    const migrated = runAllGraphMigrations(
       (doc.workflow.nodes ?? []) as NodeInstance[],
       (doc.workflow.edges ?? []) as WorkflowEdge[],
     );
-    // Array delimiter healing: the assistant has been observed writing
-    // `separator` instead of `delimiter` on Array node configs. Phantom
-    // field — the runtime ignores it. This pass copies `separator` into
-    // `delimiter` (when delimiter is the default ",") and drops the
-    // phantom field. Order-independent w/ the other migrations since
-    // they don't read array config.
-    const m0a = migrateArrayLegacyDelimiter(m0.nodes, m0.edges);
-    const m1 = migrateVideoConcatClips(m0a.nodes, m0a.edges);
-    const m2 = migrateSeedanceRefHandles(m1.nodes, m1.edges);
-    const m3 = migrateLlmTextSmartInputs(m2.nodes, m2.edges);
-    const m4 = migrateFalImageSmartInputs(m3.nodes, m3.edges);
-    const migrated = migrateLlmTextCollapseUserPorts(m4.nodes, m4.edges);
     useWorkflowStore.setState({
       nodes: migrated.nodes as never,
       edges: migrated.edges as never,

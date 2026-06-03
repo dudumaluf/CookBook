@@ -14,22 +14,11 @@ This file is the **single starting point** for any new agent / chat session. If 
 
 ## Where we are right now
 
-- **Milestone**: M0a (*Soul Image Burst* + assistant agent) **CLOSED**; M1 multimodal media arc shipped; **M1 projects arc** shipped (current). Greenfield rewrite of an earlier Prism prototype — see `docs/PRISM-REUSE-LOG.md`.
-- **Last shipped**: **M1 projects arc** (2026-05-29) — surgical "run only this node", project-as-document (per-node results/history persist + rehydrate on reload), multi-project with per-project URLs (`/projetos/[id]`) + race-guarded ProjectSession, and file portability (`.cookbook` JSON + self-contained `.zip`). ADR-0049 + ADR-0050. Snapshot: [`docs/STATE-AFTER-M1-projects-arc.md`](./docs/STATE-AFTER-M1-projects-arc.md). Tests at 947.
+- **Milestone**: M0a (*Soul Image Burst* + assistant agent) **CLOSED**; M1 multimodal media arc shipped; **M1 projects arc** shipped; **Cookbook Library Phases A→E** shipped; **Mega-capable assistant arc** (Tier 0 → Tier 3) shipped (current). Greenfield rewrite of an earlier Prism prototype — see `docs/PRISM-REUSE-LOG.md`.
+- **Last shipped**: **Mega-capable assistant arc** (2026-06-03) — closed every gap between what the app supports and what the assistant can invoke. **51 tools across 11 categories** in the registry: chat memory (`read_recent_chat`, beyond the 20-msg cap), library mutations (`create_image_asset_from_url`, `remove_asset`, `create_group`, `rename_group`, `add_to_group`, `remove_from_group`), recipe lifecycle (`delete_recipe`, `fork_recipe`, `list_recipe_versions`, `update_composite_to_latest`), execution hygiene (`clear_run`, `clear_cache`, `set_history_cursor`), graph chrome (`rename_node`, `resize_node`) + on-demand `repair_workflow`. `evaluate_result` and `compare_results` now accept text outputs (LLM Text + Seedance Prompt Director batches). `read_library` enum includes `video` + `audio`. The `runAllGraphMigrations` pipeline is now centralized in `engine/migrate-graph.ts` and is reused by both project loading AND the on-demand `repair_workflow` tool. New verifiable-precision coverage: integration test for the `propose_refactor` → `apply_pending_refactor` chain (the bug that bit us last week, now pinned), component test that LLM Text node bodies render enriched error messages verbatim, dedicated tests for `reactive-runner` (debounce / coalesce / falling-edge / abort) and `assistant-store` (history / abort / live events / pendingRefactor lifecycle). Snapshot: [`docs/STATE-AFTER-cookbook-library.md`](./docs/STATE-AFTER-cookbook-library.md). Tests **1.766 → 1.886+**.
 - **Live in production**: [`https://artificial-cookbook.vercel.app`](https://artificial-cookbook.vercel.app) — Vercel auto-deploys every commit to `main`. Stack: Vercel + Supabase Storage + Postgres + pgvector + Higgsfield Cloud + Fal OpenRouter (OpenAI Chat Completions shape). See **ADR-0033** (production-first development) for the deployment convention.
-- **Last shipped slice**: **package M0a Slice 7 — assistant agent autônomo** (2026-05-28). Six sub-slices ship together as the assistant arc:
-  - **7.1** — Provider abstraction + `POST /api/llm/chat-completions` (OpenAI shape) + `messages[]` / `tools[]` / `tool_choice` / `stream` types + knowledge bus + tool registry shells. `docs/ASSISTANT.md` v1. ADR-0041.
-  - **7.2** — 8 knowledge dimensions (identity, vocabulary, node catalog, recipes, canvas, library, gallery, conversation) threaded into system prompt + `messages[]`. 5 read tools registered.
-  - **7.3** — `runReasoner` bounded loop (20 turns / $0.50 cap), 12 new tools (7 construct + 3 recipe + 3 run + 2 reasoning helpers), `<LiveTrace>` UI rendering tool calls + spinners + ✓/⚠ icons + narrations + ask_user pause. ADR-0042.
-  - **7.4** — `evaluate_result`, `compare_results`, `regenerate` (vision LLM via claude-haiku). `GenerationRepository.get` added. ADR-0043.
-  - **7.5** — `propose_node_schema` (advisory drafts of new NodeSchemas) + `detect_recipe_pattern` (DFS canvas for repeated chains). ADR-0044.
-  - **7.6** — pgvector + tsvector + `cookbook_user_preferences` table (JSONB blob). `find_similar_generations({ scope: "owner" })` for cross-project search + `read_user_preferences` + `update_user_preferences`. ADR-0045.
-
-  Tests **775 → 841** (+66). All four checks (npm test, tsc, lint, docs:check) green at every commit. Six separate commits on `main`, all deployed + smoke 200. **25 tools total** in the registry across 8 categories. The assistant has agency, judgment, capability awareness, and memory — all bounded by a per-message $0.50 cap.
-
-  Snapshot: [`docs/STATE-AFTER-M0a-slice7.md`](./docs/STATE-AFTER-M0a-slice7.md).
-- **Then: M1 multimodal media arc** (Slices A-F, 2026-05-28). Built the media layer + the performance-video pipeline: Seedance video node, the **Continuity Builder** (sequential iterator that loops Seedance with continuity), Video Concat, Fal image nodes (Nano Banana 2 / Flux 2 / Seedream), Video/Audio input nodes, mediabunny WebCodecs ops, and the seeded **Performance Video** recipe. Tests 841 → 905. ADR-0046 → ADR-0048. Snapshot + **test plan**: [`docs/STATE-AFTER-M1-media-arc.md`](./docs/STATE-AFTER-M1-media-arc.md).
-- **Next up**: **the test phase** — real-spend verification of the media arc (Fal endpoint IDs, Seedance shape, WebCodecs ops, the continuity loop) per the T1-T5 plan in the M1 snapshot. Everything is built + mock-tested but NOT yet run against the live services / a real browser. Then: **Soul ID training** (deferred M0b spike — Higgsfield training API + webhooks).
+- **Earlier shipments**: **Cookbook Library** (Phase A → E, 2026-05-31) — recipe library with personal forks, version history, prompt overrides, role overlays + role picker (Recipe Architect / Storyboard Director / Timeline Director), 3 specialist recipes (incl. animation via Seedance v2). The 4 system recipes (Performance Video, Seedance Prompt Director, etc.) are loaded at startup. **Router node** (1 → N labeled fan-out) + **Video Pad node** (extends short clips to LLM minimum duration). **M1 projects arc** (2026-05-29) — surgical "run only this node", project-as-document (per-node results/history persist + rehydrate on reload), multi-project with per-project URLs (`/projetos/[id]`) + race-guarded ProjectSession, file portability (`.cookbook` JSON + self-contained `.zip`). **M1 multimodal media arc** (2026-05-28) — Seedance video, Continuity Builder, Video Concat, Fal image nodes (Nano Banana 2 / Flux 2 / Seedream), Audio/Video inputs, mediabunny WebCodecs ops, seeded Performance Video recipe. **M0a Slice 7** (2026-05-28) — assistant arc: provider abstraction, knowledge bus, reasoner loop with $0.50 cap, 25→ tools, refactor preview, propose_refactor → apply_pending_refactor gate, evaluate/compare/regenerate, propose_node_schema, detect_recipe_pattern, pgvector + tsvector + cookbook_user_preferences + cross-project find_similar_generations.
+- **Next up**: real-spend smoke pass on M1 media (Fal endpoint IDs, Seedance shape, WebCodecs ops, continuity loop) per the T1-T5 plan in [`docs/STATE-AFTER-M1-media-arc.md`](./docs/STATE-AFTER-M1-media-arc.md), then **Soul ID training** (deferred M0b spike — Higgsfield training API + webhooks). Tier 4 polish (pre-flight `check_workflow_health` automatic on every mutation tool, cost-aware narration, gallery curation) is documented in `/Users/morpheus/.cursor/plans/mega-capable_assistant_b1ef8245.plan.md`.
 
 ## Read these first (in order; ~10 min total)
 
@@ -49,7 +38,7 @@ This file is the **single starting point** for any new agent / chat session. If 
 ```bash
 npm install              # once
 npm run dev              # Next 16 + Turbopack on :3000
-npm test                 # Vitest, all 586 tests, ~5 s
+npm test                 # Vitest, all 1.886+ tests, ~20 s
 npm run test:watch       # while iterating
 npx tsc --noEmit         # type check (no `npm run` wrapper for this one)
 npm run lint             # ESLint
@@ -87,7 +76,7 @@ All LLM calls route through Fal OpenRouter (no separate Anthropic / OpenAI keys)
 
 Other rules:
 
-- **Test-as-you-go.** Every new module gets its co-located test file before / alongside (not after). The 290-test suite is the safety net the user trusts — don't grow it lazily.
+- **Test-as-you-go.** Every new module gets its co-located test file before / alongside (not after). The 1.886-test suite is the safety net the user trusts — don't grow it lazily.
 - **Schema-first.** New nodes declare a `NodeSchema` (`src/types/node.ts`) and let the chrome handle the rest (settings slot → ADR-0027; size slot → ADR-0028). Don't hand-roll node chrome.
 - **Strict separation: workflow vs execution.** `workflow-store` knows the graph; `execution-store` knows the run. Never cross-contaminate. ADR-0019 explains why.
 - **Server secrets never bundled.** Anything touching `FAL_KEY` / `HIGGSFIELD_API_KEY` lives behind `import "server-only"` in `src/app/api/*` or `src/lib/*` server-side modules. The `tests/shims/server-only.ts` empty-module alias lets Vitest import them without choking.
@@ -96,14 +85,14 @@ Other rules:
 
 ## Next task (starting fresh)
 
-Open [`docs/STATE-AFTER-M0a-slice5-6.md`](./docs/STATE-AFTER-M0a-slice5-6.md), then [`docs/ROADMAP.md`](./docs/ROADMAP.md) → "**Slice 5.5+ — fallout from ADR-0031**" (5.6 marked SHIPPED; 5.6f / 5.7 / 5.8 / 5.9 are the queue). Suggested first actions:
+Open [`docs/STATE-AFTER-cookbook-library.md`](./docs/STATE-AFTER-cookbook-library.md) for the current ground truth (every assistant tool, every recipe, every store wired in). Then [`docs/ROADMAP.md`](./docs/ROADMAP.md) for the queue. Top of the queue right now:
 
-1. Plan **Slice 5.6f — library polish** (small, focused). Right-click context menu on `AssetCard` (group / ungroup / detach / add to canvas / train Soul ID — last one parked behind a flag if the endpoint isn't ready). Multi-delete: Backspace while selected library cards exist drops them via `removeAsset` / `removeGroup` per kind; respects the same input-aware guard as the canvas (no delete while focus is in an editor). Double-click rename on `image` and `soul-id` cards (mirrors the group card's rename pattern from Slice 5.6b). User flagged these mid-5.6c; promised to ship them as a sub-slice before Slice 5.7.
-2. After 5.6f: **Slice 5.7 — `Array` / `List` / `Number` nodes**. Three pure / reactive nodes with **zero engine changes**. `Array` splits a string by a configured delimiter (`{ splitOn: string }`). `List` is a 1-of-N selector with an optional `cursor` input handle (lets a Number node drive the selection remotely). `Number` emits a number with the same `fixed | increment | decrement | random | range` mode vocabulary as iterators. Body chrome can reuse `<IteratorCursor />` from Slice 5.5b.
-3. Decide whether `Array` should also accept a regex (vs literal-string) splitter on day one or wait for the assistant DSL to ask for it. Default lean: literal string only in 5.6, regex parked.
+1. **Real-spend smoke pass on M1 media** — Fal endpoint IDs, Seedance shape, WebCodecs ops, the continuity loop. Everything is built + mock-tested but NOT yet run against the live services / a real browser. Plan in [`docs/STATE-AFTER-M1-media-arc.md`](./docs/STATE-AFTER-M1-media-arc.md) under T1-T5.
+2. **Soul ID training** (deferred M0b spike) — Higgsfield training API + webhooks. Currently the user can only import already-trained characters from their Higgsfield account.
+3. **Tier 4 polish for the assistant** — pre-flight `check_workflow_health` automatic before every mutation tool (anti-confabulation by construction, not by instruction); cost-aware narration (tools that spend money auto-narrate the estimate before executing); gallery curation (`pin_generation`, `delete_generation`, `set_title`). Plan: `/Users/morpheus/.cursor/plans/mega-capable_assistant_b1ef8245.plan.md`.
 4. Mirror the existing node + integration test rhythm: `tests/component/...` per UI surface, `tests/integration/...` per recipe-shaped flow, `scripts/smoke-*.ts` for any persistence migration sanity check.
 
-Confirm with the user before kicking off any of these — Slice 5.6f's right-click menu in particular has design choices (item order, keyboard shortcuts inside the menu, how it interacts with the existing card actions like the trash button on hover) that shouldn't be assumed.
+Confirm with the user before kicking off any of these.
 
 ## File layout cheat-sheet
 

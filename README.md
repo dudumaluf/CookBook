@@ -6,7 +6,7 @@ A node-graph platform for personal photo & video generation.
 
 ## Status
 
-**Day 1 — Foundation**. Shell, theme, docs, and test stack are in place. The canvas is intentionally empty. The actual recipes start landing in **M0a — Soul Image Burst**.
+**Production hardening on Vercel (artificial-cookbook.vercel.app).** M0a (Soul Image Burst + assistant agent) and M1 (multimodal media + projects) are shipped. **Cookbook Library Phases A → E** are live: browse / fork / save-as-new-version / version history / personal prompt overrides / orchestration. The assistant now has 51 registered tools across 11 categories, role overlays, knowledge bus, refactor proposals, workflow health checks, and chat memory beyond the 20-message cap.
 
 For the full picture, read [`docs/INDEX.md`](./docs/INDEX.md) — every architectural decision and milestone is documented there.
 

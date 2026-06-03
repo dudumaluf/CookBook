@@ -68,6 +68,6 @@ characters consistent — always include them.
 If the user's intent is "make me images / videos of this scene",
 chain the storyboard panels into Seedance / Flux nodes via a
 recipe (one Text node per panel, fanning into the model node).
-Suggest \`save_recipe_from_selection\` after the user is happy
+Suggest \`save_selection_as_recipe\` after the user is happy
 with the structure so the next scene reuses the scaffold.`,
 };

@@ -234,6 +234,212 @@ describe("runReasoner", () => {
     expect(result.aborted).toBe(true);
   });
 
+  describe("Tier 4 — pre-flight check_workflow_health on structural mutations", () => {
+    it("attaches __preflightHealth to a write tool's result when the live graph has errors", async () => {
+      // Seed a workflow with a known error condition: an edge whose
+      // `targetHandle` doesn't exist on the target node. Health
+      // engine will flag this as `dangling_target_handle`.
+      const txt = useWorkflowStore.getState().addNode(
+        "text",
+        { x: 0, y: 0 },
+        { text: "hi" },
+      );
+      const llm = useWorkflowStore.getState().addNode(
+        "llm-text",
+        { x: 200, y: 0 },
+        { model: "anthropic/claude-haiku-4.5" },
+      );
+      // Inject a corrupt edge directly via setState — the regular
+      // addEdge path would refuse this. We need the corrupt state so
+      // the health check fires.
+      useWorkflowStore.setState((s) => ({
+        ...s,
+        edges: [
+          ...s.edges,
+          {
+            id: "bad-edge",
+            source: txt,
+            target: llm,
+            sourceHandle: "value",
+            targetHandle: "ghost-handle",
+          },
+        ],
+      }));
+
+      // Turn 1: LLM emits a structural mutation (`add_node`).
+      // Pre-flight should attach the receipt to the tool result.
+      // Turn 2: LLM finishes.
+      callOpenRouterMock
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            {
+              id: "w-1",
+              type: "function",
+              function: {
+                name: "add_node",
+                arguments: JSON.stringify({
+                  kind: "text",
+                  position: { x: 100, y: 100 },
+                  config: { text: "another" },
+                }),
+              },
+            },
+          ],
+          costUsd: 0.001,
+        })
+        .mockResolvedValueOnce({
+          text: "Added.",
+          costUsd: 0.001,
+          finishReason: "stop",
+        });
+      const result = await runReasoner({
+        userMessage: "add another text node",
+        ownerId: "u1",
+        projectId: "p1",
+        signal: new AbortController().signal,
+      });
+      const toolResults = result.events.filter(
+        (e) => e.type === "tool_result",
+      );
+      expect(toolResults).toHaveLength(1);
+      const r = toolResults[0] as {
+        result: { __preflightHealth?: { errorCount: number } };
+      };
+      expect(r.result.__preflightHealth).toBeDefined();
+      expect(r.result.__preflightHealth?.errorCount).toBeGreaterThan(0);
+    });
+
+    it("does NOT attach __preflightHealth when the graph is clean", async () => {
+      callOpenRouterMock
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            {
+              id: "w-2",
+              type: "function",
+              function: {
+                name: "add_node",
+                arguments: JSON.stringify({
+                  kind: "text",
+                  position: { x: 0, y: 0 },
+                  config: { text: "x" },
+                }),
+              },
+            },
+          ],
+          costUsd: 0.001,
+        })
+        .mockResolvedValueOnce({
+          text: "Added.",
+          costUsd: 0.001,
+          finishReason: "stop",
+        });
+      const result = await runReasoner({
+        userMessage: "add a text node",
+        ownerId: "u1",
+        projectId: "p1",
+        signal: new AbortController().signal,
+      });
+      const toolResults = result.events.filter(
+        (e) => e.type === "tool_result",
+      );
+      expect(toolResults).toHaveLength(1);
+      const r = toolResults[0] as {
+        result: { __preflightHealth?: unknown };
+      };
+      expect(r.result.__preflightHealth).toBeUndefined();
+    });
+  });
+
+  describe("Tier 4 — cost-aware narration", () => {
+    it("emits a narration event before a non-free tool fires", async () => {
+      callOpenRouterMock
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            {
+              id: "c-1",
+              type: "function",
+              function: {
+                name: "find_similar_generations",
+                arguments: JSON.stringify({
+                  query: "foo",
+                  scope: "owner",
+                }),
+              },
+            },
+          ],
+          costUsd: 0.001,
+        })
+        .mockResolvedValueOnce({
+          text: "ok",
+          costUsd: 0,
+          finishReason: "stop",
+        });
+      const result = await runReasoner({
+        userMessage: "find similar",
+        ownerId: "u1",
+        projectId: "p1",
+        signal: new AbortController().signal,
+      });
+      // Narration must fire BEFORE the tool_result event.
+      const narrations = result.events.filter(
+        (e) => e.type === "narration",
+      );
+      const indexOf = (predicate: (e: typeof result.events[number]) => boolean) =>
+        result.events.findIndex(predicate);
+      const firstNarrationIdx = indexOf((e) => e.type === "narration");
+      const firstToolResultIdx = indexOf((e) => e.type === "tool_result");
+      expect(firstNarrationIdx).toBeGreaterThanOrEqual(0);
+      expect(firstToolResultIdx).toBeGreaterThan(firstNarrationIdx);
+      expect(
+        (narrations[0] as { content: string }).content,
+      ).toContain("find_similar_generations");
+    });
+
+    it("does NOT emit a cost narration for free tools", async () => {
+      callOpenRouterMock
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            {
+              id: "f-1",
+              type: "function",
+              function: {
+                name: "add_node",
+                arguments: JSON.stringify({
+                  kind: "text",
+                  position: { x: 0, y: 0 },
+                  config: { text: "x" },
+                }),
+              },
+            },
+          ],
+          costUsd: 0,
+        })
+        .mockResolvedValueOnce({
+          text: "ok",
+          costUsd: 0,
+          finishReason: "stop",
+        });
+      const result = await runReasoner({
+        userMessage: "add",
+        ownerId: "u1",
+        projectId: "p1",
+        signal: new AbortController().signal,
+      });
+      // No narration of the cost-class kind. (Other narrations from
+      // speculative pre-fetch shouldn't fire either since the user
+      // message doesn't match the analyze intent regex and the
+      // selection is empty.)
+      const narrations = result.events.filter(
+        (e) => e.type === "narration",
+      );
+      expect(narrations).toHaveLength(0);
+    });
+  });
+
   describe("model selection (Slice 0)", () => {
     it("forwards an explicit model id to the LLM call", async () => {
       callOpenRouterMock.mockResolvedValue({

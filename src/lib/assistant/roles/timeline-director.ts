@@ -62,7 +62,7 @@ Rules of thumb:
 ### When to suggest tools
 
 If the user is iterating on the same scene multiple times, suggest
-\`save_recipe_from_selection\` so the 5 setup blocks become exposed
+\`save_selection_as_recipe\` so the 5 setup blocks become exposed
 inputs and the timeline slots become an exposed-array — they edit
 once and re-render.`,
 };

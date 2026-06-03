@@ -2,6 +2,9 @@ import type { ToolDefinition } from "@/lib/llm/types";
 
 import { detectRecipePatternTool } from "./capability/detect-recipe-pattern";
 import { proposeNodeSchemaTool } from "./capability/propose-node-schema";
+import { renameNodeTool } from "./chrome/rename-node";
+import { repairWorkflowTool } from "./chrome/repair-workflow";
+import { resizeNodeTool } from "./chrome/resize-node";
 import { findSimilarGenerationsTool } from "./rag/find-similar-generations";
 import { readUserPreferencesTool } from "./rag/read-user-preferences";
 import { updateUserPreferencesTool } from "./rag/update-user-preferences";
@@ -15,6 +18,18 @@ import { updateNodeConfigTool } from "./construct/update-node-config";
 import { compareResultsTool } from "./eval/compare-results";
 import { evaluateResultTool } from "./eval/evaluate-result";
 import { regenerateTool } from "./eval/regenerate";
+import { clearCacheTool } from "./exec/clear-cache";
+import { clearRunTool } from "./exec/clear-run";
+import { setHistoryCursorTool } from "./exec/set-history-cursor";
+import { deleteGenerationTool } from "./gallery/delete-generation";
+import { pinGenerationTool } from "./gallery/pin-generation";
+import { setGenerationTitleTool } from "./gallery/set-generation-title";
+import { addToGroupTool } from "./library/add-to-group";
+import { createGroupTool } from "./library/create-group";
+import { createImageAssetFromUrlTool } from "./library/create-image-asset-from-url";
+import { removeAssetTool } from "./library/remove-asset";
+import { removeFromGroupTool } from "./library/remove-from-group";
+import { renameGroupTool } from "./library/rename-group";
 import { analyzeSelectionSubgraphTool } from "./read/analyze-selection-subgraph";
 import { checkWorkflowHealthTool } from "./read/check-workflow-health";
 import { readCanvasTool } from "./read/read-canvas";
@@ -22,16 +37,21 @@ import { readGalleryTool } from "./read/read-gallery";
 import { readLibraryTool } from "./read/read-library";
 import { readNodeSchemaTool } from "./read/read-node-schema";
 import { readNodeStateTool } from "./read/read-node-state";
+import { readRecentChatTool } from "./read/read-recent-chat";
 import { readRecipeTool } from "./read/read-recipe";
 import { askUserTool } from "./reasoning/ask-user";
 import { narrateTool } from "./reasoning/narrate";
 import { proposePromptEditTool } from "./reasoning/propose-prompt-edit";
 import { readMySystemPromptTool } from "./reasoning/read-my-system-prompt";
 import { switchRoleTool } from "./reasoning/switch-role";
+import { deleteRecipeTool } from "./recipe/delete-recipe";
+import { forkRecipeTool } from "./recipe/fork-recipe";
 import { instantiateRecipeTool } from "./recipe/instantiate-recipe";
+import { listRecipeVersionsTool } from "./recipe/list-recipe-versions";
 import { saveSelectionAsRecipeTool } from "./recipe/save-selection-as-recipe";
 import { suggestRecipesForIntentTool } from "./recipe/suggest-recipes-for-intent";
 import { unpackCompositeTool } from "./recipe/unpack-composite";
+import { updateCompositeToLatestTool } from "./recipe/update-composite-to-latest";
 import { applyPendingRefactorTool } from "./refactor/apply-pending-refactor";
 import { proposeRefactorTool } from "./refactor/propose-refactor";
 import { cancelRunTool } from "./run/cancel-run";
@@ -82,6 +102,40 @@ export interface AssistantTool {
 }
 
 /**
+ * Per-tool cost class used by the reasoner to narrate spend before
+ * dispatch (Tier 4 — 2026-06-03). Defaults to "free" when omitted.
+ *
+ *   - "free"      — pure local compute / DB reads.
+ *   - "small"     — bounded LLM call (e.g. evaluate_result, ~$0.001).
+ *   - "medium"    — multi-image LLM call (compare_results, ~$0.005).
+ *   - "large"     — generation runs that hit Fal/Higgsfield (image:
+ *                   ~$0.01-$0.05; video: ~$0.10-$0.50). Cost depends
+ *                   on the workflow shape so we narrate the class
+ *                   rather than a precise number.
+ *
+ * Lives as a sibling map (not on the AssistantTool interface) so we
+ * don't have to touch every tool file. Tools missing from this map
+ * are treated as free.
+ */
+export type ToolCostClass = "free" | "small" | "medium" | "large";
+
+const TOOL_COST_CLASS: Readonly<Record<string, ToolCostClass>> = {
+  evaluate_result: "small",
+  compare_results: "medium",
+  regenerate: "large",
+  run_workflow: "large",
+  run_from: "large",
+  find_similar_generations: "small",
+  propose_node_schema: "small",
+  detect_recipe_pattern: "small",
+  suggest_recipes_for_intent: "small",
+};
+
+export function getToolCostClass(name: string): ToolCostClass {
+  return TOOL_COST_CLASS[name] ?? "free";
+}
+
+/**
  * Context every tool receives. Slice 7.1 ships the empty shape; 7.3+
  * adds the real fields (ownerId, projectId, signal, narrate fn, etc.)
  * once the reasoner runtime exists.
@@ -100,6 +154,8 @@ const tools: AssistantTool[] = [
   readLibraryTool,
   readGalleryTool,
   readRecipeTool,
+  // 2026-06-03 — Tier 1.1: chat memory beyond the 20-msg cap.
+  readRecentChatTool,
   // Phase 2 — analysis. Selection-scoped subgraph + heuristics.
   analyzeSelectionSubgraphTool,
   // 2026-06-02 — anti-confabulation health receipt.
@@ -116,6 +172,11 @@ const tools: AssistantTool[] = [
   instantiateRecipeTool,
   saveSelectionAsRecipeTool,
   unpackCompositeTool,
+  // 2026-06-03 — Tier 1.3: recipe lifecycle.
+  deleteRecipeTool,
+  forkRecipeTool,
+  listRecipeVersionsTool,
+  updateCompositeToLatestTool,
   // Phase E — recipe-driven orchestration.
   suggestRecipesForIntentTool,
   // Phase 3 — preview-gated bulk refactor.
@@ -144,6 +205,25 @@ const tools: AssistantTool[] = [
   findSimilarGenerationsTool,
   readUserPreferencesTool,
   updateUserPreferencesTool,
+  // 2026-06-03 — Tier 1.2: asset library mutations.
+  createImageAssetFromUrlTool,
+  removeAssetTool,
+  createGroupTool,
+  renameGroupTool,
+  addToGroupTool,
+  removeFromGroupTool,
+  // 2026-06-03 — Tier 1.4: execution hygiene.
+  clearRunTool,
+  clearCacheTool,
+  setHistoryCursorTool,
+  // 2026-06-03 — Tier 1.5: graph chrome + repair.
+  renameNodeTool,
+  resizeNodeTool,
+  repairWorkflowTool,
+  // 2026-06-03 — Tier 4: gallery curation.
+  pinGenerationTool,
+  deleteGenerationTool,
+  setGenerationTitleTool,
 ];
 
 /**

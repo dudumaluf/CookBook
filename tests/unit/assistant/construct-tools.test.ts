@@ -233,3 +233,35 @@ describe("select_nodes tool", () => {
     expect(useWorkflowStore.getState().selectedNodeIds).toEqual([id1, id2]);
   });
 });
+
+describe("remove_edge tool", () => {
+  it("removes an existing edge by id", async () => {
+    const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    const id2 = useWorkflowStore.getState().addNode("text", { x: 200, y: 0 });
+    useWorkflowStore.getState().addEdge({
+      source: id1,
+      sourceHandle: "out",
+      target: id2,
+      targetHandle: "out",
+    });
+    const edgeId = useWorkflowStore.getState().edges[0]!.id;
+    const tool = getTool("remove_edge")!;
+    const out = (await tool.execute({ edgeId }, {})) as { ok: boolean };
+    expect(out.ok).toBe(true);
+    expect(useWorkflowStore.getState().edges).toHaveLength(0);
+  });
+
+  it("idempotent — missing edgeId is a no-op (no throw)", async () => {
+    const tool = getTool("remove_edge")!;
+    const out = (await tool.execute(
+      { edgeId: "edge-that-does-not-exist" },
+      {},
+    )) as { ok: boolean };
+    expect(out.ok).toBe(true);
+  });
+
+  it("rejects empty edgeId via Zod (catches unwrapped LLM args)", async () => {
+    const tool = getTool("remove_edge")!;
+    await expect(tool.execute({ edgeId: "" }, {})).rejects.toThrow();
+  });
+});

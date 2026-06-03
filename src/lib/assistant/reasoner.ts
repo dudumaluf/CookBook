@@ -22,7 +22,8 @@ import {
   buildReferencesNote,
   type PromptReference,
 } from "./prompt-references";
-import { getTool, getToolDefinitions } from "./tools";
+import { computeWorkflowHealth } from "./tools/read/check-workflow-health";
+import { getTool, getToolCostClass, getToolDefinitions } from "./tools";
 import type { AssistantTool, ToolExecutionContext } from "./tools";
 
 /**
@@ -548,12 +549,60 @@ export async function runReasoner(
 
     // Mutating group → sequential. add_edge needs the id from a
     // preceding add_node; the assistant relies on this ordering.
+    //
+    // Tier 4 (2026-06-03) — pre-flight `check_workflow_health`.
+    //
+    // Anti-confabulation by construction. When the assistant is about
+    // to mutate the graph (add_*/remove_*/update_*/move_*/instantiate_*
+    // /unpack_composite/apply_pending_refactor), capture a snapshot of
+    // the live workflow's health BEFORE the first write fires. If
+    // there are errors (dangling handles, unwired required inputs,
+    // unknown kinds…), attach the receipt to that write tool's result
+    // as `__preflightHealth`. The LLM sees concrete data on the next
+    // turn and can self-correct rather than confabulate.
+    //
+    // Costs O(nodes + edges) once per turn, only when there's at
+    // least one structural write, only when health is non-clean.
+    let preflightAttached = false;
     for (const call of writeCallsToDispatch) {
       const tool = getTool(call.function.name);
+      const isStructural = isStructuralMutationName(call.function.name);
+      // Cost-aware narration — emit BEFORE the dispatch so the user
+      // knows the assistant is about to spend money.
+      const costClass = getToolCostClass(call.function.name);
+      if (costClass !== "free") {
+        emit({
+          type: "narration",
+          content: costNarration(call.function.name, costClass),
+        });
+      }
       const startedAt = performance.now();
-      const result = !tool
+      let result = !tool
         ? { ok: false, error: `Unknown tool: ${call.function.name}` }
         : await dispatchTool(tool, call, ctx);
+      // Pre-flight only on the FIRST structural write of the turn.
+      if (
+        isStructural &&
+        !preflightAttached &&
+        result &&
+        typeof result === "object"
+      ) {
+        const live = useWorkflowStore.getState();
+        const health = computeWorkflowHealth(live.nodes, live.edges);
+        if (health.issues.some((i) => i.severity === "error")) {
+          result = {
+            ...(result as Record<string, unknown>),
+            __preflightHealth: {
+              note: "Pre-flight check_workflow_health found errors at the moment this tool fired. Surface them and decide whether to keep going or repair first.",
+              issueCount: health.issues.length,
+              errorCount: health.issues.filter((i) => i.severity === "error")
+                .length,
+              issues: health.issues,
+            },
+          };
+        }
+        preflightAttached = true;
+      }
       const durationMs = Math.round(performance.now() - startedAt);
       outcomes.set(call.id, { result, durationMs });
     }
@@ -799,4 +848,55 @@ function speculativePrefetchEnabled(): boolean {
     : undefined);
   if (raw === undefined) return true;
   return raw.toLowerCase() !== "false";
+}
+
+/**
+ * Tier 4 (2026-06-03).
+ *
+ * "Structural mutations" are the writes whose correctness depends on
+ * the current state of the graph (a `dangling_target_handle` becomes
+ * an actual rendering bug, an `unwired_required_input` becomes an
+ * actual runtime throw). These are the ones we pre-flight against
+ * the live workflow health.
+ *
+ * Lifecycle / orchestration tools (run_workflow, regenerate, …) and
+ * pure observation tools are NOT in this list — pre-flighting them
+ * doesn't add information.
+ */
+const STRUCTURAL_MUTATION_NAMES = new Set<string>([
+  "add_node",
+  "add_edge",
+  "remove_node",
+  "remove_edge",
+  "update_node_config",
+  "move_node",
+  "instantiate_recipe",
+  "unpack_composite",
+  "apply_pending_refactor",
+  "rename_node",
+  "resize_node",
+]);
+
+function isStructuralMutationName(name: string): boolean {
+  return STRUCTURAL_MUTATION_NAMES.has(name);
+}
+
+/**
+ * Tier 4 (2026-06-03) — cost-aware narration.
+ *
+ * The reasoner emits a narration event before any non-free tool fires
+ * so the trace UI can show a small "about to spend money" hint and
+ * the user can hit cancel if they don't actually want the spend.
+ */
+function costNarration(toolName: string, costClass: string): string {
+  switch (costClass) {
+    case "small":
+      return `Calling \`${toolName}\` — small spend (~$0.001 LLM call).`;
+    case "medium":
+      return `Calling \`${toolName}\` — medium spend (~$0.005 multi-image LLM call).`;
+    case "large":
+      return `Calling \`${toolName}\` — large spend. Generation runs hit Fal/Higgsfield (image: ~$0.01-$0.05; video: ~$0.10-$0.50 depending on the workflow).`;
+    default:
+      return `Calling \`${toolName}\`.`;
+  }
 }
