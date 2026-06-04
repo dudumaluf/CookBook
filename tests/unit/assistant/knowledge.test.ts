@@ -220,6 +220,48 @@ describe("buildCanvasKnowledge", () => {
     expect(dupeLine).toMatch(/· SELECTED/);
     expect(origLine).not.toMatch(/· SELECTED/);
   });
+
+  it("prioritizes selected + neighbors when truncating a >50-node canvas (ADR-0069 F13)", () => {
+    // 60 padding nodes + 1 selected (n_selected) + 1 neighbor (n_neighbor)
+    // wired in. Old behavior would slice [0..49] and drop the selected node.
+    const padding = Array.from({ length: 60 }).map((_, i) => ({
+      id: `pad_${i}`,
+      kind: "text",
+      position: { x: 10 * i, y: 0 },
+      config: { text: `pad ${i}` },
+    }));
+    const selectedNode = {
+      id: "n_selected",
+      kind: "text",
+      position: { x: 0, y: 1000 },
+      config: { text: "selected" },
+    };
+    const neighborNode = {
+      id: "n_neighbor",
+      kind: "llmText",
+      position: { x: 200, y: 1000 },
+      config: { model: "claude" },
+    };
+    useWorkflowStore.setState({
+      nodes: [...padding, selectedNode, neighborNode],
+      edges: [
+        {
+          id: "e_keep",
+          source: "n_selected",
+          sourceHandle: "out",
+          target: "n_neighbor",
+          targetHandle: "user",
+        },
+      ],
+      selectedNodeIds: ["n_selected"],
+      selectedEdgeIds: [],
+    });
+    const md = buildCanvasKnowledge();
+    expect(md).toContain("n_selected");
+    expect(md).toContain("· SELECTED");
+    expect(md).toContain("n_neighbor");
+    expect(md).toMatch(/selection-prioritized/);
+  });
 });
 
 describe("buildFocusedNodeKnowledge (ADR-0069 F1)", () => {

@@ -628,6 +628,74 @@ export async function runReasoner(
       });
     }
 
+    // ADR-0069 F9 — refresh dynamic context after mutations.
+    //
+    // The system prompt's `## CANVAS` / `## FOCUSED NODE` /
+    // `## SELECTION` / `## PENDING REFACTOR` / `## GALLERY` /
+    // `## LIBRARY` / `## RECIPES` blocks are baked into the cached
+    // static+dynamic prompt at submit time. Without a refresh, turns
+    // 2..N within the same submit operate on a SNAPSHOT of state from
+    // turn 1 — so an LLM that just `add_node`-d 3 nodes can't see them
+    // in the canvas summary on turn 2. The model has to either:
+    //   - Re-call `read_canvas` (round-trip cost), or
+    //   - Trust receipts from the prior turn (which it does inconsistently
+    //     because the receipt is not a system block).
+    //
+    // The fix is structural: after any structural mutation in this turn,
+    // rebuild the dynamic suffix and patch it into the first system
+    // message in-place. The static prefix (identity / vocabulary / node
+    // catalog / tool catalog / reasoner instructions / role overlay) is
+    // INVARIANT within a submit — we leave its content + cache_control
+    // marker untouched so the provider still serves the bulk of the
+    // prompt from cache.
+    //
+    // Skip the refresh on read-only turns to save the rebuild cost
+    // (recipes + gallery hit DB).
+    const turnHadStructuralMutation = writeCallsToDispatch.some((c) =>
+      isStructuralMutationName(c.function.name),
+    );
+    if (turnHadStructuralMutation) {
+      try {
+        const refreshed = await buildKnowledgeBundle({
+          ownerId,
+          projectId,
+          // Conversation messages are already threaded into `messages`
+          // — re-pulling them on the refresh would duplicate the user
+          // turn we already pushed.
+          skip: { conversation: true },
+        });
+        const head = messages[0];
+        if (head?.role === "system") {
+          if (Array.isArray(head.content)) {
+            // Caching path — keep the static block (with cache_control)
+            // intact; rewrite or append the dynamic block at the tail.
+            const blocks = [...head.content];
+            // First block is always the static prefix (we built it that
+            // way ~30 lines up). Everything after is dynamic.
+            const staticBlock = blocks[0];
+            const next: ChatContentBlock[] = [staticBlock as ChatContentBlock];
+            if (refreshed.dynamicSuffix.length > 0) {
+              next.push({ type: "text", text: refreshed.dynamicSuffix });
+            }
+            messages[0] = { role: "system", content: next };
+          } else if (typeof head.content === "string") {
+            // Plain-string path — rebuild the legacy concat.
+            messages[0] = {
+              role: "system",
+              content: refreshed.dynamicSuffix
+                ? `${staticPrefix}\n\n${refreshed.dynamicSuffix}`
+                : staticPrefix,
+            };
+          }
+        }
+      } catch (err) {
+        // Fail open: if the rebuild errors (e.g. DB blip), keep the
+        // stale dynamic suffix rather than crashing the whole turn.
+        // The LLM can still call `read_canvas` to ground itself.
+        console.warn("[reasoner] dynamic suffix refresh failed:", err);
+      }
+    }
+
     // Cost cap check at end of turn (after all tool dispatches).
     if (totalCostUsd >= MAX_COST_USD) {
       emit({
@@ -786,27 +854,78 @@ function summarizeReadResult(toolName: string, originalJson: string): string {
   }
   const obj = parsed as Record<string, unknown>;
 
+  // ADR-0069 F12 — preserve essential IDs across compaction so the
+  // LLM doesn't lose the node ids it needs to reference within the
+  // same submit. Counts alone aren't enough: when turn 6 has to patch
+  // a node it discovered on turn 2, the bare "5 nodes" placeholder
+  // forces a redundant `read_canvas` round-trip.
+
   if (Array.isArray(obj.nodes) && Array.isArray(obj.edges)) {
-    const nodes = obj.nodes as unknown[];
+    const nodes = obj.nodes as Array<{ id?: string; kind?: string }>;
     const edges = obj.edges as unknown[];
-    return `[summarized] ${toolName} returned ${nodes.length} nodes, ${edges.length} edges`;
+    const idsLine = formatIdList(
+      nodes.map((n) => n.id).filter((id): id is string => typeof id === "string"),
+    );
+    const selected = Array.isArray(obj.selectedNodeIds)
+      ? (obj.selectedNodeIds as unknown[])
+          .filter((s): s is string => typeof s === "string")
+          .slice(0, 8)
+      : [];
+    const selPart = selected.length > 0 ? `, selection=[${selected.join(", ")}]` : "";
+    return `[summarized] ${toolName}: ${nodes.length} nodes${idsLine}, ${edges.length} edges${selPart}`;
   }
   if (Array.isArray(obj.assets)) {
-    return `[summarized] ${toolName} returned ${(obj.assets as unknown[]).length} assets`;
+    const assets = obj.assets as Array<{ id?: string }>;
+    const idsLine = formatIdList(
+      assets
+        .map((a) => a.id)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    return `[summarized] ${toolName}: ${assets.length} assets${idsLine}`;
   }
   if (Array.isArray(obj.generations)) {
-    return `[summarized] ${toolName} returned ${(obj.generations as unknown[]).length} generations`;
+    const gens = obj.generations as Array<{ id?: string }>;
+    const idsLine = formatIdList(
+      gens.map((g) => g.id).filter((id): id is string => typeof id === "string"),
+    );
+    return `[summarized] ${toolName}: ${gens.length} generations${idsLine}`;
+  }
+  // analyze_selection_subgraph + read_node_state shape — single node /
+  // subgraph slice. Keep the ids so the LLM can refer to specific
+  // entries by id even after compaction.
+  if (typeof obj.node === "object" && obj.node && (obj.node as { id?: unknown }).id) {
+    const n = obj.node as { id: string; kind?: string; status?: string };
+    return `[summarized] ${toolName}: id=${n.id}${n.kind ? `, kind=${n.kind}` : ""}${n.status ? `, status=${n.status}` : ""}`;
+  }
+  if (Array.isArray(obj.slice) || Array.isArray(obj.topologicalOrder)) {
+    const order = (obj.topologicalOrder as unknown[] | undefined) ?? [];
+    const ids = order.filter((s): s is string => typeof s === "string");
+    return `[summarized] ${toolName}: subgraph order=${formatIdList(ids).trim() || "[]"}`;
   }
   if (typeof obj.count === "number") {
-    return `[summarized] ${toolName} returned count=${obj.count}`;
+    return `[summarized] ${toolName}: count=${obj.count}`;
   }
   if (obj.found === false) {
-    return `[summarized] ${toolName} returned found:false`;
+    return `[summarized] ${toolName}: found:false`;
   }
   if (obj.found === true && typeof obj.kind === "string") {
-    return `[summarized] ${toolName} returned schema for kind=${obj.kind}`;
+    return `[summarized] ${toolName}: schema for kind=${obj.kind}`;
   }
   return `[summarized] ${toolName} result elided to save tokens`;
+}
+
+/**
+ * Format a list of ids as ` [a, b, c]` (max 12 entries; overflow ellipsized).
+ * Returns an empty string for an empty list, so the caller can interpolate
+ * directly without a separator dance.
+ */
+function formatIdList(ids: string[]): string {
+  if (ids.length === 0) return "";
+  const MAX = 12;
+  if (ids.length <= MAX) {
+    return ` [${ids.join(", ")}]`;
+  }
+  return ` [${ids.slice(0, MAX).join(", ")}, +${ids.length - MAX}]`;
 }
 
 /**

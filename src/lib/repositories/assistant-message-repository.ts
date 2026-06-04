@@ -1,7 +1,13 @@
-import type { AssistantPlan } from "@/lib/assistant/types";
+import type {
+  AssistantPlan,
+  PersistedQuestion,
+  PersistedToolReceipt,
+} from "@/lib/assistant/types";
 
 /**
- * AssistantMessageRepository — Slice 6.8 (ADR-0040).
+ * AssistantMessageRepository — Slice 6.8 (ADR-0040), extended by
+ * ADR-0069 F10 (persisted tool receipts) + F11 (persisted ask_user
+ * questions).
  *
  * Persists every chat message (user / assistant) to
  * `cookbook_assistant_messages` so the conversation survives reload
@@ -22,6 +28,10 @@ export interface AssistantMessageRecord {
   plan: AssistantPlan | null;
   error: string | null;
   costUsd: number | null;
+  /** ADR-0069 F10. Null for user messages and pre-migration rows. */
+  toolReceipts: PersistedToolReceipt[] | null;
+  /** ADR-0069 F11. Set when this assistant turn paused on ask_user. */
+  question: PersistedQuestion | null;
   createdAt: string;
 }
 
@@ -33,6 +43,8 @@ export interface InsertAssistantMessageInput {
   plan?: AssistantPlan | null;
   error?: string | null;
   costUsd?: number | null;
+  toolReceipts?: PersistedToolReceipt[] | null;
+  question?: PersistedQuestion | null;
 }
 
 export interface AssistantMessageRepository {

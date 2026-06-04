@@ -166,13 +166,53 @@ export function PromptBar() {
           ? "(aborted)"
           : result.cappedAt
             ? `(stopped — ${result.cappedAt} cap reached)`
-            : "(no response)";
+            : result.paused
+              ? "(awaiting your reply)"
+              : "(no response)";
+      // ADR-0069 F10 — capture every tool result emitted during this
+      // turn so the chat history retains the full audit trail. Without
+      // this, the assistant's prose is the only artifact that survives
+      // reload — tool calls + receipts (the structured proof of what
+      // changed) are dropped on `resetLive()` next submit.
+      const toolReceipts = result.events
+        .filter(
+          (e): e is Extract<typeof e, { type: "tool_result" }> =>
+            e.type === "tool_result",
+        )
+        .map((e) => ({
+          tool: e.toolName,
+          callId: e.callId,
+          durationMs: e.durationMs,
+          result: e.result,
+        }));
+      // ADR-0069 F11 — capture the ask_user question so the persisted
+      // assistant message tells future renderings (and future LLM
+      // turns reading history) what was asked. Without this, the turn
+      // persists as "(no response)" with no record of the question
+      // and the LLM can't connect the user's reply to its own ask_user.
+      const lastAskUser = [...result.events]
+        .reverse()
+        .find(
+          (e): e is Extract<typeof e, { type: "ask_user" }> =>
+            e.type === "ask_user",
+        );
+      const question =
+        result.paused && lastAskUser
+          ? {
+              question: lastAskUser.question,
+              ...(lastAskUser.options
+                ? { options: lastAskUser.options }
+                : {}),
+            }
+          : undefined;
       const assistantMsg = {
         role: "assistant" as const,
         content: finalContent,
         ...(result.totalCostUsd > 0
           ? { costUsd: result.totalCostUsd }
           : {}),
+        ...(toolReceipts.length > 0 ? { toolReceipts } : {}),
+        ...(question ? { question } : {}),
         timestamp: Date.now(),
       };
       appendMessage(assistantMsg);

@@ -1,9 +1,11 @@
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import type { NodeInstance, WorkflowEdge } from "@/types/node";
 
 /**
- * Knowledge dimension: live canvas state — Slice 7.2 (ADR-0041).
+ * Knowledge dimension: live canvas state — Slice 7.2 (ADR-0041),
+ * extended by ADR-0069 F2 + F13.
  *
  * Compact textual representation of what's on the user's canvas
  * RIGHT NOW. The assistant uses it to ground decisions in real
@@ -13,7 +15,7 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
  * Format:
  *   Canvas (N nodes, M edges, K selected):
  *     n1 [Text "label" @ (40, 40)] config: { text: "..." } status: idle
- *     n2 [LLM Text @ (480, 120)]   model: claude-sonnet-4.5  status: done · $0.003
+ *     n2 [LLM Text @ (480, 120)]   model: claude-sonnet-4.5  status: done · $0.003 · SELECTED
  *   Edges:
  *     n1.out → n2.user
  *     ...
@@ -21,7 +23,13 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
  *
  * Truncation:
  *   - Long text values truncated to 80 chars + "..."
- *   - Long node lists (>50) summarized as "(50 of 87, oldest first)".
+ *   - Long node lists (>50) selectively pick by relevance:
+ *     selected > 1-hop neighbors of selected > recently created.
+ *     Keeps the LLM from losing the deictic anchor on a 60-node
+ *     project, which the old "first 50" rule did.
+ *   - Inline `· SELECTED` markers (ADR-0069 F2) so the LLM doesn't
+ *     have to cross-reference the trailing `Selected:` line to know
+ *     which row the user pointed at.
  *
  * Reads live from Zustand stores — no hooks, plain getState() so the
  * function is sync + reusable from any context.
@@ -63,6 +71,63 @@ function formatStatus(
   return `status: ${status}${cost}`;
 }
 
+/**
+ * ADR-0069 F13 — selection-aware node prioritization for truncation.
+ *
+ * Old behavior on >50 nodes: `nodes.slice(0, 50)` → oldest by creation.
+ * Failure mode: a 60-node project where the user just selected node #57
+ * loses the selected node from the canvas summary AND the FOCUSED NODE
+ * block won't help in cases where the LLM scans the canvas first.
+ *
+ * New behavior: compute a relevance rank per node, take the top N by
+ * rank, then re-sort to original creation order for stable rendering.
+ *
+ * Rank tiers (lower = higher priority):
+ *   0  selected nodes — always visible
+ *   1  1-hop neighbors of selected nodes (upstream + downstream)
+ *   2  most recently created (newest)
+ *
+ * Within tier 2 we score by (-creationIndex) so newer nodes win when
+ * the budget is tight. The output preserves the canvas's own creation
+ * order so the LLM doesn't have to mentally re-sort.
+ */
+function pickVisibleNodes(
+  nodes: NodeInstance[],
+  edges: WorkflowEdge[],
+  selectedIds: string[],
+  limit: number,
+): NodeInstance[] {
+  if (nodes.length <= limit) return nodes;
+
+  const selectedSet = new Set(selectedIds);
+  const neighborSet = new Set<string>();
+  for (const e of edges) {
+    if (selectedSet.has(e.source) && !selectedSet.has(e.target)) {
+      neighborSet.add(e.target);
+    }
+    if (selectedSet.has(e.target) && !selectedSet.has(e.source)) {
+      neighborSet.add(e.source);
+    }
+  }
+
+  const ranked = nodes.map((node, idx) => {
+    let tier = 2;
+    if (selectedSet.has(node.id)) tier = 0;
+    else if (neighborSet.has(node.id)) tier = 1;
+    return { node, idx, tier };
+  });
+
+  ranked.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    // Within the same tier, newer nodes win (higher idx).
+    return b.idx - a.idx;
+  });
+
+  const chosen = new Set(ranked.slice(0, limit).map((r) => r.node.id));
+  // Render in original creation order for legibility.
+  return nodes.filter((n) => chosen.has(n.id));
+}
+
 export function buildCanvasKnowledge(): string {
   const { nodes, edges, selectedNodeIds } = useWorkflowStore.getState();
   const records = useExecutionStore.getState().records;
@@ -71,17 +136,21 @@ export function buildCanvasKnowledge(): string {
     return `## CANVAS\n_(empty — no nodes)_`;
   }
 
+  const visibleNodes = pickVisibleNodes(
+    nodes,
+    edges,
+    selectedNodeIds,
+    NODE_LIMIT,
+  );
   const truncated =
     nodes.length > NODE_LIMIT
-      ? `${NODE_LIMIT} of ${nodes.length}, oldest first`
+      ? `${visibleNodes.length} of ${nodes.length}, selection-prioritized`
       : `${nodes.length} nodes`;
   const selectedSummary =
     selectedNodeIds.length > 0
       ? `, ${selectedNodeIds.length} selected`
       : "";
   const header = `## CANVAS (${truncated}, ${edges.length} edges${selectedSummary})`;
-
-  const visibleNodes = nodes.slice(0, NODE_LIMIT);
   const selectedSet = new Set(selectedNodeIds);
 
   const lines: string[] = [header, "", "Nodes:"];

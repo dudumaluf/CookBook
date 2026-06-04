@@ -76,6 +76,51 @@ export const assistantPlanSchema = z.object({
 
 export type AssistantPlan = z.infer<typeof assistantPlanSchema>;
 
+/**
+ * Persisted tool receipt — ADR-0069 F10.
+ *
+ * One per dispatched tool call within an assistant turn. The full
+ * `result` blob is stored verbatim so the chat-sheet can re-render
+ * the same `ToolCallReceiptLine` for past messages that it shows for
+ * the current run's `liveEvents`.
+ *
+ * Receipts persist on the *assistant* message they were emitted on, so
+ * the user can scroll back through prior submits and audit exactly
+ * which tools fired with which receipts — closing the "what did the
+ * assistant actually do?" forensic gap that motivated the ADR.
+ */
+export interface PersistedToolReceipt {
+  /** Tool name as registered in `getToolDefinitions()`. */
+  tool: string;
+  /** OpenAI tool_call_id; matches the LLM's emission. */
+  callId: string;
+  /** Wall-clock dispatch duration. Useful for "why is this slow?". */
+  durationMs: number;
+  /** Full tool result payload (ok/error + structured receipt fields). */
+  result: unknown;
+}
+
+/**
+ * Persisted ask_user question — ADR-0069 F11.
+ *
+ * When the assistant calls `ask_user`, the reasoner pauses and emits
+ * an `ask_user` event. The matching assistant message stores the
+ * question + options here so:
+ *   1. Reload the chat history → user still sees what was asked.
+ *   2. Next turn's conversation history shows the LLM the original
+ *      question alongside the user's reply (which is the next user
+ *      message after this one chronologically).
+ *   3. UI can render the question with the same QuestionCard layout
+ *      whether it's live (pendingQuestion) or persisted (this field).
+ *
+ * Pre-F11 the assistant message was persisted as "(no response)" with
+ * no record of the question, so cross-session continuity broke.
+ */
+export interface PersistedQuestion {
+  question: string;
+  options?: string[];
+}
+
 export interface AssistantMessage {
   role: "user" | "assistant" | "system";
   content: string;
@@ -88,5 +133,18 @@ export interface AssistantMessage {
   error?: string;
   /** Server-reported cost of producing this response. */
   costUsd?: number;
+  /**
+   * Tool receipts captured during this assistant turn (ADR-0069 F10).
+   * Empty array when the assistant produced text without tool calls.
+   * Undefined for user messages and pre-F10 rows hydrated from the cloud.
+   */
+  toolReceipts?: PersistedToolReceipt[];
+  /**
+   * Set when this assistant turn ended in `ask_user` (ADR-0069 F11).
+   * The next user message in chronological order is the answer. Carries
+   * the original question + options so cross-session continuity holds
+   * and the UI can render the same QuestionCard for live vs persisted.
+   */
+  question?: PersistedQuestion;
   timestamp: number;
 }

@@ -674,10 +674,18 @@ function Message({ message }: { message: AssistantMessage }) {
           </p>
         ) : message.plan ? (
           <PlanCard plan={message.plan} />
+        ) : message.question ? (
+          <PersistedQuestionCard
+            question={message.question.question}
+            options={message.question.options}
+          />
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
       </div>
+      {message.toolReceipts && message.toolReceipts.length > 0 ? (
+        <PersistedToolReceiptsBlock receipts={message.toolReceipts} />
+      ) : null}
       {message.costUsd !== undefined ? (
         <span className="text-[10px] text-muted-foreground/60">
           {message.costUsd.toFixed(4)} USD
@@ -685,6 +693,109 @@ function Message({ message }: { message: AssistantMessage }) {
       ) : null}
     </div>
   );
+}
+
+/**
+ * PersistedQuestionCard — ADR-0069 F11.
+ *
+ * Renders an ask_user question that's been persisted to history. Mirrors
+ * the live `PendingQuestionCard` styling but read-only — clicking an
+ * option in the past doesn't make sense (the user has already moved on),
+ * so we render options as static chips for context only.
+ */
+function PersistedQuestionCard({
+  question,
+  options,
+}: {
+  question: string;
+  options?: string[];
+}) {
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="persisted-question">
+      <p className="text-foreground/85 italic">{question}</p>
+      {options && options.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {options.map((opt) => (
+            <span
+              key={opt}
+              className="rounded-md border border-border/40 bg-background/40 px-2 py-0.5 text-[10.5px] text-muted-foreground/80"
+            >
+              {opt}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * PersistedToolReceiptsBlock — ADR-0069 F10.
+ *
+ * Renders the `toolReceipts` array attached to a persisted assistant
+ * message. Mirrors the live-trace rendering for the SAME tool dispatch
+ * that produced these receipts, so a user scrolling back in history
+ * sees the same `→ nodeId [Title]: key  "before" → "after"` lines they
+ * saw at the moment the assistant ran.
+ *
+ * Collapsed by default behind a "N tool call(s)" summary so the chat
+ * sheet doesn't get visually noisy in long histories. Click expands.
+ */
+function PersistedToolReceiptsBlock({
+  receipts,
+}: {
+  receipts: NonNullable<AssistantMessage["toolReceipts"]>;
+}) {
+  if (receipts.length === 0) return null;
+  return (
+    <details
+      className="ml-2 max-w-[80%] text-[10.5px] text-muted-foreground/85"
+      data-testid="persisted-tool-receipts"
+    >
+      <summary className="cursor-pointer select-none text-muted-foreground/65 transition-colors hover:text-muted-foreground">
+        ▸ {receipts.length} tool call{receipts.length === 1 ? "" : "s"}
+      </summary>
+      <div className="mt-1 flex flex-col gap-1 border-l border-border/40 pl-2">
+        {receipts.map((r) => (
+          <div
+            key={r.callId}
+            className="flex flex-col gap-0.5"
+            data-testid="persisted-tool-receipt"
+          >
+            <div className="flex items-center gap-1.5 text-foreground/80">
+              <Wrench className="h-3 w-3 text-muted-foreground/60" />
+              <code className="font-mono text-foreground/85">{r.tool}</code>
+              <span className="text-muted-foreground/50">·</span>
+              <span className="text-muted-foreground/60">
+                {r.durationMs}ms
+              </span>
+            </div>
+            {(() => {
+              const synth = synthesizeReceipt(r.result);
+              return synth ? (
+                <ToolCallReceiptLine receipt={synth} />
+              ) : null;
+            })()}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Reuse the live-trace `extractReceipt` projection logic by simulating
+ * the `tool_result` event shape it expects. Keeps a single source of
+ * truth for receipt rendering between live and persisted paths.
+ */
+function synthesizeReceipt(result: unknown): ToolCallReceipt | null {
+  return extractReceipt({
+    type: "tool_result",
+    toolName: "_persisted",
+    callId: "_persisted",
+    durationMs: 0,
+    result,
+  } as ReasonerEvent);
 }
 
 function PlanCard({ plan }: { plan: AssistantMessage["plan"] & {} }) {

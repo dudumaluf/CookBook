@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { AssistantPlan } from "@/lib/assistant/types";
+import type {
+  AssistantPlan,
+  PersistedQuestion,
+  PersistedToolReceipt,
+} from "@/lib/assistant/types";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 import {
@@ -19,6 +23,8 @@ interface RawAssistantMessageRow {
   plan: AssistantPlan | null;
   error: string | null;
   cost_usd: number | string | null;
+  tool_receipts: PersistedToolReceipt[] | null;
+  question: PersistedQuestion | null;
   created_at: string;
 }
 
@@ -36,6 +42,8 @@ function rowToRecord(row: RawAssistantMessageRow): AssistantMessageRecord {
       row.cost_usd === null || row.cost_usd === undefined
         ? null
         : Number(row.cost_usd),
+    toolReceipts: row.tool_receipts ?? null,
+    question: row.question ?? null,
     createdAt: row.created_at,
   };
 }
@@ -83,6 +91,8 @@ export class SupabaseAssistantMessageRepository
       plan: input.plan ?? null,
       error: input.error ?? null,
       cost_usd: input.costUsd ?? null,
+      tool_receipts: input.toolReceipts ?? null,
+      question: input.question ?? null,
     };
     const { data, error } = await this.client
       .from("cookbook_assistant_messages")

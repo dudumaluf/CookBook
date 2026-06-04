@@ -48,6 +48,8 @@ function recordToMessage(row: AssistantMessageRecord): AssistantMessage {
     plan: row.plan ?? undefined,
     error: row.error ?? undefined,
     costUsd: row.costUsd ?? undefined,
+    toolReceipts: row.toolReceipts ?? undefined,
+    question: row.question ?? undefined,
     timestamp: new Date(row.createdAt).getTime(),
   };
 }
@@ -95,6 +97,8 @@ export async function persistMessage(
       plan: message.plan ?? null,
       error: message.error ?? null,
       costUsd: message.costUsd ?? null,
+      toolReceipts: message.toolReceipts ?? null,
+      question: message.question ?? null,
     });
   } catch (err) {
     console.warn("[chat-sync] persist failed:", err);
