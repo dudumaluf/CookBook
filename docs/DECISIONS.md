@@ -3077,3 +3077,105 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Per-method audit log.** `auth.audit_log_entries` already records which method was used for each sign-in. We don't expose it in-app yet; a future "Recent activity" surface in Settings would read from there.
 
 
+## ADR-0069 — Assistant precision overhaul: selection coherence + context continuity + write-tool precision + visibility
+
+- **Date**: 2026-06-04
+- **Context**: Even after ADR-0065 (post-write receipts) and ADR-0066 (plan-first protocol + error recovery + intent vocabulary + few-shots + self-verification), the user reported the assistant "claimed" mutations that didn't happen — most reproducibly when a node was duplicated and the user highlighted the duplicate. The investigation surfaced eight distinct failure clusters that ADR-0065 / ADR-0066 had improved but not closed, plus four new ones nobody had named yet. Concretely:
+
+  1. **Single-node selection lacked deictic anchor.** The LLM's knowledge bundle had a `## SELECTION` block only when 2+ nodes were selected (designed to disambiguate multi-node analyses). For 1-node selections — by far the common case — there was just an aggregate count. The LLM had to scan the canvas list, match by config text, and often locked onto the first node that matched the user's words instead of the actual selection. This is exactly the "patched the duplicate's twin" bug.
+
+  2. **Canvas summary lost selection mid-list.** `## CANVAS` rendered the first 50 nodes. Selected nodes past index 50 fell off entirely; the trailing `Selected: nX` line then named ids the LLM couldn't see in the table.
+
+  3. **Instructions had no deictic rules.** Pronouns ("this / that / it / isso / esse") had no resolution algorithm. The LLM made best-effort guesses; the algorithm wasn't anchored to FOCUSED NODE / SELECTION blocks.
+
+  4. **Receipts didn't say which node.** Patch receipts showed `text: "old" → "new"` without the node id or title. When the LLM patched the wrong duplicate, the receipt looked successful in isolation; the user had to cross-reference manually.
+
+  5. **`update_node_config` required `nodeId`.** The LLM could omit it — but then errored. Forcing the LLM to copy the id from the FOCUSED NODE block was an extra surface area for transcription bugs.
+
+  6. **No visual feedback on patched node.** A successful patch on the duplicate looked indistinguishable from no change to the user — they were staring at the wrong card and the right one had no animation drawing attention.
+
+  7. **Knowledge bundle was static within a turn.** After a `select_nodes` / `add_node` mid-turn, subsequent tool calls in the SAME submit saw the stale `dynamicSuffix`. The LLM patched ids it had just deleted, or referenced selection it had just changed.
+
+  8. **Tool calls + receipts vanished across turns.** `liveEvents` was wiped each submit; persisted history kept only the user-visible text. A second submit asking "now do the same to the other one" had to re-run `read_canvas` because the LLM's prior `update_node_config` was erased from its own history.
+
+  9. **`ask_user` answers couldn't be reconstructed.** When the LLM asked a structured question and the user answered, only the question's plain text survived in history. Cross-session continuity was broken — reopening the chat showed the answer but lost what was asked.
+
+  10. **Compaction destroyed essential ids.** Stale `read_canvas` tool messages were summarised to "5 nodes, 3 edges" — losing the ids the LLM needed to reference in later turns. Forced redundant `read_canvas` round-trips at turn 6+.
+
+  11. **`run_workflow` / `run_from` / `regenerate` didn't await.** Tools returned `ok: true, runId` synchronously; the engine was still running. The LLM saw success and emitted "Pronto, executei tudo" while nodes were halfway through. Errored runs were reported as successes.
+
+  12. **`add_edge` accepted any handle.** Wiring `text.out → text.out` (target handle "out" doesn't exist on text) succeeded at the store level (no self-loop, no duplicate target) but was a phantom wire. Type mismatches (text → image) had the same outcome.
+
+  13. **`select_nodes` accepted phantom ids.** Ids not on canvas ended up in the selection set. Downstream tools then said "no such node", and the LLM blamed itself.
+
+  14. **`update_node_config` allowed unknown keys.** Patches like `{ separator: "**" }` on an Array node (real field is `delimiter`) merged silently. The runtime ignored the field; the user thought it took effect.
+
+  15. **`regenerate` skipped patch validation.** ADR-0066's `validateConfigPatch` ran for `update_node_config` but not for `regenerate.configPatch` — the same bad keys could slip through the regenerate path.
+
+  16. **`propose_refactor` returned `ok: true` ambiguously.** The LLM read it as "applied"; the proposal was actually QUEUED awaiting user approval. The chat text often described the post-state as if it had landed.
+
+  17. **`instantiate_recipe` couldn't wire.** Drop a recipe + feed it from upstream nodes was a chain of `instantiate_recipe` → `read_node_state` → N×`add_edge`. Three round-trips for one user intent.
+
+  18. **`narrate` masqueraded as run.** The LLM said "I'm running it" via `narrate` without firing `run_workflow`. The chat trace showed only the narration; no run actually happened.
+
+  19. **No accountability surface.** Even with all the above fixed, there was no UI that surfaced "the LLM said X but the receipts don't support X" — the user had to expand the trace and audit manually.
+
+- **Decision**: Five-phase precision overhaul, totalling 24 numbered fixes (F1–F24), shipped as four incremental commits + one docs commit:
+
+  **Phase 1 — Selection coherence (F1–F8).**
+  - **F1: `## FOCUSED NODE` rich block** for single-node selections. New module [`focused.ts`](src/lib/assistant/knowledge/focused.ts) emits an unambiguous deictic anchor: id, kind, title, label, position, full config, status, upstream + downstream wiring with target node titles. Auto-attached when `selectedNodeIds.length === 1`.
+  - **F2: Inline `· SELECTED` markers** on every selected canvas row. Eliminates the "the row I'm looking at isn't in the trailing Selected: line" cross-reference dance.
+  - **F3: `## DEICTIC EDITS` section** in [`instructions.ts`](src/lib/assistant/instructions.ts). Five-line algorithm: FOCUSED NODE present → that's the target; SELECTION present → resolve from it; otherwise infer; NEVER match by config text content.
+  - **F4: Updated Example 1 + new Example 6** (duplicate-text disambiguation) in the few-shot CANONICAL EXAMPLES section.
+  - **F5: Receipts include nodeId + title + before→after.** New `PatchReceiptLine` component shows `→ n5 [Text]: text "old" → "new"` so the user spots a wrong-target patch instantly.
+  - **F6: `update_node_config.nodeId` is OPTIONAL.** When omitted and exactly 1 node is selected, that node is used (with `selectionDefault: true` flag in the receipt). 0 or 2+ selections fail with an actionable "ambiguous target" error. Selection-default is the safety net for "the LLM forgot to copy the id literally".
+  - **F7: Pulse animation on patched nodes.** New ephemeral [`useCanvasUiStore`](src/lib/stores/canvas-ui-store.ts) tracks recently mutated ids with a 1.5s TTL. `BaseNode` applies the `cookbook-mutation-pulse` class. Eliminates the "did anything happen?" doubt after a patch — the right card visibly pulses.
+  - **F8: Integration test** [`duplicate-selection.test.ts`](tests/integration/assistant/scenarios/duplicate-selection.test.ts) exercises the full duplicate-and-patch scenario end-to-end against the production reasoner with a stubbed LLM, covering both explicit-id and selection-default cases plus failure modes.
+
+  **Phase 2 — Context continuity (F9–F13).**
+  - **F9: Rebuild `dynamicSuffix` between tool turns.** [`reasoner.ts`](src/lib/assistant/reasoner.ts) refreshes the system prompt's dynamic section after any structural mutation in the same submit. The LLM's "view" of the canvas no longer goes stale mid-turn.
+  - **F10: Persist tool calls + receipts in history.** New `toolReceipts: PersistedToolReceipt[]` field on [`AssistantMessage`](src/lib/assistant/types.ts) + JSONB column via [migration `20260604_assistant_message_tool_receipts.sql`](supabase/migrations/20260604_assistant_message_tool_receipts.sql) + `PersistedToolReceiptsBlock` rendering. `buildConversationMessages` now emits compact `[tools fired: …]` summaries for past turns, so the LLM remembers what it already did across submits.
+  - **F11: Persist `ask_user` questions structurally.** New `question?: PersistedQuestion` field + JSONB column + `PersistedQuestionCard` + `[asked: "…"]` summary for the LLM. Cross-session continuity survives reload.
+  - **F12: Compaction preserves essential ids.** `summarizeReadResult` now keeps id lists (`5 nodes [n1, n2, n3, n4, n5]`), selection (`selection=[n3]`), and per-tool shape so the LLM can refer to nodes by id even after a turn-7 compaction.
+  - **F13: Selection-aware NODE_LIMIT truncation.** `pickVisibleNodes` ranks by tier (selected → 1-hop neighbors → newest) instead of `nodes.slice(0, 50)`. The selected node is GUARANTEED visible regardless of where it falls in creation order.
+
+  **Phase 3 — Write tool precision (F14–F21).**
+  - **F14: `run_workflow` / `run_from` / `regenerate` AWAIT.** New [`awaitRunCompletion`](src/lib/assistant/tools/run/await-run-completion.ts) helper inspects per-node records after the run promise resolves. Returns structured `nodeSummary[] + errors[] + totalCostUsd + hadErrors`. Eliminates fire-and-forget false success.
+  - **F15: `add_edge` validates handles + types.** Source handle exists in source's outputs, target handle exists in target's inputs, dataType compatible (with `any` wildcard). Composites use `getInputs(config)` / `getOutputs(config)` so dynamic handles validate correctly. Errors include the available handle list for self-correction.
+  - **F16: `select_nodes` filters phantoms.** Non-existent ids land in `missingIds[]`; `selectedIds` is the filtered set; `ok: false` if any were dropped. Order preserved + dedup.
+  - **F17: `update_node_config` rejects phantom keys.** Per-kind allow-list in [`validate-config-patch.ts`](src/lib/assistant/tools/construct/validate-config-patch.ts) covers `text`, `number`, `array`, `llm-text`, `fal-image`. Patches with unknown keys fail fast with the valid-key list inlined.
+  - **F18: `regenerate` calls `validateConfigPatch`.** Same gate as `update_node_config`. A bad `configPatch` fails before any run starts.
+  - **F19: `propose_refactor` is structurally explicit.** Returns `{ ok: true, queued: true, applied: false, requiresUserApproval: true, opsQueued, id }`. The LLM cannot read `ok: true` as "the canvas now reflects the refactor".
+  - **F20: `instantiate_recipe` accepts `bindings`.** Optional `Array<{ exposedInputId, from: { nodeId, handle } }>` wires upstream into the recipe's exposed inputs in the same call. Works for both `node` and `expand` modes (the latter via the spawn's id map). Per-binding success/failure in `wireSummary[]`.
+  - **F21: `narrate` warns it doesn't run.** Description states explicitly that narrate is chat-only; saying "I'm running it" without `run_workflow` is a contradiction the chat will surface.
+
+  **Phase 4 — Visibility & accountability (F22–F24).**
+  - **F22: `ContradictionBanner`.** Detects "ran" / "executei" / "regenerei" claims with no run receipt, "changed" / "atualizei" / "mudei" claims with no mutation receipt. Negation suppressed ("não rodei" doesn't trigger). Renders a yellow "verifique antes de confiar" banner under the message.
+  - **F23: `RunProgressInline`.** While `run_workflow` / `run_from` / `regenerate` is in flight (awaiting per F14), the chat shows live `X / Y nodes complete` + currently-running node + last errored node, subscribed to the execution store. No more bare 10s spinner.
+  - **F24: Run summary on persisted receipts.** `PersistedToolReceiptsBlock` summary line buckets receipts into mutations / runs (with done counts, errors, total cost) / refactors / reads. The collapsible detail list stays the same.
+
+  **Phase 5 — Docs + tests + deploy (F25–F30).** This entry, `CHANGELOG.md`, `docs/ASSISTANT.md`, plus the full `pnpm test + lint + typecheck + smoke` matrix.
+
+- **Why this is the right shape**:
+  - **Layered defenses, not a single gate.** F1+F3 give the LLM unambiguous context; F6 makes the call shape forgiving; F5+F7 give the user immediate feedback; F22 catches anything that slips through. Each layer compensates if the others miss.
+  - **The selection-aware path is the default, not a special case.** A 1-node selection is THE common case; ADR-0069 makes it strictly more capable than the multi-node path was.
+  - **Structural flags > prose hints.** F19 says `applied: false` not "this is queued"; F14 returns `errors[]` not "0 problems"; F22 reads booleans + presence, not regex over the LLM's English. Trust grows when the structure can't lie.
+  - **All persistence is additive JSONB.** `tool_receipts` + `question` columns are nullable; old rows hydrate fine. Rollback is a column drop, not a migration nightmare.
+  - **Compaction stays soft.** F12 preserves ids but doesn't expand the bytes the LLM sees — so prompt caching still hits and turn cost stays flat.
+
+- **Consequences**:
+  - **Selection-default semantics.** `update_node_config` no longer requires `nodeId`. Existing call sites and tests that passed it explicitly keep working unchanged; the optional path is a strict superset.
+  - **Run tools block.** A tool turn calling `run_workflow` now takes engine wall-clock, not 10ms. The reasoner's `signal` propagation already handles aborts; the user still sees "Cancel" via the existing UI.
+  - **`add_edge` rejects more.** Some tests had to switch from `text → text.out` (invalid input handle) to `text → llm-text.user` (real input). This is the "test was wrong since forever, store was lax" class of bug.
+  - **Per-kind allow-lists are hand-curated.** F17's allow-list covers ~5 node kinds today. Other kinds skip strict validation and fall through to value checks. Adding strict validation for a new kind = appending its key set to `KIND_ALLOWED_KEYS`.
+  - **JSONB columns added.** `cookbook_assistant_messages.tool_receipts` + `cookbook_assistant_messages.question`. Indexed-by-default JSON; payloads are bounded by the receipts cap so row size stays sane.
+  - **Live trace gained a stateful component.** `RunProgressInline` subscribes to two stores. Renders `null` when not running so it doesn't churn outside an active run.
+  - **`docs/ASSISTANT.md` gets a "Selection coherence" + "Context continuity" + "Write-tool precision" subsection.** Documentation update that other ADRs cross-link.
+
+- **What's parked for later**:
+  - **Schema-driven validation.** F17's allow-list is hand-curated. A future ADR replaces it with per-kind Zod schemas owned by the node author, so adding a new kind doesn't require a touch elsewhere.
+  - **Output bindings on `instantiate_recipe`.** F20 supports input bindings only. Output bindings (composite output → downstream node) follow the same pattern; postponed until a real use case appears.
+  - **NLP-level claim parsing.** F22 uses regex. A future iteration could parse the assistant's claim into a structured "I changed N5 to value X" assertion and verify it against the receipt's `before/after`. Current cost/value tradeoff favors the conservative regex.
+  - **Per-turn run budget.** ADR-0066 mentioned this as future work; F23 makes it more visible (you can see exactly how much each run cost) but doesn't enforce a budget yet.
+
+

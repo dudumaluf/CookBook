@@ -215,3 +215,49 @@ Pick override: `LLM_PROVIDER` env var. Falls back to default.
 | 7.6 | ADR-0045 | **shipped** | RAG foundation (pgvector + tsvector) + cross-project search + user preferences |
 
 Master plan: see Slice 7.x section in [`docs/ROADMAP.md`](./ROADMAP.md) (planned to land alongside Slice 7.2 ship). Each slice closes with a CHANGELOG entry + `STATE-AFTER-*.md` snapshot when relevant.
+
+## 11. Precision overhauls (post-7.6)
+
+The Slice 7.x trail closed the assistant's *capability* axis — read, construct, run, evaluate, learn. Once it shipped, three rounds of precision work tightened the *trust* axis: the things the user has to be able to assume without verifying every claim by hand.
+
+### Selection coherence (ADR-0069 phase 1, 2026-06-04)
+
+The 1-node-selection case is the assistant's most common deictic anchor — the user highlights a node and says "change this". Pre-overhaul, the LLM had no rich context for that case (the `## SELECTION` block only attached at 2+ selections), so it scanned the canvas and matched by config text content — landing on the wrong duplicate when content was repeated.
+
+- **`## FOCUSED NODE`** ([`focused.ts`](../src/lib/assistant/knowledge/focused.ts)) — auto-attached when `selectedNodeIds.length === 1`. Carries id, kind, title, position, full config, status, upstream + downstream wiring with target node titles. Spelled out as "the deictic anchor" in the block's preamble.
+- **Inline `· SELECTED` markers** on every selected canvas row in `## CANVAS`, so the LLM doesn't have to cross-reference the trailing `Selected:` line.
+- **`## DEICTIC EDITS`** in [`instructions.ts`](../src/lib/assistant/instructions.ts) — five-line resolution algorithm: FOCUSED NODE present → that's the target; SELECTION present → resolve from it; otherwise infer; NEVER match by config text content.
+- **`update_node_config.nodeId` is OPTIONAL.** When omitted and exactly 1 node is selected, that node is used (with `selectionDefault: true` in the receipt). 0 or 2+ selections fail with "ambiguous target".
+- **Patched-node pulse** ([`canvas-ui-store.ts`](../src/lib/stores/canvas-ui-store.ts)) — the right card visibly pulses for 1.5s, eliminating the "did anything happen?" doubt.
+
+### Context continuity (ADR-0069 phase 2)
+
+A multi-step submit and a multi-submit conversation both need the LLM to remember what it just did. Pre-overhaul the system prompt's dynamic suffix went stale mid-turn, and tool history vanished across turns.
+
+- **`dynamicSuffix` rebuilt between tool turns** within the same submit, so structural mutations propagate to the LLM's view without a follow-up `read_canvas`.
+- **`AssistantMessage.toolReceipts: PersistedToolReceipt[]`** + JSONB column persists every tool call's receipt across reload. The `## CONVERSATION` block emits compact `[tools fired: …]` summaries so the LLM remembers what it did across submits.
+- **`AssistantMessage.question: PersistedQuestion`** + JSONB column persists `ask_user` questions structurally; the persisted card renders identical to the live card, and the LLM sees `[asked: "…"]` in conversation context.
+- **Compaction preserves essential ids.** `read_canvas` summaries keep id lists and selection so turn-7 references still resolve.
+- **NODE_LIMIT is selection-aware.** Truncation tiers as selected → 1-hop neighbors → newest, so the selected node never falls off the visible window on a 60-node canvas.
+
+### Write-tool precision (ADR-0069 phase 3)
+
+The write tools were too lax; they accepted patches that the runtime silently ignored, ran without awaiting completion, and returned `ok: true` for outcomes the LLM was free to misinterpret.
+
+- **`run_workflow` / `run_from` / `regenerate` AWAIT** completion via [`awaitRunCompletion`](../src/lib/assistant/tools/run/await-run-completion.ts). Returns structured `{ nodeSummary[], errors[], totalCostUsd, hadErrors }`.
+- **`add_edge` validates handle existence + dataType compatibility** before delegating to the store. Composites use `getInputs(config)` / `getOutputs(config)`.
+- **`select_nodes` filters non-existent ids**, returning `missingIds[]`.
+- **`update_node_config` rejects phantom keys** against a per-kind allow-list (`text`, `number`, `array`, `llm-text`, `fal-image`).
+- **`regenerate.configPatch` runs through the same `validateConfigPatch` gate.**
+- **`propose_refactor` returns explicit `{ queued: true, applied: false, requiresUserApproval: true }`** so the LLM can't claim the canvas reflects the refactor.
+- **`instantiate_recipe.bindings`** wires upstream nodes to the recipe's exposed inputs in the same call; works for both `node` and `expand` modes.
+- **`narrate`'s description warns** that it does NOT trigger runs.
+
+### Visibility & accountability (ADR-0069 phase 4)
+
+The user has to be able to spot a contradiction without expanding the trace.
+
+- **`ContradictionBanner`** flags "ran / executei / regenerei" claims with no run receipt and "changed / atualizei / mudei" claims with no mutation receipt; negation suppressed.
+- **`RunProgressInline`** shows live `X / Y nodes complete` + currently-running node + last errored node while a `run_workflow` / `run_from` / `regenerate` is in flight.
+- **Persisted "Run summary" line** aggregates receipts into mutations / runs (with done counts, errors, cost) / refactors / reads. The full collapsible detail list stays one click away.
+

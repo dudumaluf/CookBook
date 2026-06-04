@@ -270,7 +270,6 @@ describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
     useAssistantStore.setState({
       messages: [
         {
-          id: "m1",
           role: "assistant",
           content: "Pronto, executei tudo e o run terminou.",
           timestamp: Date.now(),
@@ -301,7 +300,6 @@ describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
     useAssistantStore.setState({
       messages: [
         {
-          id: "m2",
           role: "assistant",
           content: "Atualizei o node de texto pra 'novo prompt'.",
           timestamp: Date.now(),
@@ -332,7 +330,6 @@ describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
     useAssistantStore.setState({
       messages: [
         {
-          id: "m3",
           role: "assistant",
           content: "Atualizei o node n5 — agora o texto é 'novo'.",
           timestamp: Date.now(),
@@ -367,7 +364,6 @@ describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
     useAssistantStore.setState({
       messages: [
         {
-          id: "m4",
           role: "assistant",
           content:
             "Não rodei nada — apenas verifiquei o estado e te chamei aqui.",
