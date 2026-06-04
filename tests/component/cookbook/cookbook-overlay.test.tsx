@@ -57,7 +57,7 @@ function seedRecipe(overrides: Partial<RecipeRecord> = {}): RecipeRecord {
     ownerId: overrides.ownerId ?? null,
     name: overrides.name ?? "Seedance Prompt Director",
     description: overrides.description ?? "Generate polished Seedance prompts.",
-    category: overrides.category ?? "prompt-engineering",
+    category: overrides.category ?? "describe",
     subgraph: overrides.subgraph ?? {
       version: 2,
       nodes: [

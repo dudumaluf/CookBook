@@ -2,6 +2,21 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+// JSDOM (as of 24.x) does not implement Element.getAnimations(). The
+// @base-ui/react ScrollArea viewport calls it on a recurring timer to
+// detect scroll animations; the missing function surfaces as an
+// unhandled "TypeError: viewport.getAnimations is not a function" once
+// the test unmounts the tree but the timer is still queued. Polyfill
+// it as a no-op so the timer is harmless. Returning [] matches the
+// spec for "no Animation objects associated with the element".
+if (typeof Element !== "undefined" && !("getAnimations" in Element.prototype)) {
+  Object.defineProperty(Element.prototype, "getAnimations", {
+    value: () => [] as Animation[],
+    writable: true,
+    configurable: true,
+  });
+}
+
 afterEach(() => {
   cleanup();
 });

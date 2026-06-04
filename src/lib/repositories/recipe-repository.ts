@@ -17,6 +17,54 @@ import type { NodeInstance, WorkflowEdge } from "@/types/node";
  */
 
 /**
+ * Recipe taxonomy (2026-06-04).
+ *
+ * The DB column `category` is free-text for forward compatibility (a
+ * future server-side classifier could write any label), but the client
+ * normalizes to this fixed list so the Add Node menu can group recipes
+ * deterministically and the Save dialog can offer a closed dropdown.
+ *
+ * Categories chosen to match the M0a–M1 surface area:
+ *
+ * - `describe` — text-output recipes (prompt directors, vision-to-text
+ *   describers). System-shipped: Image Describer, Seedance/Storyboard/
+ *   Simple Scene/Timeline Directors.
+ * - `image` — image-output recipes (variation bursts, moodboards, pose
+ *   sheets). Starter pack added 2026-06-04.
+ * - `video` — video-output recipes (Performance Video, Lipsync). Lipsync
+ *   demo added 2026-06-04.
+ * - `audio` — audio-input recipes (transcript → derivative). Voice Memo
+ *   Storyboard added 2026-06-04 (we have no TTS node yet, so audio-OUT
+ *   recipes wait until that node lands).
+ * - `utility` — cross-modal scaffolding (Storyboard from Script). Default
+ *   bucket for user-saved recipes that don't fit a single output kind.
+ */
+export const RECIPE_CATEGORIES = [
+  "describe",
+  "image",
+  "video",
+  "audio",
+  "utility",
+] as const;
+
+export type RecipeCategory = (typeof RECIPE_CATEGORIES)[number];
+
+/**
+ * Narrow an arbitrary string from the DB into a known `RecipeCategory`.
+ * Returns `null` for unknown values (so callers can fall back to a
+ * default like `"utility"` or skip grouping). Pure — safe to call in
+ * render paths.
+ */
+export function coerceRecipeCategory(
+  value: string | null | undefined,
+): RecipeCategory | null {
+  if (typeof value !== "string") return null;
+  return (RECIPE_CATEGORIES as readonly string[]).includes(value)
+    ? (value as RecipeCategory)
+    : null;
+}
+
+/**
  * One exposed handle on a composite recipe.
  *
  * `internalNodeId` + `internalHandleId` point at the saved-subgraph
@@ -90,7 +138,13 @@ export interface RecipeRecord {
   ownerId: string | null;
   name: string;
   description: string | null;
-  category: string | null;
+  /**
+   * Coerced from the DB string at the repo boundary via
+   * {@link coerceRecipeCategory} — unknown values land as `null`. The
+   * Add Node menu groups recipes by this field; the Cookbook tab
+   * filters by it.
+   */
+  category: RecipeCategory | null;
   subgraph: RecipeSubgraph;
   isNode: boolean;
   parentRecipeId: string | null;
@@ -120,7 +174,7 @@ export interface RecipeVersionRecord {
    *  retroactively edit history). */
   name: string;
   description: string | null;
-  category: string | null;
+  category: RecipeCategory | null;
   /** auth.uid() of the user who saved this version (null for v1 created
    *  by a system migration; null also when the row predates RLS). */
   savedBy: string | null;
@@ -134,7 +188,7 @@ export interface SaveRecipeInput {
   ownerId: string | null;
   name: string;
   description?: string | null;
-  category?: string | null;
+  category?: RecipeCategory | null;
   subgraph: RecipeSubgraph;
   isNode?: boolean;
   parentRecipeId?: string | null;
@@ -158,7 +212,7 @@ export interface SaveAsNewVersionInput {
   subgraph: RecipeSubgraph;
   name?: string | null;
   description?: string | null;
-  category?: string | null;
+  category?: RecipeCategory | null;
 }
 
 export interface RecipeFilter {
@@ -167,7 +221,7 @@ export interface RecipeFilter {
   /** When true, also include system recipes (owner_id IS NULL). */
   includeSystem?: boolean;
   /** Filter by category (e.g. "image", "describe"). */
-  category?: string;
+  category?: RecipeCategory;
   /** Soft cap. Defaults to 100. */
   limit?: number;
 }

@@ -36,7 +36,7 @@ import type { AssistantTool } from "../index";
 export const applyPendingRefactorTool: AssistantTool = {
   name: "apply_pending_refactor",
   description:
-    "Apply the currently-queued refactor proposal that's awaiting user confirmation in the preview modal. Use this ONLY when the user has explicitly told you to apply / retry / go ahead in chat (e.g. 'apply for me', 'do it', 'aplica pra mim'). Equivalent to clicking the modal's Apply button. Returns the same atomic-or-rollback result. If there's no pending proposal, this fails — re-call `propose_refactor` with fresh ops.",
+    "Apply the currently-queued refactor proposal that's awaiting user confirmation in the preview modal. Use this ONLY when the user has explicitly told you to apply / retry / go ahead in chat (e.g. 'apply for me', 'do it', 'aplica pra mim'). Equivalent to clicking the modal's Apply button. Returns { changed: ['__bulk'], bulk: { appliedOps } } on success — quote applied count before claiming success. If there's no pending proposal, this fails — re-call `propose_refactor` with fresh ops.",
   parameters: {
     type: "object",
     properties: {},
@@ -64,6 +64,10 @@ export const applyPendingRefactorTool: AssistantTool = {
         ok: true,
         applied: result.appliedCount,
         message: `Applied ${result.appliedCount} op(s). The proposal has been cleared.`,
+        changed: ["__bulk"],
+        bulk: {
+          appliedOps: result.appliedCount,
+        },
       };
     }
     return {

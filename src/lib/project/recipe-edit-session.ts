@@ -4,6 +4,7 @@ import { closeProject } from "@/lib/project/session";
 import { forkRecipe } from "@/lib/recipes/fork-recipe";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import {
+  type RecipeCategory,
   type RecipeRecord,
   type RecipeSubgraph,
   RECIPE_SUBGRAPH_VERSION,
@@ -165,7 +166,7 @@ export interface SaveRecipeEditArgs {
   /** Optional metadata patches. Null/undefined keeps the prior value. */
   name?: string | null;
   description?: string | null;
-  category?: string | null;
+  category?: RecipeCategory | null;
   onError?: (err: unknown) => void;
 }
 

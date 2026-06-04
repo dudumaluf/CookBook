@@ -64,5 +64,17 @@ Rules of thumb:
 If the user is iterating on the same scene multiple times, suggest
 \`save_selection_as_recipe\` so the 5 setup blocks become exposed
 inputs and the timeline slots become an exposed-array — they edit
-once and re-render.`,
+once and re-render.
+
+After the user runs multiple takes of the same clip:
+- \`compare_results\` to put 2-4 generations side by side and
+  evaluate them against the Goal block ("which take lands the
+  emotional beat best?"). Tag-team this with \`evaluate_result\`
+  for a single take when the user just wants a yes/no answer.
+- \`pin_generation\` to mark the favored take so the user can find
+  it later in the gallery.
+- \`set_generation_title\` to rename a winner ("Take 7 — final
+  cut") so the gallery becomes scan-able.
+- \`delete_generation\` ONLY when the user explicitly rejects a
+  take ("apaga esse aí, não serviu"); otherwise keep history.`,
 };

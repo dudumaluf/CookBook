@@ -396,6 +396,46 @@ describe("runReasoner", () => {
       expect(
         (narrations[0] as { content: string }).content,
       ).toContain("find_similar_generations");
+      // 2026-06-03 — narration MUST cite the cost class so the LLM
+      // can apply the dispatch gate from its instructions.
+      expect(
+        (narrations[0] as { content: string }).content,
+      ).toContain("costClass: small");
+    });
+
+    it("cites costClass: large for generation tools", async () => {
+      callOpenRouterMock
+        .mockResolvedValueOnce({
+          text: "",
+          toolCalls: [
+            {
+              id: "g-1",
+              type: "function",
+              function: {
+                name: "regenerate",
+                arguments: JSON.stringify({ generationId: "abc" }),
+              },
+            },
+          ],
+          costUsd: 0,
+        })
+        .mockResolvedValueOnce({
+          text: "ok",
+          costUsd: 0,
+          finishReason: "stop",
+        });
+      const result = await runReasoner({
+        userMessage: "redo it",
+        ownerId: "u1",
+        projectId: "p1",
+        signal: new AbortController().signal,
+      });
+      const narrations = result.events.filter(
+        (e) => e.type === "narration",
+      );
+      expect(
+        (narrations[0] as { content: string }).content,
+      ).toContain("costClass: large");
     });
 
     it("does NOT emit a cost narration for free tools", async () => {

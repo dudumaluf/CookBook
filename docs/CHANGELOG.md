@@ -2,6 +2,114 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-04 — Recipe taxonomy + 6 starter system recipes (Add Node menu reorg)
+
+The assistant precision pass closed how the LLM REASONS about workflows; this entry closes how the user DISCOVERS them. Pre-pass, the Add Node popover showed all recipes flat under one "Recipes" header, no grouping, no ownership filter — so 7+ system recipes plus user recipes "polluted" the menu (verbatim user feedback). At the same time, three modality buckets had zero coverage: pure-image, audio, and utility recipes did not exist at all in the seeded set.
+
+**Recipe taxonomy promoted to a closed enum.** `RECIPE_CATEGORIES = ["describe", "image", "video", "audio", "utility"]` lives in [`recipe-repository.ts`](src/lib/repositories/recipe-repository.ts) as a `const` literal tuple plus a `RecipeCategory` type. The DB column stays free-text for forward compatibility (a future server-side classifier could write any label), but the client coerces every read through `coerceRecipeCategory(value)` — known values pass through, unknown / null / non-string land as `null` and bucket into a fallback "uncategorized" row. `RecipeRecord.category`, `SaveRecipeInput.category`, and `RecipeFilter.category` all narrow to `RecipeCategory`, so the type system catches free-form drift at compile time. No SQL migration needed: existing 7 system recipes already used `'describe'` (5) and `'video'` (2), both valid in the enum.
+
+**Add Node popover reorg** ([`add-node-button.tsx`](src/components/layout/add-node-button.tsx)). Recipes now group by category in the canonical order (describe → image → video → audio → utility → uncategorized), each section collapsible by clicking its header chevron. A filter chip row at the section header narrows the visible set: `All / System / Yours` — system recipes are `ownerId === null`, yours are everything else (the `useRecipes()` hook already scopes to the signed-in user). Each recipe row shows a `[sys]` chip if it's a system recipe so the user can tell at a glance what's curated vs theirs. The footer carries a `Manage all in Cookbook (⌘B)` link that closes the popover and opens the Cookbook overlay — the heavyweight management surface stays one click away. Recipe count beside the section header reflects the active filter, and the popover gained 20px of width and 40px of vertical scroll-area to accommodate the bucketed layout without truncation.
+
+**SaveRecipeDialog gets a category dropdown** ([`save-recipe-dialog.tsx`](src/components/library/save-recipe-dialog.tsx)). Closed `<select>` over `RECIPE_CATEGORIES`, defaults to `"utility"` (the cross-modal scaffolding bucket — most user-saved recipes are mixed-modality). The picked category propagates straight through `saveSelectionAsRecipe()` to the repository row so the recipe lands in the right Add Node bucket immediately, no follow-up edit needed.
+
+**`save_selection_as_recipe` tool now validates against the enum** ([`save-selection-as-recipe.ts`](src/lib/assistant/tools/recipe/save-selection-as-recipe.ts)). Zod schema is `z.enum(RECIPE_CATEGORIES).optional()`, the OpenAI tool descriptor declares `enum: [...RECIPE_CATEGORIES]` so the LLM sees the closed set, and the description teaches the dispatch heuristic ("`describe` for text-output prompt directors, `image`/`video`/`audio` by primary OUTPUT modality, `utility` for cross-modal scaffolding"). Default `"utility"` matches the dialog. Tool result now includes the saved `category` so the LLM can cite it back.
+
+**Six new system recipes** seeded via SQL migrations under `supabase/migrations/20260604_*_recipe.sql`:
+
+1. **Image Variation Burst** (`image`) — single image → vision describer → 4 fal-image regenerations (nano-banana-2 batch, `numImages: 4`). Exercises iteration via batch + ref-image handling. Variations and describer model are exposed params; the input image surfaces both at the describer (for prompt synthesis) and the renderer (as edit ref).
+
+2. **Moodboard Synthesizer** (`image`) — 3 image refs → vision-LLM with `imagePorts: 3` → cohesive prompt → fal-image with all 3 refs as edit guides. Tests multi-image vision blending. Briefing exposed as a config-text param so the user can bias the synthesis ("emphasize teal-orange palette"); 6 image inputs total (3 to the synth, 3 to the renderer) so the binding pattern is explicit.
+
+3. **Character Pose Sheet** (`image`) — Soul ID + 4 default pose prompts (text-iterator with `selectionMode: "all"`) → 4 Higgsfield generations of the same character. Tests Soul ID iteration + iterator fan-out. The 4 default pose prompts (confident hero, mid-action, contemplative, close-up reaction) are baked into the iterator's `texts` config; the user can flip `selectionMode` to step through one at a time via cursor.
+
+4. **Storyboard from Script** (`utility`) — long script → array split on `\n\n` → per-paragraph LLM scene-prompter → fal-image per beat. Tests the script-to-images crossover. Script wires into the recipe via a `{script}` variable on a passthrough text node, so the user feeds it from any upstream Text or LLM-Text. The description carries an explicit cost note ("produces (paragraphs) image generations per run").
+
+5. **Voice Memo Storyboard** (`audio`) — voice memo audio → fal-scribe-v2 transcription → LLM beat-extractor (one prompt per line) → array split on `\n` → fal-image per beat. Audio-IN, image-OUT — fills the audio-category gap until a TTS node lands (we have video→text via Marlin and audio→text via Scribe but no text→audio). The extractor system prompt enforces ONE prompt per line so the array split downstream is predictable.
+
+6. **Video Lipsync Demo** (`video`) — character image + spoken audio → seedance (first-frame mode, generates 5s talking-head video) → heygen-lipsync (replaces mouth to match audio) → final video. Cost transparently surfaced in the description (~$0.65/Run at 720p). Idle prompt exposed as a config-text param so the user can tune the micro-motion ("blinks, slight head tilt, looking at camera").
+
+**Shape validation tests** in [`tests/unit/recipes/f2-starter-recipes.test.ts`](tests/unit/recipes/f2-starter-recipes.test.ts) — each recipe gets read off disk, JSON-extracted via the `$json$` markers, and validated for: subgraph version, unique node ids, every `kind` exists in the registry, every edge endpoint resolves, every exposed `internalNodeId` resolves, the SQL category literal matches the recipe's declared bucket. Per-recipe spot checks lock the load-bearing config (e.g. Variation Burst's `numImages: 4`, Moodboard's `imagePorts: 3` on both LLM and renderer, Pose Sheet's `texts` length and `selectionMode`, Voice Memo's audio-IN/image-OUT crossover). 13 tests.
+
+**Tests + verification:**
+- `npm test` → 2.011 passing (was 1.990; +21 across the 3 unit + 5 component + 13 recipe-shape tests).
+- `npx tsc --noEmit` clean.
+- `npm run lint` 0 errors.
+- The Add Node popover, SaveRecipeDialog, and `save_selection_as_recipe` tool all narrow on the same `RECIPE_CATEGORIES` constant — single source of truth, no string drift possible.
+
+**The categories are now load-bearing.** The Add Node menu groups by them, the Save dialog requires one, the assistant tool validates against them, the Cookbook overlay search includes them. A recipe without a known category lands in the "uncategorized" fallback bucket — visible but flagged as drifted; the fix is to UPDATE the row's category to a known value, not to extend the enum casually (extension is an ADR-level decision because every consumer narrows on the literal).
+
+## 2026-06-04 — Assistant precision pass: plan-first, error recovery, intent vocabulary, few-shots, self-verification
+
+The post-write receipt arc (2026-06-03) closed the "claimed-without-doing" class of bugs. This pass closes the next layer up: the LLM had the right tools but no PROCEDURE for hard cases — compound asks would chain in random order, `ok: false` failures would dead-end as apologies, the user's natural-language phrases ("salva", "fixa", "experimenta variações", "tá bugado") had no canonical mapping, and after multi-step writes nothing forced the LLM to verify the end-state was clean.
+
+Five new sections in [`REASONER_INSTRUCTIONS`](src/lib/assistant/instructions.ts), each independently improvable, all token-budget-conscious:
+
+**`## PLAN-FIRST PROTOCOL`** — when the user's request decomposes into 3+ distinct sub-tasks (e.g. *"salva 4 imagens em Moodboard, depois forka Performance Video pra v2 e renomeia node 3 pra 'establishing shot'"*), the LLM MUST open the turn with a single `narrate({ message: "Plan: 1) … 2) … 3) …" })` BEFORE any other tool. The plan is the contract: each step maps to ONE tool intent. Then execute step-by-step, citing the receipt for each. Final reply is a 1–2 sentence summary listing the receipts in order. Skip the plan for 1–2 step requests; it's noise. Plans containing a `costClass: large` step that's getting dispatched directly (because run-intent is explicit) MUST mention the spend explicitly so the user can object before the dispatch.
+
+**`## ERROR RECOVERY`** — table of 12+ common `ok: false` patterns mapped to their next-action tool. `no-op patch` → `read_node_state` then reconcile. `Unknown node kind 'X'` → substitution table (`label` → `text`, `chat node` → `llm-text`, `image gen` → `fal-image`, `video` → `seedance`) or `read_canvas` to see real kinds. `Edge already exists` → skip (don't retry). `Capacity violation` → `analyze_selection_subgraph` then `remove_edge` then retry. `Self-loop` → recheck ids. `Canvas is empty` → build first or tell the user. `RLS` / `permission denied` / `403` → DON'T retry; surface "looks like that resource belongs to a different account". `no pending refactor` → check `## PENDING REFACTOR PROPOSAL` block before claiming. Universal rule: NEVER write "feito" / "done" / "✓" after `ok: false` from the tool that was supposed to do the thing.
+
+**`## INTENT VOCABULARY`** — 25+ row table mapping user phrases (Portuguese + English, mixed) to the right tool. *"salva isso"* → `create_group`. *"fixa essa"* → `pin_generation({ pinned: true })`. *"experimenta variações"* → `regenerate` (large costClass — confirm via `ask_user` unless run-intent explicit). *"junta esses nodes"* → `save_selection_as_recipe`. *"forka o recipe"* → `fork_recipe`. *"limpa"* → `clear_run`. *"compara essas três"* → `compare_results`. *"que tem similar?"* → `find_similar_generations`. The full table covers library/gallery curation, recipe lifecycle, hygiene, run intent, analyze flow triggers, and read-tool prompts.
+
+**`## CANONICAL EXAMPLES`** — 5 condensed few-shot transcripts the LLM pattern-matches against:
+1. Patch one node with a real change → cited receipt + final text quotes new value.
+2. No-op reconciliation → `ok: false` → `read_node_state` → honest "já estava com X — nada mudou".
+3. Compound ask with plan-first → narrate plan → 3 writes → `check_workflow_health` → 1-line summary with all 3 receipts + health.
+4. Analyze → wait for confirmation → `propose_refactor` (NOT raw mutation) on next turn.
+5. Ambiguity → `ask_user` BEFORE large spend → resume on user reply → `regenerate` only after confirmation.
+
+**`## VERIFICATION` extended with self-verification.** When the LLM has fired 3+ structural mutations in the same turn (any combination of `add_*`, `remove_*`, `update_node_config`, `move_node`, `instantiate_recipe`, `unpack_composite`, `apply_pending_refactor`), it MUST call `check_workflow_health` once at the end (BEFORE the final reply) even if the user didn't ask. Multi-step writes are how drift sneaks in; the self-verify catches it. Skip for 1–2 writes — receipts already prove what changed.
+
+**Three new integration scenarios** in [`tests/integration/assistant/scenarios/precision.test.ts`](tests/integration/assistant/scenarios/precision.test.ts) prove the protocol end-to-end:
+- *Scenario 11 — compound ask:* user asks for 3 distinct sub-tasks; trace contains `Plan: …` narration FIRST, then `rename_node` + `move_node` + `remove_node` (each with its structured receipt), then `check_workflow_health` returning `issueCount: 0`. Final reply lists all 3 receipts + health line.
+- *Scenario 12 — error recovery (unknown kind):* LLM tries `add_node({ kind: "image-gen" })` → `ok: false, "Unknown node kind 'image-gen'"` → calls `read_node_schema({ kind: "fal-image" })` → retries with the real kind → `ok: true` create receipt. Final reply acknowledges the recovery, no confabulation.
+- *Scenario 13 — ambiguous regenerate gate:* user says *"experimenta variações dessa imagem"* with empty selection. LLM emits `ask_user` BEFORE any `regenerate` fires. `result.paused === true`; `runId` unchanged; no large-cost tool dispatched.
+
+**Tests + verification:**
+- `npm test` → 1.980 passing (was 1.969; +11 across the 9 new instruction-section assertions + 3 scenario tests, accounting for the trio that bundle multiple expectations per `it`).
+- `npx tsc --noEmit` clean.
+- `npm run lint` 0 errors (5 pre-existing unused-var warnings on Fal route stubs, untouched).
+
+**The bench reads as a coverage receipt.** With 13 scenarios across 6 themes (receipts / construction / hygiene / curation / cost / precision), the bench encodes the operational behavior we want from the assistant in code, not in pose. Any regression in plan-first, error recovery, intent recognition, few-shot pattern matching, or self-verification lights up its corresponding scenario in red.
+
+## 2026-06-03 — Mega-capable assistant arc + anti-confabulation pattern (post-write receipts, pre-flight, cost class registry)
+
+Six waves closing every drift the audit surfaced after the Tier 0–4 build. The headline is **post-write receipts** — the user reported "atualizei pra 10" with a screenshot showing zero change, and the root cause was every write tool returning `{ ok: true }` with no proof of mutation. The fix runs deeper than that one bug, so this entry covers the whole arc end-to-end.
+
+**Post-write receipts (P0.0).** Twelve write tools (`update_node_config`, `add_node`, `add_edge`, `remove_node`, `remove_edge`, `move_node`, `rename_node`, `resize_node`, `instantiate_recipe`, `unpack_composite`, `apply_pending_refactor`, `repair_workflow`) now return a structured diff:
+
+- **Patch tools** → `{ ok: true, changed: ["<key>", ...], before: { … }, after: { … } }`. `changed` lists ONLY the keys whose serialized values differed, computed via [`diffShallow`](src/lib/assistant/tools/construct/diff-config.ts) (stable JSON encoding so `{a:1,b:2}` and `{b:2,a:1}` compare equal). When the patch is a no-op (LLM patched the wrong key, value already matched, etc.) the tool returns `{ ok: false, error: "no-op patch …", attemptedPatch }` so the LLM stops, reads `read_node_state`, and reconciles instead of confabulating.
+- **Create tools** → `{ ok: true, changed: ["__create"], entity: { id, kind, … } }` so the LLM can quote the actual id + kind it landed.
+- **Delete tools** → `{ ok: true, changed: ["__delete"], entity: { id, kind, … }, cascadedEdgeCount? }` so cascade effects are visible.
+- **Bulk tools** → `{ ok: true, changed: ["__bulk"], bulk: { …counters } }` so multi-effect ops (instantiate_recipe expand, repair_workflow, apply_pending_refactor) report the actual number of nodes/edges spawned, repaired, or applied.
+
+The tools previously labeled "idempotent — missing id is a no-op" (`remove_node`, `remove_edge` with non-existent ids) now return `ok: false` with a `no-op` error so the LLM doesn't claim a delete that did nothing.
+
+**Instructions teaching the receipt pattern.** [`REASONER_INSTRUCTIONS`](src/lib/assistant/instructions.ts) gains a new `## POST-WRITE RECEIPTS` section before `## VERIFICATION`. Required reply pattern: every write call with `ok: true` opens the next message with a one-line receipt that quotes `changed` + `after` values verbatim (truncated to ~60 chars), THEN any commentary. "feito" / "atualizei" / "done" / "I changed" without that receipt is now explicitly forbidden. No-op (`ok: false`) responses force a `read_node_state` reconciliation pass before the LLM may say anything to the user.
+
+**UI inline diff (chat-sheet ToolCallRow).** [`src/components/layout/chat-sheet.tsx`](src/components/layout/chat-sheet.tsx) renders a second-line receipt below every write tool call. Patch → `→ text: "…"`. Create → `→ +n7 (text)` (emerald). Delete → `→ −n3 (llm-text)` (rose). Bulk → `→ recipeName: "Performance Video", spawnedNodeCount: 5`. No-op → `→ no-op (config did not change)` in amber. The user sees what actually happened without reading the LLM's prose.
+
+**Pre-flight `__preflightHealth` end-to-end (P0.1).** The reasoner already attached `__preflightHealth` to the first structural write of a turn when the live graph had error-level issues, but nothing surfaced it. New `## PRE-FLIGHT` section in `instructions.ts` requires the LLM to open its next message with `note` + `issues` verbatim before any other prose, and offer `repair_workflow` / `propose_refactor`. UI counterpart: `ToolCallRow` renders an amber `<details>` accordion with a chip "⚠ N errors — preflight" + a list of `code` / `nodeId` / `message` / `hint` per issue. Component test (`tests/component/layout/chat-sheet.test.tsx`) covers both presence and absence.
+
+**Cost discipline (P0.2).** `costNarration` in [`reasoner.ts`](src/lib/assistant/reasoner.ts) now cites the cost class explicitly (`Calling \`X\` — costClass: small (~$0.001 …)`) so the LLM can apply the dispatch gate. New `Cost discipline` paragraph in `instructions.ts` ties the four classes to behavior: free + small + medium dispatch directly; large MUST `ask_user` first UNLESS the user's last message contained explicit run-intent (`roda` / `run it` / `go` / `executa` / `render` / `make it`). Reasoner test asserts the narration contains `costClass: small` for `find_similar_generations` and `costClass: large` for `regenerate`.
+
+**Role overlays teach the new tools (P0.3).** All four overlays got a "when to suggest tools" section pinning the trigger phrases for the 17 tools added in the arc:
+
+- **General**: `read_recent_chat` (memory), `create_group` / `add_to_group` / `rename_group` / `remove_asset` (library curation), `pin_generation` / `set_generation_title` / `delete_generation` (gallery curation), `delete_recipe` / `fork_recipe` / `list_recipe_versions` / `update_composite_to_latest` (recipe lifecycle), `repair_workflow` / `clear_run` / `clear_cache` (hygiene).
+- **Recipe Architect**: deep coverage of the four recipe lifecycle tools.
+- **Storyboard Director** + **Timeline Director**: gallery curation tools (`pin_generation`, `set_generation_title`, `delete_generation`, `compare_results`) for picking winners after a generation pass.
+
+`reasoner-roles.test.ts` programmatic backtick scanner already validated tool names; this commit adds 12 explicit per-role coverage assertions so a future overlay refactor can't silently drop the new tools.
+
+**Persist.migrate consolidated (P1.1).** Before this entry [`workflow-store.ts`](src/lib/stores/workflow-store.ts) `persist.migrate` had a manual chain of seven migrations (v9_5 → v14) that duplicated `runAllGraphMigrations`. After project documents started consuming the helper, the manual chain drifted. Both paths now funnel through `runAllGraphMigrations` from [`migrate-graph.ts`](src/lib/engine/migrate-graph.ts) — local rehydrate and project-document load apply an identical pipeline. Smoke tests in [`workflow-store.test.ts`](tests/unit/stores/workflow-store.test.ts) pin the v6 corrupt `fal-ai/nano-banana-pro/edit` payload (heals to default), the `fal-ai/flux-2-pro` known-id case (strips prefix), the array `separator` phantom (heals to `delimiter`), and the canonical-graph no-op.
+
+**Tests + verification.**
+
+- `npm test` → 1.959 passing (was 1.932; +27 new across diff helper, post-write receipts on all 12 write tools, role coverage, instructions section anchors, cost narration, persist.migrate smoke).
+- `npx tsc --noEmit` clean.
+- `npm run lint` 0 errors (5 pre-existing unused-var warnings on Fal route stubs, untouched).
+
+**The smoke that closed the user's bug.** Reproduce the screenshot (3 Text nodes selected, Array, LLM Text), patch a Text node with the same value: trace UI shows `→ no-op (config did not change)` in amber, LLM is forced to read the actual state and explain what failed. Patch with a different value: trace UI shows `→ text: "Separate each of the 10 environment description prom…"` literally. There's no longer a path where the assistant says "atualizei ✓" without a corresponding inline diff receipt.
+
 ## 2026-06-02 — Router node: fan-out organizer (one input → N labeled exits)
 
 Asked for and shipped: a primitive that lets the user wire a single upstream once and then hand off N labeled outgoing edges instead of dragging N edges out of one source handle and getting a tangle.

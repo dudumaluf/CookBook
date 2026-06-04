@@ -249,25 +249,262 @@ function ToolCallRow({
     typeof result.result === "object" &&
     result.result !== null &&
     (result.result as { ok?: boolean }).ok !== false;
+  const receipt = extractReceipt(result);
+  const preflight = extractPreflightHealth(result);
   return (
-    <div className="flex items-start gap-2 text-xs">
-      {result === undefined ? (
-        <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-      ) : ok ? (
-        <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
-      ) : (
-        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
-      )}
-      <Wrench className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
-      <code className="rounded bg-foreground/5 px-1.5 py-0.5 text-[11px] text-foreground/80">
-        {call.toolName}
-      </code>
-      {result?.type === "tool_result" ? (
-        <span className="text-[10px] text-muted-foreground/70">
-          {result.durationMs}ms
-        </span>
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-start gap-2 text-xs">
+        {result === undefined ? (
+          <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+        ) : ok ? (
+          <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-500" />
+        ) : (
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
+        )}
+        <Wrench className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+        <code className="rounded bg-foreground/5 px-1.5 py-0.5 text-[11px] text-foreground/80">
+          {call.toolName}
+        </code>
+        {result?.type === "tool_result" ? (
+          <span className="text-[10px] text-muted-foreground/70">
+            {result.durationMs}ms
+          </span>
+        ) : null}
+      </div>
+      {receipt ? (
+        <ToolCallReceiptLine receipt={receipt} />
+      ) : null}
+      {preflight ? (
+        <PreflightHealthChip preflight={preflight} />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Extract a structured receipt from a tool_result event. Returns
+ * null when the tool didn't supply one (read tools, legacy tools,
+ * etc.). The receipt object is the same shape the LLM consumes —
+ * we just project it for the UI.
+ *
+ * Three shapes:
+ *   - patch: `changed[]` of real keys + before/after maps.
+ *   - create/delete: `changed: ["__create" | "__delete"]` + `entity`.
+ *   - bulk: `changed: ["__bulk"]` + `bulk` counters.
+ *   - no-op: `ok: false` with `attemptedPatch` (or matching error
+ *     string) so the user sees the failed-but-not-fatal yellow path.
+ */
+function extractReceipt(
+  result: ReasonerEvent | undefined,
+): ToolCallReceipt | null {
+  if (!result || result.type !== "tool_result") return null;
+  const r = result.result as
+    | {
+        ok?: boolean;
+        error?: string;
+        changed?: string[];
+        before?: Record<string, unknown>;
+        after?: Record<string, unknown>;
+        entity?: Record<string, unknown>;
+        bulk?: Record<string, unknown>;
+        attemptedPatch?: unknown;
+        nodeId?: string;
+      }
+    | null;
+  if (!r || typeof r !== "object") return null;
+  if (r.ok === false && typeof r.error === "string" && r.error.includes("no-op")) {
+    return { kind: "noop", message: r.error, attemptedPatch: r.attemptedPatch };
+  }
+  if (!Array.isArray(r.changed) || r.changed.length === 0) return null;
+  if (r.changed[0] === "__create") {
+    return { kind: "create", entity: r.entity ?? {} };
+  }
+  if (r.changed[0] === "__delete") {
+    return { kind: "delete", entity: r.entity ?? {} };
+  }
+  if (r.changed[0] === "__bulk") {
+    return { kind: "bulk", bulk: r.bulk ?? {} };
+  }
+  return {
+    kind: "patch",
+    changed: r.changed,
+    before: r.before ?? {},
+    after: r.after ?? {},
+    nodeId: r.nodeId,
+  };
+}
+
+type ToolCallReceipt =
+  | {
+      kind: "patch";
+      changed: string[];
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+      nodeId?: string;
+    }
+  | { kind: "create"; entity: Record<string, unknown> }
+  | { kind: "delete"; entity: Record<string, unknown> }
+  | { kind: "bulk"; bulk: Record<string, unknown> }
+  | { kind: "noop"; message: string; attemptedPatch?: unknown };
+
+function truncateForUi(value: unknown, max = 60): string {
+  if (value === undefined) return "—";
+  if (value === null) return "null";
+  if (typeof value === "string") {
+    const trimmed = value.length <= max ? value : value.slice(0, max - 3) + "...";
+    return `"${trimmed}"`;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) return `[${value.length}]`;
+  if (typeof value === "object") return "{…}";
+  return String(value);
+}
+
+function ToolCallReceiptLine({ receipt }: { receipt: ToolCallReceipt }) {
+  if (receipt.kind === "patch") {
+    const text = receipt.changed
+      .map((key) => `${key}: ${truncateForUi(receipt.after[key])}`)
+      .join(", ");
+    return (
+      <div
+        className="ml-9 text-[10.5px] text-muted-foreground/80"
+        data-testid="tool-call-receipt"
+        data-receipt-kind="patch"
+      >
+        → {text}
+      </div>
+    );
+  }
+  if (receipt.kind === "create") {
+    const id = typeof receipt.entity.id === "string" ? receipt.entity.id : "?";
+    const kind = typeof receipt.entity.kind === "string" ? receipt.entity.kind : "node";
+    return (
+      <div
+        className="ml-9 text-[10.5px] text-emerald-600/80 dark:text-emerald-400/80"
+        data-testid="tool-call-receipt"
+        data-receipt-kind="create"
+      >
+        → +{id} ({kind})
+      </div>
+    );
+  }
+  if (receipt.kind === "delete") {
+    const id = typeof receipt.entity.id === "string" ? receipt.entity.id : "?";
+    const kind = typeof receipt.entity.kind === "string" ? receipt.entity.kind : "edge";
+    return (
+      <div
+        className="ml-9 text-[10.5px] text-rose-600/80 dark:text-rose-400/80"
+        data-testid="tool-call-receipt"
+        data-receipt-kind="delete"
+      >
+        → −{id} ({kind})
+      </div>
+    );
+  }
+  if (receipt.kind === "bulk") {
+    const parts = Object.entries(receipt.bulk)
+      .filter(([, v]) => v !== null && v !== undefined && v !== 0 && v !== false)
+      .map(([k, v]) => `${k}: ${truncateForUi(v, 40)}`)
+      .join(", ");
+    return (
+      <div
+        className="ml-9 text-[10.5px] text-muted-foreground/80"
+        data-testid="tool-call-receipt"
+        data-receipt-kind="bulk"
+      >
+        → {parts || "applied"}
+      </div>
+    );
+  }
+  return (
+    <div
+      className="ml-9 text-[10.5px] text-amber-600/80 dark:text-amber-400/80"
+      data-testid="tool-call-receipt"
+      data-receipt-kind="noop"
+    >
+      → no-op (config did not change)
+    </div>
+  );
+}
+
+/**
+ * Pre-flight health chip — rendered inline below ToolCallRow when
+ * `__preflightHealth` is attached to a tool result. The reasoner
+ * attaches this to the first structural write of a turn when the
+ * live graph already has error-level issues; surfacing it here gives
+ * the user a visible hook even if the LLM forgets to quote it.
+ *
+ * Uses native <details> for the accordion so we don't need extra
+ * deps and keyboard a11y is free.
+ */
+type PreflightHealth = {
+  note: string;
+  issueCount: number;
+  errorCount: number;
+  issues: Array<{
+    severity: "error" | "warn";
+    code: string;
+    nodeId?: string;
+    edgeId?: string;
+    message: string;
+    hint?: string;
+  }>;
+};
+
+function extractPreflightHealth(
+  result: ReasonerEvent | undefined,
+): PreflightHealth | null {
+  if (!result || result.type !== "tool_result") return null;
+  const r = result.result as { __preflightHealth?: unknown } | null;
+  if (!r || typeof r !== "object") return null;
+  const h = r.__preflightHealth as PreflightHealth | undefined;
+  if (!h || typeof h !== "object" || !Array.isArray(h.issues)) return null;
+  return h;
+}
+
+function PreflightHealthChip({ preflight }: { preflight: PreflightHealth }) {
+  return (
+    <details
+      className="ml-9 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1"
+      data-testid="tool-call-preflight"
+    >
+      <summary className="cursor-pointer text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
+        ⚠ {preflight.errorCount} error{preflight.errorCount === 1 ? "" : "s"} —
+        preflight ({preflight.issueCount} total)
+      </summary>
+      <div className="mt-1 flex flex-col gap-1 text-[10.5px]">
+        <p className="text-muted-foreground/90">{preflight.note}</p>
+        <ul className="flex flex-col gap-1">
+          {preflight.issues.map((issue, idx) => (
+            <li
+              key={`${issue.code}-${issue.nodeId ?? issue.edgeId ?? idx}`}
+              className="rounded bg-amber-500/5 px-1.5 py-1"
+              data-testid="tool-call-preflight-issue"
+            >
+              <code className="text-[10.5px] text-amber-700 dark:text-amber-300">
+                {issue.severity}:{issue.code}
+              </code>
+              {issue.nodeId ? (
+                <span className="ml-1.5 text-foreground/70">
+                  {issue.nodeId}
+                </span>
+              ) : null}
+              {issue.edgeId ? (
+                <span className="ml-1.5 text-foreground/70">
+                  edge {issue.edgeId}
+                </span>
+              ) : null}
+              <p className="text-foreground/80">{issue.message}</p>
+              {issue.hint ? (
+                <p className="text-muted-foreground/80">→ {issue.hint}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
   );
 }
 

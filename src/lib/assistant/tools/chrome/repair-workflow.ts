@@ -36,7 +36,7 @@ const argsSchema = z.object({}).strict();
 export const repairWorkflowTool: AssistantTool = {
   name: "repair_workflow",
   description:
-    "Run the canonical graph-migration pipeline on the live canvas. Heals: fal-image model strings, array.separator → delimiter (phantom field), legacy multi-handle edges (Video Concat / Seedance / LLM Text / Fal Image smart inputs), LLM Text user-smart-input rollback. Returns counters for what actually changed.",
+    "Run the canonical graph-migration pipeline on the live canvas. Heals: fal-image model strings, array.separator → delimiter (phantom field), legacy multi-handle edges (Video Concat / Seedance / LLM Text / Fal Image smart inputs), LLM Text user-smart-input rollback. Returns { changed: ['__bulk'], bulk: { changedNodeCount, changedEdgeCount, droppedEdgeCount } } when something migrated; { changed: [] } when the graph was already canonical.",
   parameters: {
     type: "object",
     properties: {},
@@ -66,7 +66,7 @@ export const repairWorkflowTool: AssistantTool = {
     if (changedNodeCount === 0 && changedEdgeCount === 0 && droppedEdges === 0) {
       return {
         ok: true,
-        changed: false,
+        changed: [],
         message: "No drift detected — graph is already canonical.",
       };
     }
@@ -78,10 +78,12 @@ export const repairWorkflowTool: AssistantTool = {
 
     return {
       ok: true,
-      changed: true,
-      changedNodeCount,
-      changedEdgeCount,
-      droppedEdgeCount: Math.max(0, droppedEdges),
+      changed: ["__bulk"],
+      bulk: {
+        changedNodeCount,
+        changedEdgeCount,
+        droppedEdgeCount: Math.max(0, droppedEdges),
+      },
     };
   },
 };

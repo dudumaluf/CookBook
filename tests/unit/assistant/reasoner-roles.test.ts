@@ -218,6 +218,85 @@ describe("role overlays — every backticked snake_case identifier resolves", as
 });
 
 /**
+ * Per-role coverage smoke (2026-06-03 P0.3). After the Mega-capable
+ * arc landed 17 new tools, each role overlay was rewritten to teach
+ * the relevant trigger phrases for the subset that role uses. These
+ * tests pin the coverage so a future overlay refactor can't silently
+ * drop those tools out of the LLM's context window.
+ */
+describe("role overlays — per-role new-tool coverage (2026-06-03)", async () => {
+  const { ROLES } = await import("@/lib/assistant/roles");
+  const overlayOf = (id: string) =>
+    ROLES.find((r) => r.id === id)?.systemPromptOverlay ?? "";
+
+  describe("general overlay", () => {
+    const t = overlayOf("general");
+
+    it("teaches read_recent_chat for memory triggers", () => {
+      expect(t).toContain("read_recent_chat");
+      expect(t).toMatch(/lembra|memory|conversa|window/i);
+    });
+
+    it("teaches library mutations (create_group, add_to_group, rename_group, remove_asset)", () => {
+      expect(t).toContain("create_group");
+      expect(t).toContain("add_to_group");
+      expect(t).toContain("rename_group");
+      expect(t).toContain("remove_asset");
+    });
+
+    it("teaches gallery curation (pin_generation, set_generation_title, delete_generation)", () => {
+      expect(t).toContain("pin_generation");
+      expect(t).toContain("set_generation_title");
+      expect(t).toContain("delete_generation");
+    });
+
+    it("teaches recipe lifecycle (delete_recipe, fork_recipe, list_recipe_versions, update_composite_to_latest)", () => {
+      expect(t).toContain("delete_recipe");
+      expect(t).toContain("fork_recipe");
+      expect(t).toContain("list_recipe_versions");
+      expect(t).toContain("update_composite_to_latest");
+    });
+
+    it("teaches hygiene tools (repair_workflow, clear_run, clear_cache)", () => {
+      expect(t).toContain("repair_workflow");
+      expect(t).toContain("clear_run");
+      expect(t).toContain("clear_cache");
+    });
+  });
+
+  describe("recipe-architect overlay", () => {
+    const t = overlayOf("recipe-architect");
+
+    it("teaches the four recipe-lifecycle tools the role specializes in", () => {
+      expect(t).toContain("fork_recipe");
+      expect(t).toContain("list_recipe_versions");
+      expect(t).toContain("update_composite_to_latest");
+      expect(t).toContain("delete_recipe");
+    });
+  });
+
+  describe("storyboard-director overlay", () => {
+    const t = overlayOf("storyboard-director");
+
+    it("teaches gallery curation tools for picking winning panels", () => {
+      expect(t).toContain("pin_generation");
+      expect(t).toContain("set_generation_title");
+      expect(t).toContain("compare_results");
+    });
+  });
+
+  describe("timeline-director overlay", () => {
+    const t = overlayOf("timeline-director");
+
+    it("teaches gallery curation tools for picking winning takes", () => {
+      expect(t).toContain("pin_generation");
+      expect(t).toContain("set_generation_title");
+      expect(t).toContain("compare_results");
+    });
+  });
+});
+
+/**
  * Pull the system text from the outgoing call args, regardless of
  * whether it landed as a string (caching-incapable path) or as
  * cache_control content blocks (Anthropic / Gemini path). Same

@@ -891,12 +891,12 @@ function isStructuralMutationName(name: string): boolean {
 function costNarration(toolName: string, costClass: string): string {
   switch (costClass) {
     case "small":
-      return `Calling \`${toolName}\` — small spend (~$0.001 LLM call).`;
+      return `Calling \`${toolName}\` — costClass: small (~$0.001 LLM call).`;
     case "medium":
-      return `Calling \`${toolName}\` — medium spend (~$0.005 multi-image LLM call).`;
+      return `Calling \`${toolName}\` — costClass: medium (~$0.005 multi-image LLM call). Track the running spend for this turn.`;
     case "large":
-      return `Calling \`${toolName}\` — large spend. Generation runs hit Fal/Higgsfield (image: ~$0.01-$0.05; video: ~$0.10-$0.50 depending on the workflow).`;
+      return `Calling \`${toolName}\` — costClass: large. Generation runs hit Fal/Higgsfield (image: ~$0.01-$0.05; video: ~$0.10-$0.50). Confirm via \`ask_user\` UNLESS the user's last message had explicit run-intent.`;
     default:
-      return `Calling \`${toolName}\`.`;
+      return `Calling \`${toolName}\` — costClass: free.`;
   }
 }

@@ -4,9 +4,10 @@ import { nodeRegistry } from "@/lib/engine/registry";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
+import { snapshotNode } from "./diff-config";
 
 /**
- * add_node — Slice 7.3 (ADR-0042).
+ * add_node — Slice 7.3 (ADR-0042) + post-write receipts (2026-06-03).
  *
  * Spawn a new node on the canvas. Returns the new node's id so
  * subsequent tool calls (add_edge, update_node_config) can target
@@ -16,6 +17,12 @@ import type { AssistantTool } from "../index";
  * create something the engine doesn't know how to run. The error
  * surfaces back to the LLM as a tool_result so it can pick a real
  * kind on the retry.
+ *
+ * Receipt:
+ *   `changed: ["__create"]` + `entity` snapshot of the new node so
+ *   the LLM has to acknowledge the actual kind/id/config it landed
+ *   with (not a fictionalized "added a Text node" when the user
+ *   asked for image-generation).
  */
 
 const argsSchema = z
@@ -32,7 +39,7 @@ const argsSchema = z
 export const addNodeTool: AssistantTool = {
   name: "add_node",
   description:
-    "Spawn a new node on the canvas. `kind` MUST be one of the registered node kinds (see NODE CATALOG in your system prompt). `position` is in canvas coordinates. Optional `config` patches the schema's defaultConfig. Returns the new node id.",
+    "Spawn a new node on the canvas. `kind` MUST be one of the registered node kinds (see NODE CATALOG in your system prompt). `position` is in canvas coordinates. Optional `config` patches the schema's defaultConfig. Returns { nodeId, changed: ['__create'], entity } — quote the entity.id + kind verbatim before claiming the node was added.",
   parameters: {
     type: "object",
     properties: {
@@ -70,6 +77,12 @@ export const addNodeTool: AssistantTool = {
       args.position,
       args.config,
     );
-    return { ok: true, nodeId: id };
+    const created = useWorkflowStore.getState().nodes.find((n) => n.id === id);
+    return {
+      ok: true,
+      nodeId: id,
+      changed: ["__create"],
+      entity: created ? snapshotNode(created) : { id, kind: args.kind, position: args.position, config: args.config ?? {} },
+    };
   },
 };

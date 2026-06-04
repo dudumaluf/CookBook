@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 import {
+  coerceRecipeCategory,
   type RecipeFilter,
   type RecipeRecord,
   type RecipeRepository,
@@ -46,7 +47,7 @@ function rowToRecord(row: RawRecipeRow): RecipeRecord {
     ownerId: row.owner_id,
     name: row.name,
     description: row.description,
-    category: row.category,
+    category: coerceRecipeCategory(row.category),
     subgraph: row.subgraph ?? {
       version: RECIPE_SUBGRAPH_VERSION,
       nodes: [],
@@ -73,7 +74,7 @@ function versionRowToRecord(row: RawRecipeVersionRow): RecipeVersionRecord {
     },
     name: row.name,
     description: row.description,
-    category: row.category,
+    category: coerceRecipeCategory(row.category),
     savedBy: row.saved_by,
     createdAt: row.created_at,
   };

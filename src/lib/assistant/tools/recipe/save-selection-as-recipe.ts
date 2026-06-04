@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { autoDetectExposedIO } from "@/lib/recipes/auto-detect-io";
 import { saveSelectionAsRecipe } from "@/lib/recipes/save-from-canvas";
+import { RECIPE_CATEGORIES } from "@/lib/repositories/recipe-repository";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
@@ -16,6 +17,11 @@ import type { AssistantTool } from "../index";
  * The auto-detect step picks dangling/escaping handles as the public
  * surface — same logic the Save-as-recipe modal uses. The LLM can
  * override by passing `exposedInputs` / `exposedOutputs` explicitly.
+ *
+ * 2026-06-04 — `category` is now validated against `RECIPE_CATEGORIES`
+ * (`describe` / `image` / `video` / `audio` / `utility`). Defaults to
+ * `utility` when the LLM doesn't pick one. The Add Node menu groups
+ * recipes by this field, so an unbucketed recipe is hard to find.
  */
 
 const exposedHandleSchema = z.object({
@@ -29,7 +35,7 @@ const argsSchema = z
   .object({
     name: z.string().min(1),
     description: z.string().optional(),
-    category: z.string().optional(),
+    category: z.enum(RECIPE_CATEGORIES).optional(),
     selectedNodeIds: z.array(z.string()).optional(),
     exposedInputs: z.array(exposedHandleSchema).optional(),
     exposedOutputs: z.array(exposedHandleSchema).optional(),
@@ -40,7 +46,7 @@ const argsSchema = z
 export const saveSelectionAsRecipeTool: AssistantTool = {
   name: "save_selection_as_recipe",
   description:
-    "Save the current canvas selection (or the explicit `selectedNodeIds`) as a reusable recipe. By default collapses the selection into a single composite node at its centroid. Auto-detects exposed I/O if you don't pass explicit lists.",
+    "Save the current canvas selection (or the explicit `selectedNodeIds`) as a reusable recipe. By default collapses the selection into a single composite node at its centroid. Auto-detects exposed I/O if you don't pass explicit lists. Pass `category` to bucket the recipe in the Add Node menu (describe / image / video / audio / utility); defaults to 'utility'.",
   parameters: {
     type: "object",
     properties: {
@@ -48,8 +54,9 @@ export const saveSelectionAsRecipeTool: AssistantTool = {
       description: { type: "string" },
       category: {
         type: "string",
+        enum: [...RECIPE_CATEGORIES],
         description:
-          "Free-form bucket like 'image', 'describe', 'edit'. Optional.",
+          "One of describe / image / video / audio / utility. Buckets the recipe in the Add Node menu. Pick `describe` for text-output prompt directors, `image`/`video`/`audio` by primary OUTPUT modality, `utility` for cross-modal scaffolding. Defaults to 'utility' when omitted.",
       },
       selectedNodeIds: {
         type: "array",
@@ -133,7 +140,7 @@ export const saveSelectionAsRecipeTool: AssistantTool = {
       selectedNodeIds: selectedIds,
       name: args.name,
       description: args.description,
-      category: args.category,
+      category: args.category ?? "utility",
       exposedInputs,
       exposedOutputs,
       replaceWithComposite: args.replaceWithComposite ?? true,
@@ -142,6 +149,7 @@ export const saveSelectionAsRecipeTool: AssistantTool = {
       ok: true,
       recipeId: result.recipe.id,
       compositeNodeId: result.compositeNodeId,
+      category: result.recipe.category,
     };
   },
 };

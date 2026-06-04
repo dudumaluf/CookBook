@@ -2,15 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
-import {
-  migrateArrayLegacyDelimiter,
-  migrateFalImageModelNormalization,
-  migrateFalImageSmartInputs,
-  migrateLlmTextCollapseUserPorts,
-  migrateLlmTextSmartInputs,
-  migrateSeedanceRefHandles,
-  migrateVideoConcatClips,
-} from "@/lib/engine/migrate-graph";
+import { runAllGraphMigrations } from "@/lib/engine/migrate-graph";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useAssetStore } from "@/lib/stores/asset-store";
 
@@ -584,44 +576,27 @@ export const useWorkflowStore = create<WorkflowState>()(
             ? persistedEdges.filter((e) => !orphanEdgeIds.has(e.id))
             : (state.edges ?? []);
 
-        // v10 (ADR-0056): Video Concat `clips` multi-handle → ordered
-        // `clip-N` sockets. v11 (ADR-0058): Seedance reference image/video/
-        // audio multi-handles → numbered per-type sockets. v12: LLM Text
-        // `user` + `image` multi-handles → numbered `user-N` / `image-N`
-        // smart-input sockets. v13: Fal Image `image` multi-handle →
-        // numbered `image-N` smart-input sockets. v14: LLM Text user
-        // smart-input rolled back — `user-N` collapses back to a single
-        // `user` socket (Text Concat is the right primitive for combining
-        // many texts upstream); image stays auto-growing.
-        //
-        // v15 (2026-06-02): heal Fal Image `config.model` values that
-        // don't match the runtime registry (e.g. `"fal-ai/<id>"`
-        // endpoint-id strings the assistant occasionally writes by
-        // mistake). Runs first so the per-node max-refs lookup downstream
-        // sees a sanitized model.
-        //
-        // v15.5 (2026-06-02): heal Array `config.separator` phantom
-        // fields — the schema only declares `delimiter` + `trim`, but
-        // the assistant writes `separator: "**"` etc. via
-        // update_node_config. The runtime ignores `separator` so the
-        // user gets a single-item output. Copy into `delimiter` (when
-        // delimiter is still default) and drop the phantom field.
-        const v9_5 = migrateFalImageModelNormalization(
+        // v9_5+ (graph-level migrations) — single source of truth.
+        // 2026-06-03: this used to be a manual chain of seven calls
+        // duplicating the helper. Drift inevitable — `applyProjectDocument`
+        // started consuming `runAllGraphMigrations` while the persist
+        // path lagged behind. Funnel both through the same helper now
+        // so localStorage rehydrate and project-document load apply an
+        // identical pipeline:
+        //   - Fal Image `config.model` normalization (strip `fal-ai/`,
+        //     fall back to default for unknown).
+        //   - Array `separator` → `delimiter` phantom heal.
+        //   - Video Concat `clips` multi → ordered `clip-N`.
+        //   - Seedance ref multi-handles → numbered per-type sockets.
+        //   - LLM Text `user`/`image` multi → numbered smart-inputs.
+        //   - Fal Image `image` multi → numbered smart-inputs.
+        //   - LLM Text user-smart-input rollback (collapse `user-N`).
+        const migrated = runAllGraphMigrations(
           v8Nodes as NodeInstance[],
           v8Edges as WorkflowEdge[],
         );
-        const v9_6 = migrateArrayLegacyDelimiter(v9_5.nodes, v9_5.edges);
-        const v10 = migrateVideoConcatClips(v9_6.nodes, v9_6.edges);
-        const v11 = migrateSeedanceRefHandles(v10.nodes, v10.edges);
-        const v12 = migrateLlmTextSmartInputs(v11.nodes, v11.edges);
-        const v13 = migrateFalImageSmartInputs(v12.nodes, v12.edges);
-        // v14: collapse `user-N` smart-input sockets back to a single
-        // `user` (ADR follow-up — combining many user texts is what the
-        // Text Concat node is for, so the LLM Text node only ever needs
-        // one user prompt + one system prompt + the image array).
-        const v14 = migrateLlmTextCollapseUserPorts(v13.nodes, v13.edges);
 
-        return { ...state, nodes: v14.nodes, edges: v14.edges };
+        return { ...state, nodes: migrated.nodes, edges: migrated.edges };
       },
       // Same pattern as layout-store and project-store: avoid SSR mismatch by
       // rehydrating manually in the AppShell after mount.

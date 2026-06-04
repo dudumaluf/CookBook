@@ -116,4 +116,69 @@ describe("<SaveRecipeDialog />", () => {
     expect(scrollWrapper?.className).toContain("flex-1");
     expect(scrollWrapper?.className).toContain("min-h-0");
   });
+
+  it("offers a closed RECIPE_CATEGORIES dropdown defaulting to 'utility'", () => {
+    // 2026-06-04 — categories are now a fixed taxonomy so the Add Node
+    // menu can group recipes deterministically. The dialog defaults to
+    // 'utility' (cross-modal scaffolding bucket) so user-saved recipes
+    // never land in the rare null-category fallback row.
+    render(
+      <SaveRecipeDialog open onOpenChange={vi.fn()} selectedNodeIds={["n1"]} />,
+    );
+    const select = screen.getByTestId(
+      "save-recipe-category",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("utility");
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual([
+      "describe",
+      "image",
+      "video",
+      "audio",
+      "utility",
+    ]);
+  });
+
+  it("propagates the picked category to the save call", async () => {
+    const saveModule = await import("@/lib/recipes/save-from-canvas");
+    const spy = vi
+      .spyOn(saveModule, "saveSelectionAsRecipe")
+      .mockResolvedValue({
+        recipe: {
+          id: "r1",
+          ownerId: "u1",
+          name: "Test",
+          description: null,
+          category: "image",
+          subgraph: { version: 2, nodes: [], edges: [] },
+          isNode: true,
+          parentRecipeId: null,
+          createdAt: "2026-06-04T00:00:00Z",
+          version: 1,
+        },
+      });
+
+    render(
+      <SaveRecipeDialog open onOpenChange={vi.fn()} selectedNodeIds={["n1"]} />,
+    );
+    fireEvent.change(screen.getByTestId("save-recipe-name"), {
+      target: { value: "Variation Burst" },
+    });
+    fireEvent.change(screen.getByTestId("save-recipe-category"), {
+      target: { value: "image" },
+    });
+    fireEvent.click(screen.getByTestId("save-recipe-submit"));
+
+    // Bubble through the async save handler.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Variation Burst",
+        category: "image",
+      }),
+    );
+
+    spy.mockRestore();
+  });
 });

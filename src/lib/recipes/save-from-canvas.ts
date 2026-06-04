@@ -1,6 +1,7 @@
 import { sliceSelectionSubgraph } from "@/lib/recipes/slice-selection-subgraph";
 import { getRecipeRepository } from "@/lib/repositories/supabase-recipe-repository";
 import type {
+  RecipeCategory,
   RecipeExposedHandle,
   RecipeExposedParam,
   RecipeRecord,
@@ -42,7 +43,7 @@ export interface SaveFromCanvasInput {
   exposedParams?: RecipeExposedParam[];
   name: string;
   description?: string;
-  category?: string;
+  category?: RecipeCategory;
   /** When true (default), the canvas selection is replaced with one
    *  composite node at the centroid of the selection. */
   replaceWithComposite?: boolean;

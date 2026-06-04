@@ -18,9 +18,11 @@ import { useSession } from "@/lib/auth/use-session";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { autoDetectExposedIO } from "@/lib/recipes/auto-detect-io";
 import { saveSelectionAsRecipe } from "@/lib/recipes/save-from-canvas";
-import type {
-  RecipeExposedHandle,
-  RecipeExposedParam,
+import {
+  type RecipeCategory,
+  RECIPE_CATEGORIES,
+  type RecipeExposedHandle,
+  type RecipeExposedParam,
 } from "@/lib/repositories/recipe-repository";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { NodeInstance } from "@/types/node";
@@ -59,6 +61,7 @@ export function SaveRecipeDialog({
   const { user } = useSession();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<RecipeCategory>("utility");
   const [replaceWithComposite, setReplaceWithComposite] = useState(true);
   const [busy, setBusy] = useState(false);
   // We snapshot the auto-detected I/O at open time so the user can tweak
@@ -100,6 +103,7 @@ export function SaveRecipeDialog({
     setExposedParams([]);
     setName("");
     setDescription("");
+    setCategory("utility");
     setReplaceWithComposite(true);
   }, [open, selectedNodeIds]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -121,6 +125,7 @@ export function SaveRecipeDialog({
         selectedNodeIds,
         name: name.trim(),
         description: description.trim() || undefined,
+        category,
         exposedInputs,
         exposedOutputs,
         exposedParams,
@@ -192,6 +197,32 @@ export function SaveRecipeDialog({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What does this recipe do?"
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="recipe-category" className="text-xs">
+              Category
+            </label>
+            {/*
+              Closed dropdown over the canonical RECIPE_CATEGORIES enum.
+              Default 'utility' covers cross-modal scaffolding; the four
+              modality buckets (describe / image / video / audio) match the
+              Add Node menu's grouping so a saved recipe lands in the right
+              section without re-categorization.
+            */}
+            <select
+              id="recipe-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as RecipeCategory)}
+              data-testid="save-recipe-category"
+              className="h-9 rounded-md border border-border/60 bg-background/40 px-2 text-sm capitalize"
+            >
+              {RECIPE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="flex flex-col gap-2">

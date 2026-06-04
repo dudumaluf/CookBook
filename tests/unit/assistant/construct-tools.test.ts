@@ -47,7 +47,7 @@ describe("add_node tool", () => {
     expect(out.error).toContain("Unknown node kind");
   });
 
-  it("spawns a node and returns the id", async () => {
+  it("spawns a node and returns the id + create receipt", async () => {
     const tool = getTool("add_node")!;
     const out = (await tool.execute(
       {
@@ -56,9 +56,18 @@ describe("add_node tool", () => {
         config: { text: "hi" },
       },
       {},
-    )) as { ok: boolean; nodeId: string };
+    )) as {
+      ok: boolean;
+      nodeId: string;
+      changed: string[];
+      entity: { id: string; kind: string; config: Record<string, unknown> };
+    };
     expect(out.ok).toBe(true);
     expect(typeof out.nodeId).toBe("string");
+    expect(out.changed).toEqual(["__create"]);
+    expect(out.entity.id).toBe(out.nodeId);
+    expect(out.entity.kind).toBe("text");
+    expect((out.entity.config as { text: string }).text).toBe("hi");
     expect(useWorkflowStore.getState().nodes).toHaveLength(1);
   });
 });
@@ -78,7 +87,7 @@ describe("add_edge tool", () => {
     expect(out.ok).toBe(false);
   });
 
-  it("creates an edge between two existing nodes", async () => {
+  it("creates an edge between two existing nodes + create receipt", async () => {
     const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const id2 = useWorkflowStore.getState().addNode("text", { x: 200, y: 0 });
     const tool = getTool("add_edge")!;
@@ -90,14 +99,22 @@ describe("add_edge tool", () => {
         targetHandle: "out",
       },
       {},
-    )) as { ok: boolean; edgeId?: string };
+    )) as {
+      ok: boolean;
+      edgeId?: string;
+      changed: string[];
+      entity: { id: string; source: string; target: string };
+    };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["__create"]);
+    expect(out.entity.source).toBe(id1);
+    expect(out.entity.target).toBe(id2);
     expect(useWorkflowStore.getState().edges).toHaveLength(1);
   });
 });
 
 describe("update_node_config tool", () => {
-  it("merges config patch into node", async () => {
+  it("merges config patch into node + returns diff receipt", async () => {
     const id = useWorkflowStore
       .getState()
       .addNode("text", { x: 0, y: 0 }, { text: "old" });
@@ -105,12 +122,34 @@ describe("update_node_config tool", () => {
     const out = (await tool.execute(
       { nodeId: id, config: { text: "new" } },
       {},
-    )) as { ok: boolean };
+    )) as {
+      ok: boolean;
+      changed: string[];
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["text"]);
+    expect(out.before.text).toBe("old");
+    expect(out.after.text).toBe("new");
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
     expect((node.config as { text: string }).text).toBe("new");
+  });
+
+  it("returns ok:false (no-op) when patch matches current value", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("text", { x: 0, y: 0 }, { text: "same" });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { text: "same" } },
+      {},
+    )) as { ok: boolean; error?: string; attemptedPatch?: unknown };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
+    expect(out.attemptedPatch).toEqual({ text: "same" });
   });
 
   it("rejects an unknown fal-image model with a useful error", async () => {
@@ -125,7 +164,6 @@ describe("update_node_config tool", () => {
     expect(out.ok).toBe(false);
     expect(out.error).toContain("fal-image");
     expect(out.error).toContain("nano-banana-2");
-    // State unchanged — bad value didn't slip through.
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { model: string }).model).toBe("nano-banana-2");
   });
@@ -138,18 +176,15 @@ describe("update_node_config tool", () => {
     const out = (await tool.execute(
       { nodeId: id, config: { model: "flux-2-pro" } },
       {},
-    )) as { ok: boolean };
+    )) as { ok: boolean; changed: string[]; after: Record<string, unknown> };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["model"]);
+    expect(out.after.model).toBe("flux-2-pro");
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { model: string }).model).toBe("flux-2-pro");
   });
 
   it("rejects array.separator with a hint pointing at delimiter", async () => {
-    // 2026-06-02 regression: assistant kept writing
-    // `update_node_config({ nodeId: arr, config: { separator: "**" } })`
-    // — phantom field, runtime ignored it, the user's array silently
-    // kept splitting by ",". Validator now rejects so the LLM gets
-    // immediate feedback.
     const id = useWorkflowStore
       .getState()
       .addNode("array", { x: 0, y: 0 }, { delimiter: ",", trim: true });
@@ -161,7 +196,6 @@ describe("update_node_config tool", () => {
     expect(out.ok).toBe(false);
     expect(out.error).toContain("array");
     expect(out.error).toContain("delimiter");
-    // State unchanged — phantom didn't slip through.
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { delimiter: string }).delimiter).toBe(",");
     expect("separator" in (node.config as object)).toBe(false);
@@ -175,23 +209,27 @@ describe("update_node_config tool", () => {
     const out = (await tool.execute(
       { nodeId: id, config: { delimiter: "**" } },
       {},
-    )) as { ok: boolean };
+    )) as { ok: boolean; changed: string[]; after: Record<string, unknown> };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["delimiter"]);
+    expect(out.after.delimiter).toBe("**");
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { delimiter: string }).delimiter).toBe("**");
   });
 });
 
 describe("remove_node tool", () => {
-  it("idempotent — missing id is a no-op", async () => {
+  it("returns ok:false when id is missing (no-op, not idempotent)", async () => {
     const tool = getTool("remove_node")!;
     const out = (await tool.execute({ nodeId: "missing" }, {})) as {
       ok: boolean;
+      error?: string;
     };
-    expect(out.ok).toBe(true);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
   });
 
-  it("removes existing node + cascade edges", async () => {
+  it("removes existing node + cascade edges + returns delete receipt", async () => {
     const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const id2 = useWorkflowStore.getState().addNode("text", { x: 100, y: 0 });
     useWorkflowStore.getState().addEdge({
@@ -202,21 +240,55 @@ describe("remove_node tool", () => {
     });
     expect(useWorkflowStore.getState().edges).toHaveLength(1);
     const tool = getTool("remove_node")!;
-    await tool.execute({ nodeId: id1 }, {});
+    const out = (await tool.execute({ nodeId: id1 }, {})) as {
+      ok: boolean;
+      changed: string[];
+      entity: { id: string; kind: string };
+      cascadedEdgeCount: number;
+    };
+    expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["__delete"]);
+    expect(out.entity.id).toBe(id1);
+    expect(out.entity.kind).toBe("text");
+    expect(out.cascadedEdgeCount).toBe(1);
     expect(useWorkflowStore.getState().nodes).toHaveLength(1);
     expect(useWorkflowStore.getState().edges).toHaveLength(0);
   });
 });
 
 describe("move_node tool", () => {
-  it("updates node position", async () => {
+  it("updates node position + returns diff receipt", async () => {
     const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const tool = getTool("move_node")!;
-    await tool.execute({ nodeId: id, position: { x: 100, y: 50 } }, {});
+    const out = (await tool.execute(
+      { nodeId: id, position: { x: 100, y: 50 } },
+      {},
+    )) as {
+      ok: boolean;
+      changed: string[];
+      after: Record<string, unknown>;
+    };
+    expect(out.ok).toBe(true);
+    expect(out.changed.sort()).toEqual(["x", "y"]);
+    expect(out.after.x).toBe(100);
+    expect(out.after.y).toBe(50);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
     expect(node.position).toEqual({ x: 100, y: 50 });
+  });
+
+  it("returns ok:false (no-op) when position matches current", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("text", { x: 50, y: 50 });
+    const tool = getTool("move_node")!;
+    const out = (await tool.execute(
+      { nodeId: id, position: { x: 50, y: 50 } },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
   });
 });
 
@@ -235,7 +307,7 @@ describe("select_nodes tool", () => {
 });
 
 describe("remove_edge tool", () => {
-  it("removes an existing edge by id", async () => {
+  it("removes an existing edge by id + returns delete receipt", async () => {
     const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const id2 = useWorkflowStore.getState().addNode("text", { x: 200, y: 0 });
     useWorkflowStore.getState().addEdge({
@@ -246,18 +318,26 @@ describe("remove_edge tool", () => {
     });
     const edgeId = useWorkflowStore.getState().edges[0]!.id;
     const tool = getTool("remove_edge")!;
-    const out = (await tool.execute({ edgeId }, {})) as { ok: boolean };
+    const out = (await tool.execute({ edgeId }, {})) as {
+      ok: boolean;
+      changed: string[];
+      entity: { id: string; source: string; target: string };
+    };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["__delete"]);
+    expect(out.entity.id).toBe(edgeId);
+    expect(out.entity.source).toBe(id1);
     expect(useWorkflowStore.getState().edges).toHaveLength(0);
   });
 
-  it("idempotent — missing edgeId is a no-op (no throw)", async () => {
+  it("returns ok:false when edgeId is missing (no-op)", async () => {
     const tool = getTool("remove_edge")!;
     const out = (await tool.execute(
       { edgeId: "edge-that-does-not-exist" },
       {},
-    )) as { ok: boolean };
-    expect(out.ok).toBe(true);
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
   });
 
   it("rejects empty edgeId via Zod (catches unwrapped LLM args)", async () => {

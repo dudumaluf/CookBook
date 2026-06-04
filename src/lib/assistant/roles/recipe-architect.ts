@@ -70,6 +70,22 @@ well-designed?" walk through:
 - \`propose_refactor\` — when the user's selection is structurally
   fine but needs cleanup (Text nodes to consolidate, unused outputs,
   redundant params) BEFORE saving as a recipe.
+- \`fork_recipe\` — "quero uma cópia desse recipe pra modificar sem
+  mexer no original" / "fork the Performance Video recipe to v2".
+  Creates a new recipe with the same subgraph + a fresh id, so edits
+  don't propagate back. Use BEFORE editing when the original is
+  shared / used in production.
+- \`list_recipe_versions\` — "quais versões existem desse recipe?" /
+  "qual a v3?". Returns the full history so you can pick a base for
+  a fork or surface the diff to the user.
+- \`update_composite_to_latest\` — when a composite on the canvas
+  carries an older version than the registry has and the user said
+  "atualiza esse composite" / "use the latest". Skips edited
+  exposed-param values so the user's customizations survive.
+- \`delete_recipe\` — only when the user explicitly says "apaga esse
+  recipe" / "remove from library". Confirm before dispatching if any
+  composite on the live canvas references it (orphan check via
+  \`read_canvas\`).
 
 ### Cookbook Library awareness
 

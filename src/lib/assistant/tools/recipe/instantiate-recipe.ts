@@ -77,12 +77,35 @@ export const instantiateRecipeTool: AssistantTool = {
           exposedOutputs: recipe.subgraph.exposedOutputs ?? [],
         },
       );
-      return { ok: true, mode, compositeNodeId: id };
+      return {
+        ok: true,
+        mode,
+        compositeNodeId: id,
+        changed: ["__create"],
+        entity: {
+          id,
+          kind: "composite",
+          recipeId: recipe.id,
+          recipeName: recipe.name,
+          recipeVersion: recipe.version,
+        },
+      };
     }
     const result = instantiateRecipeOnCanvas({
       subgraph: recipe.subgraph,
       position: args.position,
     });
-    return { ok: true, mode, spawnedNodeIds: result.nodeIds };
+    return {
+      ok: true,
+      mode,
+      spawnedNodeIds: result.nodeIds,
+      changed: ["__bulk"],
+      bulk: {
+        recipeId: recipe.id,
+        recipeName: recipe.name,
+        recipeVersion: recipe.version,
+        spawnedNodeCount: result.nodeIds.length,
+      },
+    };
   },
 };

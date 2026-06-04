@@ -5,6 +5,14 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
 
+/**
+ * unpack_composite — Slice 7.3 + post-write receipts (2026-06-03).
+ *
+ * Replaces 1 composite node with N inner nodes + edges. Receipt
+ * counts the spawned nodes/edges so the LLM can quote the actual
+ * fan-out instead of a vague "expanded the recipe".
+ */
+
 const argsSchema = z
   .object({ compositeNodeId: z.string().min(1) })
   .strict();
@@ -12,7 +20,7 @@ const argsSchema = z
 export const unpackCompositeTool: AssistantTool = {
   name: "unpack_composite",
   description:
-    "Replace a composite node with its expanded inner subgraph. Use to make a recipe's internals editable on canvas.",
+    "Replace a composite node with its expanded inner subgraph. Use to make a recipe's internals editable on canvas. Returns { changed: ['__bulk'], bulk: { compositeRemoved, spawnedNodeCount, spawnedEdgeCount } } — quote spawnedNodeCount + the recipe name before claiming the unpack landed.",
   parameters: {
     type: "object",
     properties: {
@@ -34,7 +42,23 @@ export const unpackCompositeTool: AssistantTool = {
         error: `Node ${args.compositeNodeId} is kind '${node.kind}', not 'composite'.`,
       };
     }
+    const compositeConfig = (node.config ?? {}) as Record<string, unknown>;
+    const beforeNodeCount = ws.nodes.length;
+    const beforeEdgeCount = ws.edges.length;
     unpackComposite(args.compositeNodeId);
-    return { ok: true };
+    const after = useWorkflowStore.getState();
+    const spawnedNodeCount = Math.max(0, after.nodes.length - beforeNodeCount + 1);
+    const spawnedEdgeCount = Math.max(0, after.edges.length - beforeEdgeCount);
+    return {
+      ok: true,
+      changed: ["__bulk"],
+      bulk: {
+        compositeRemoved: args.compositeNodeId,
+        recipeName: typeof compositeConfig.recipeName === "string" ? compositeConfig.recipeName : null,
+        recipeVersion: typeof compositeConfig.recipeVersion === "number" ? compositeConfig.recipeVersion : null,
+        spawnedNodeCount,
+        spawnedEdgeCount,
+      },
+    };
   },
 };

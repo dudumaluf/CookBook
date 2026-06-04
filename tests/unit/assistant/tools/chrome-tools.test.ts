@@ -32,14 +32,22 @@ beforeEach(() => {
 /* ────────────────────────────────────────────────────────────────── */
 
 describe("rename_node tool", () => {
-  it("sets the label on an existing node", async () => {
+  it("sets the label on an existing node + returns diff receipt", async () => {
     const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const tool = getTool("rename_node")!;
     const out = (await tool.execute(
       { nodeId: id, label: "System prompt" },
       {},
-    )) as { ok: boolean };
+    )) as {
+      ok: boolean;
+      changed: string[];
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["label"]);
+    expect(out.before.label).toBe(null);
+    expect(out.after.label).toBe("System prompt");
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
@@ -55,12 +63,34 @@ describe("rename_node tool", () => {
     const out = (await tool.execute(
       { nodeId: id, label: null },
       {},
-    )) as { ok: boolean };
+    )) as {
+      ok: boolean;
+      changed: string[];
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    };
     expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["label"]);
+    expect(out.before.label).toBe("Old label");
+    expect(out.after.label).toBe(null);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
     expect(node.label).toBeUndefined();
+  });
+
+  it("returns ok:false (no-op) when label already matches", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("text", { x: 0, y: 0 });
+    useWorkflowStore.getState().renameNode(id, "Same");
+    const tool = getTool("rename_node")!;
+    const out = (await tool.execute(
+      { nodeId: id, label: "Same" },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
   });
 
   it("rejects when nodeId doesn't exist", async () => {
@@ -79,35 +109,62 @@ describe("rename_node tool", () => {
 /* ────────────────────────────────────────────────────────────────── */
 
 describe("resize_node tool", () => {
-  it("sets width + height", async () => {
+  it("sets width + height + returns diff receipt", async () => {
     const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const tool = getTool("resize_node")!;
     const out = (await tool.execute(
       { nodeId: id, width: 320, height: 200 },
       {},
-    )) as { ok: boolean; cleared: boolean };
+    )) as {
+      ok: boolean;
+      cleared: boolean;
+      changed: string[];
+      after: Record<string, unknown>;
+    };
     expect(out.ok).toBe(true);
     expect(out.cleared).toBe(false);
+    expect(out.changed.sort()).toEqual(["height", "width"]);
+    expect(out.after.width).toBe(320);
+    expect(out.after.height).toBe(200);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
     expect(node.size).toEqual({ width: 320, height: 200 });
   });
 
-  it("clears the persisted size when clear=true", async () => {
+  it("clears the persisted size when clear=true + reports diff", async () => {
     const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     useWorkflowStore.getState().resizeNode(id, { width: 320 });
     const tool = getTool("resize_node")!;
     const out = (await tool.execute(
       { nodeId: id, clear: true },
       {},
-    )) as { ok: boolean; cleared: boolean };
+    )) as {
+      ok: boolean;
+      cleared: boolean;
+      changed: string[];
+      after: Record<string, unknown>;
+    };
     expect(out.ok).toBe(true);
     expect(out.cleared).toBe(true);
+    expect(out.changed).toEqual(["width"]);
+    expect(out.after.width).toBe(null);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
     expect(node.size).toBeUndefined();
+  });
+
+  it("returns ok:false (no-op) when size already matches", async () => {
+    const id = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    useWorkflowStore.getState().resizeNode(id, { width: 320, height: 200 });
+    const tool = getTool("resize_node")!;
+    const out = (await tool.execute(
+      { nodeId: id, width: 320, height: 200 },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("no-op");
   });
 
   it("rejects when nothing is provided (no width, height, or clear)", async () => {
@@ -140,24 +197,21 @@ describe("resize_node tool", () => {
 /* ────────────────────────────────────────────────────────────────── */
 
 describe("repair_workflow tool", () => {
-  it("returns changed:false on a canonical graph (no-op)", async () => {
+  it("returns changed:[] on a canonical graph (no-op)", async () => {
     useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
     const tool = getTool("repair_workflow")!;
     const out = (await tool.execute({}, {})) as {
       ok: boolean;
-      changed: boolean;
+      changed: string[];
     };
     expect(out.ok).toBe(true);
-    expect(out.changed).toBe(false);
+    expect(out.changed).toEqual([]);
   });
 
   it("heals an array node with a phantom `separator` field", async () => {
     const id = useWorkflowStore
       .getState()
       .addNode("array", { x: 0, y: 0 }, { delimiter: "," });
-    // Sneak the phantom field in directly (the user_node_config tool
-    // would now block this — but a hand-edited project file or an old
-    // session can still produce it).
     useWorkflowStore.setState((state) => ({
       nodes: state.nodes.map((n) =>
         n.id === id
@@ -174,12 +228,12 @@ describe("repair_workflow tool", () => {
     const tool = getTool("repair_workflow")!;
     const out = (await tool.execute({}, {})) as {
       ok: boolean;
-      changed: boolean;
-      changedNodeCount: number;
+      changed: string[];
+      bulk: { changedNodeCount: number };
     };
     expect(out.ok).toBe(true);
-    expect(out.changed).toBe(true);
-    expect(out.changedNodeCount).toBeGreaterThanOrEqual(1);
+    expect(out.changed).toEqual(["__bulk"]);
+    expect(out.bulk.changedNodeCount).toBeGreaterThanOrEqual(1);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;
@@ -208,10 +262,10 @@ describe("repair_workflow tool", () => {
     const tool = getTool("repair_workflow")!;
     const out = (await tool.execute({}, {})) as {
       ok: boolean;
-      changed: boolean;
+      changed: string[];
     };
     expect(out.ok).toBe(true);
-    expect(out.changed).toBe(true);
+    expect(out.changed).toEqual(["__bulk"]);
     const node = useWorkflowStore
       .getState()
       .nodes.find((n) => n.id === id)!;

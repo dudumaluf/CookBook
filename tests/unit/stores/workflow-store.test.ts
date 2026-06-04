@@ -734,6 +734,119 @@ describe("workflow-store", () => {
     });
   });
 
+  /* ───────────────────────────────────────────────────────────────────── */
+  /* persist.migrate — v6 corrupt fal-ai/ payload (2026-06-03 P1.1)       */
+  /* ───────────────────────────────────────────────────────────────────── */
+
+  describe("persist.migrate — runAllGraphMigrations consolidation (P1.1)", () => {
+    it("normalizes a v6 fal-image config carrying the legacy `fal-ai/` model prefix", () => {
+      // Regression pin — before P1.1, persist.migrate had a manual
+      // chain of seven migrations that could drift from the canonical
+      // pipeline applyProjectDocument used. The drift the user hit:
+      // a localStorage rehydrate left `model: "fal-ai/nano-banana-pro/edit"`
+      // intact, then the canvas crashed with `Cannot read properties of
+      // undefined (reading 'editRefs')`. After P1.1 the pipeline funnels
+      // both paths through `runAllGraphMigrations`, so this case heals.
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "fal-1",
+              kind: "fal-image",
+              position: { x: 100, y: 100 },
+              config: {
+                model: "fal-ai/nano-banana-pro/edit", // corrupt
+                prompt: "a cat",
+              },
+            },
+          ],
+          edges: [],
+        },
+        6,
+      ) as { nodes: { config: { model: string } }[] };
+      // `nano-banana-pro/edit` isn't in the registry → falls back to default.
+      expect(migrated.nodes[0]?.config.model).toBe("nano-banana-2");
+    });
+
+    it("normalizes a v6 fal-image config with a known `fal-ai/<id>` to the literal id", () => {
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "fal-2",
+              kind: "fal-image",
+              position: { x: 0, y: 0 },
+              config: {
+                model: "fal-ai/flux-2-pro",
+                prompt: "test",
+              },
+            },
+          ],
+          edges: [],
+        },
+        6,
+      ) as { nodes: { config: { model: string } }[] };
+      // Strips the `fal-ai/` prefix — the literal id is registered.
+      expect(migrated.nodes[0]?.config.model).toBe("flux-2-pro");
+    });
+
+    it("heals an array node with a phantom `separator` field (drift target #2)", () => {
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "arr-1",
+              kind: "array",
+              position: { x: 0, y: 0 },
+              config: {
+                separator: "**", // phantom field
+                trim: true,
+              },
+            },
+          ],
+          edges: [],
+        },
+        6,
+      ) as {
+        nodes: { config: Record<string, unknown> }[];
+      };
+      const cfg = migrated.nodes[0]?.config ?? {};
+      expect((cfg as { separator?: string }).separator).toBeUndefined();
+      expect((cfg as { delimiter?: string }).delimiter).toBe("**");
+    });
+
+    it("preserves a clean, canonical graph as a no-op", () => {
+      const migrated = useWorkflowStore.persist.getOptions().migrate?.(
+        {
+          nodes: [
+            {
+              id: "t-1",
+              kind: "text",
+              position: { x: 0, y: 0 },
+              config: { text: "hello" },
+            },
+            {
+              id: "fal-1",
+              kind: "fal-image",
+              position: { x: 200, y: 0 },
+              config: { model: "nano-banana-2", prompt: "hi" },
+            },
+          ],
+          edges: [],
+        },
+        14,
+      ) as {
+        nodes: { id: string; config: Record<string, unknown> }[];
+      };
+      expect(migrated.nodes).toHaveLength(2);
+      expect(
+        (migrated.nodes.find((n) => n.id === "fal-1")!.config as {
+          model: string;
+        }).model,
+      ).toBe("nano-banana-2");
+    });
+  });
+
   describe("edge selection", () => {
     it("setSelectedEdgeIds stores the ids verbatim", () => {
       useWorkflowStore.getState().setSelectedEdgeIds(["e1", "e2"]);

@@ -69,5 +69,16 @@ If the user's intent is "make me images / videos of this scene",
 chain the storyboard panels into Seedance / Flux nodes via a
 recipe (one Text node per panel, fanning into the model node).
 Suggest \`save_selection_as_recipe\` after the user is happy
-with the structure so the next scene reuses the scaffold.`,
+with the structure so the next scene reuses the scaffold.
+
+After a generation pass on the panels:
+- \`compare_results\` to evaluate two or more variants of the same
+  panel side-by-side against your continuity rules ("which panel
+  best holds the eyeline match across panel 3 → 4?").
+- \`pin_generation\` to mark the chosen panel as the canonical
+  output so the user can find it later in the gallery.
+- \`set_generation_title\` to rename a winner ("Panel 3 — apex —
+  v2") so the gallery becomes scan-able.
+- \`delete_generation\` ONLY when the user explicitly rejects a
+  variant and confirms it's noise (otherwise keep history).`,
 };
