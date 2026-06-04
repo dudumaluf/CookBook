@@ -20,6 +20,9 @@ function makeMockClient() {
       };
     }),
     signInWithOtp: vi.fn().mockResolvedValue({ error: null }),
+    signInWithPassword: vi.fn().mockResolvedValue({ error: null }),
+    updateUser: vi.fn().mockResolvedValue({ error: null }),
+    resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
     signOut: vi.fn().mockResolvedValue({ error: null }),
   };
   return {
@@ -148,5 +151,175 @@ describe("useSession", () => {
       await result.current.signOut();
     });
     expect(mockClient.auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  describe("signInWithPassword (ADR-0068)", () => {
+    it("calls supabase.auth.signInWithPassword and returns ok on success", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithPassword(
+          "you@example.com",
+          "supersecret",
+        );
+      });
+      expect(outcome?.ok).toBe(true);
+      expect(mockClient.auth.signInWithPassword).toHaveBeenCalledWith({
+        email: "you@example.com",
+        password: "supersecret",
+      });
+    });
+
+    it("rewrites Supabase's terse 'Invalid login credentials' into a clearer message", async () => {
+      mockClient.auth.signInWithPassword.mockResolvedValue({
+        error: { message: "Invalid login credentials" },
+      });
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithPassword(
+          "you@example.com",
+          "wrong",
+        );
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(outcome?.error).toBe("Email or password is incorrect");
+    });
+
+    it("forwards other Supabase errors verbatim", async () => {
+      mockClient.auth.signInWithPassword.mockResolvedValue({
+        error: { message: "Email rate limit exceeded" },
+      });
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithPassword(
+          "you@example.com",
+          "x",
+        );
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(outcome?.error).toBe("Email rate limit exceeded");
+    });
+
+    it("rejects empty email locally without hitting Supabase", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithPassword("   ", "secret");
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(mockClient.auth.signInWithPassword).not.toHaveBeenCalled();
+    });
+
+    it("rejects empty password locally without hitting Supabase", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.signInWithPassword(
+          "you@example.com",
+          "",
+        );
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(mockClient.auth.signInWithPassword).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("setPassword (ADR-0068)", () => {
+    it("calls supabase.auth.updateUser with the new password", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.setPassword("brand-new-pass-123");
+      });
+      expect(outcome?.ok).toBe(true);
+      expect(mockClient.auth.updateUser).toHaveBeenCalledWith({
+        password: "brand-new-pass-123",
+      });
+    });
+
+    it("rejects passwords shorter than 8 chars locally without hitting Supabase", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.setPassword("short");
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(outcome?.error).toContain("at least 8");
+      expect(mockClient.auth.updateUser).not.toHaveBeenCalled();
+    });
+
+    it("returns Supabase error verbatim when updateUser fails", async () => {
+      mockClient.auth.updateUser.mockResolvedValue({
+        error: {
+          message: "New password should be different from the old password.",
+        },
+      });
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.setPassword("the-same-old-pass");
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(outcome?.error).toBe(
+        "New password should be different from the old password.",
+      );
+    });
+  });
+
+  describe("requestPasswordReset (ADR-0068)", () => {
+    it("calls supabase.auth.resetPasswordForEmail with a /reset-password redirect", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.requestPasswordReset(
+          "you@example.com",
+        );
+      });
+      expect(outcome?.ok).toBe(true);
+      expect(mockClient.auth.resetPasswordForEmail).toHaveBeenCalledWith(
+        "you@example.com",
+        expect.objectContaining({
+          redirectTo: expect.stringContaining("/reset-password"),
+        }),
+      );
+    });
+
+    it("rejects empty email locally without hitting Supabase", async () => {
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.requestPasswordReset("   ");
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(mockClient.auth.resetPasswordForEmail).not.toHaveBeenCalled();
+    });
+
+    it("returns Supabase rate-limit error verbatim", async () => {
+      mockClient.auth.resetPasswordForEmail.mockResolvedValue({
+        error: { message: "Email rate limit exceeded" },
+      });
+      const { result } = renderHook(() => useSession());
+      await waitFor(() => expect(result.current.status).toBe("anonymous"));
+      let outcome: { ok: boolean; error?: string } | undefined;
+      await act(async () => {
+        outcome = await result.current.requestPasswordReset(
+          "you@example.com",
+        );
+      });
+      expect(outcome?.ok).toBe(false);
+      expect(outcome?.error).toBe("Email rate limit exceeded");
+    });
   });
 });

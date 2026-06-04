@@ -17,9 +17,10 @@ import {
   ShieldCheck,
   LogOut,
 } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { AccountSettingsDialog } from "@/components/settings/account-settings-dialog";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -68,6 +69,7 @@ export function ProjectMenu() {
   const { user, signOut } = useSession();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -194,7 +196,10 @@ export function ProjectMenu() {
             Show logs
             <DropdownMenuShortcut>⌘⇧L</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem
+            onClick={() => setAccountOpen(true)}
+            data-testid="project-menu-settings"
+          >
             <Settings className="h-3.5 w-3.5" />
             Settings
           </DropdownMenuItem>
@@ -225,6 +230,7 @@ export function ProjectMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
       </DropdownMenu>
+      <AccountSettingsDialog open={accountOpen} onOpenChange={setAccountOpen} />
     </>
   );
 }

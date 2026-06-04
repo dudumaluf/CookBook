@@ -9,8 +9,20 @@ This file is the authoritative record for the values currently set on the Cookbo
 | Key | Value | Reason |
 |---|---|---|
 | `site_url` | `https://artificial-cookbook.vercel.app` | Default redirect after magic-link auth. Was `http://localhost:3000` (CLI default) — caused magic links to bounce users to a non-existent local server. |
-| `uri_allow_list` | `http://localhost:3000,http://localhost:3000/**,https://artificial-cookbook.vercel.app,https://artificial-cookbook.vercel.app/**,https://*-dudumalufs-projects.vercel.app,https://*-dudumalufs-projects.vercel.app/**` | Whitelist accepted by Supabase when client passes `emailRedirectTo`. Includes localhost (dev), production, and Vercel preview deployments. |
-| `disable_signup` | `true` | Single-user MVP. Only `ddmaluf@gmail.com` (the existing `auth.users` row) can magic-link in. New users blocked at signup. Flip to `false` when opening to multi-user. |
+| `uri_allow_list` | `http://localhost:3000,http://localhost:3000/**,https://artificial-cookbook.vercel.app,https://artificial-cookbook.vercel.app/**,https://*-dudumalufs-projects.vercel.app,https://*-dudumalufs-projects.vercel.app/**` | Whitelist accepted by Supabase when client passes `emailRedirectTo` (magic link) or `redirectTo` (password recovery). Includes localhost (dev), production, and Vercel preview deployments. The `/**` wildcard already covers `/reset-password` (ADR-0068) — no additional entry needed. |
+| `disable_signup` | `true` | Single-user MVP. Only `ddmaluf@gmail.com` (the existing `auth.users` row) can sign in via either method (magic link OR password). New users blocked at signup. Flip to `false` when opening to multi-user. |
+
+## Auth methods enabled
+
+Both methods are enabled on the same `auth.users` row — switching between them never requires data migration:
+
+| Method | Hook | When to use |
+|---|---|---|
+| **Magic link** (`signInWithOtp`) | `useSession.signInWithMagicLink(email)` | Default front-door (ADR-0034). Lowest friction for first-time sign-in. |
+| **Email + password** (`signInWithPassword`) | `useSession.signInWithPassword(email, password)` | Synchronous in-band auth (ADR-0068). Required for agent automation (Cursor browser MCP smoke tests) and as a faster sibling for everyday sign-in. The user must call `setPassword` once (via the Account dialog) after their first magic-link sign-in to enable this method. |
+| **Password recovery** (`resetPasswordForEmail`) | `useSession.requestPasswordReset(email)` | Forgot-password flow. Sends an email containing a link to `/reset-password`, where the user lands on a short-lived recovery session and calls `setPassword(newPassword)` to finish. |
+
+Email+password is enabled by default in Supabase; no provider toggle is needed. `disable_signup: true` blocks new account creation regardless of method, so the password method is also gated to existing users only.
 
 ## How to apply
 

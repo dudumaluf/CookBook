@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 /**
- * useSession — Slice 6.1 magic-link auth hook (ADR-0034).
+ * useSession — auth hook covering magic-link AND email+password (ADR-0034 + ADR-0068).
  *
  * Single React hook that wraps Supabase Auth's session lifecycle. Exposes:
  *  - `status`: "loading" until the first session check resolves, then
@@ -16,6 +16,15 @@ import { getSupabaseClient } from "@/lib/supabase/client";
  *    state ({ ok, error? }). The actual session lands when the user clicks
  *    the link in their inbox and Supabase's `detectSessionInUrl` picks up
  *    the redirect.
+ *  - `signInWithPassword(email, password)`: synchronous credential auth.
+ *    Resolves with the session in-band (no email round-trip).
+ *  - `setPassword(newPassword)`: sets/changes the password on the currently
+ *    authenticated user via `auth.updateUser`. Required once after first
+ *    magic-link sign-in to enable password mode going forward; also used
+ *    on the `/reset-password` recovery landing.
+ *  - `requestPasswordReset(email)`: triggers Supabase's recovery email
+ *    flow. Email contains a link to `/reset-password` where the user
+ *    lands with a temporary recovery session and can call `setPassword`.
  *  - `signOut()`: clears the local session.
  *
  * The `onAuthStateChange` listener is the canonical source of session
@@ -35,6 +44,9 @@ export interface UseSessionResult {
   user: User | null;
   session: Session | null;
   signInWithMagicLink: (email: string) => Promise<SignInResult>;
+  signInWithPassword: (email: string, password: string) => Promise<SignInResult>;
+  setPassword: (newPassword: string) => Promise<SignInResult>;
+  requestPasswordReset: (email: string) => Promise<SignInResult>;
   signOut: () => Promise<void>;
 }
 
@@ -42,6 +54,26 @@ export interface SignInResult {
   ok: boolean;
   /** User-readable error from Supabase, when `ok === false`. */
   error?: string;
+}
+
+/**
+ * Resolve the absolute URL we want Supabase to redirect to after a
+ * magic-link click or a password recovery click. Order:
+ *   1. `NEXT_PUBLIC_SITE_URL` — pin to production from any surface.
+ *   2. `window.location.origin` — works in dev + naive prod.
+ * Whichever resolves, Supabase only honors values present in the
+ * project's `uri_allow_list` (see supabase/AUTH-CONFIG.md).
+ */
+function resolveAppUrl(path: string = ""): string | undefined {
+  const envSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  const origin =
+    envSiteUrl && envSiteUrl.length > 0
+      ? envSiteUrl
+      : typeof window !== "undefined"
+        ? window.location.origin
+        : undefined;
+  if (!origin) return undefined;
+  return path.length > 0 ? `${origin}${path}` : origin;
 }
 
 export function useSession(): UseSessionResult {
@@ -86,25 +118,84 @@ export function useSession(): UseSessionResult {
       }
       const client = getSupabaseClient();
       // `emailRedirectTo` lands the user back on the app after they click the
-      // link. Resolution order:
-      //   1. `NEXT_PUBLIC_SITE_URL` env var — pin to production from any
-      //      surface (Vercel preview, dev server, embedded webview).
-      //   2. `window.location.origin` — works in dev (localhost) + naive
-      //      production deploys.
-      //
-      // Whichever resolves, Supabase only honors it if the value is in the
-      // project's `uri_allow_list` (see supabase/AUTH-CONFIG.md). Otherwise
-      // it falls back to the project's Site URL setting.
-      const envSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-      const emailRedirectTo =
-        envSiteUrl && envSiteUrl.length > 0
-          ? envSiteUrl
-          : typeof window !== "undefined"
-            ? window.location.origin
-            : undefined;
+      // link. Whichever resolves, Supabase only honors it if the value is in
+      // the project's `uri_allow_list` (see supabase/AUTH-CONFIG.md).
+      // Otherwise it falls back to the project's Site URL setting.
+      const emailRedirectTo = resolveAppUrl();
       const { error } = await client.auth.signInWithOtp({
         email: trimmed,
         options: emailRedirectTo ? { emailRedirectTo } : undefined,
+      });
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+      return { ok: true };
+    },
+    [],
+  );
+
+  const signInWithPassword = useCallback(
+    async (email: string, password: string): Promise<SignInResult> => {
+      const trimmedEmail = email.trim();
+      if (trimmedEmail.length === 0) {
+        return { ok: false, error: "Email cannot be empty" };
+      }
+      if (password.length === 0) {
+        return { ok: false, error: "Password cannot be empty" };
+      }
+      const client = getSupabaseClient();
+      const { error } = await client.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+      if (error) {
+        // Map Supabase's terse "Invalid login credentials" to something
+        // less ambiguous about which field is wrong (we don't actually
+        // know — by design — but a friendlier copy beats the bare string).
+        const message =
+          error.message === "Invalid login credentials"
+            ? "Email or password is incorrect"
+            : error.message;
+        return { ok: false, error: message };
+      }
+      return { ok: true };
+    },
+    [],
+  );
+
+  const setPassword = useCallback(
+    async (newPassword: string): Promise<SignInResult> => {
+      if (newPassword.length < 8) {
+        return {
+          ok: false,
+          error: "Password must be at least 8 characters",
+        };
+      }
+      const client = getSupabaseClient();
+      const { error } = await client.auth.updateUser({
+        password: newPassword,
+      });
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+      return { ok: true };
+    },
+    [],
+  );
+
+  const requestPasswordReset = useCallback(
+    async (email: string): Promise<SignInResult> => {
+      const trimmed = email.trim();
+      if (trimmed.length === 0) {
+        return { ok: false, error: "Email cannot be empty" };
+      }
+      const client = getSupabaseClient();
+      // Recovery emails contain a link to `/reset-password` where the
+      // user lands on a temporary recovery session that authorises a
+      // single `auth.updateUser({ password })` call — no extra grant.
+      const redirectTo = resolveAppUrl("/reset-password");
+      const { error } = await client.auth.resetPasswordForEmail(trimmed, {
+        redirectTo,
       });
       if (error) {
         return { ok: false, error: error.message };
@@ -125,6 +216,9 @@ export function useSession(): UseSessionResult {
     user: session?.user ?? null,
     session,
     signInWithMagicLink,
+    signInWithPassword,
+    setPassword,
+    requestPasswordReset,
     signOut,
   };
 }
