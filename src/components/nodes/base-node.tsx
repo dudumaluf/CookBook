@@ -22,6 +22,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useCanvasUiStore } from "@/lib/stores/canvas-ui-store";
 import { cn } from "@/lib/utils";
 import type { NodeIO, NodeResizable, NodeSchema } from "@/types/node";
 
@@ -208,6 +209,15 @@ export function BaseNode({
   const hasBoundedHeight =
     size?.height !== undefined || size?.maxHeight !== undefined;
 
+  // ADR-0069 F7: pulse animation when this node was just mutated by the
+  // assistant (e.g. `update_node_config`, `add_edge` to/from this node,
+  // `move_node`, etc.). The pulse lasts 1.5s and auto-clears via the
+  // store's TTL — we just check the live set on every render, which is
+  // O(1) and only re-runs when the store changes.
+  const recentlyMutated = useCanvasUiStore((s) =>
+    s.recentlyMutated.has(nodeId),
+  );
+
   return (
     <div
       className={cn(
@@ -215,7 +225,9 @@ export function BaseNode({
         selected
           ? "border-accent/80 ring-1 ring-accent/40"
           : "border-border/80 hover:border-border",
+        recentlyMutated && "cookbook-mutation-pulse",
       )}
+      data-recently-mutated={recentlyMutated || undefined}
       style={cardStyle}
     >
       {/* Header — single row, no divider. Body flows visually into it.

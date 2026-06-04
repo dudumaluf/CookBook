@@ -139,7 +139,7 @@ describe("REASONER_INSTRUCTIONS — precision pass (2026-06-04)", () => {
     expect(t).toMatch(/junta esses nodes|save as recipe.*save_selection_as_recipe/);
   });
 
-  it("declares the CANONICAL EXAMPLES section with at least 5 few-shots", () => {
+  it("declares the CANONICAL EXAMPLES section with at least 6 few-shots", () => {
     const t = REASONER_INSTRUCTIONS;
     expect(t).toMatch(/##\s+CANONICAL EXAMPLES/);
     /* Each headline MUST appear so the LLM can pattern-match. */
@@ -148,17 +148,28 @@ describe("REASONER_INSTRUCTIONS — precision pass (2026-06-04)", () => {
     expect(t).toContain("### Example 3");
     expect(t).toContain("### Example 4");
     expect(t).toContain("### Example 5");
+    expect(t).toContain("### Example 6");
   });
 
-  it("CANONICAL EXAMPLES cover patch / no-op / compound / analyze / ambiguity", () => {
+  it("CANONICAL EXAMPLES cover patch / no-op / compound / analyze / ambiguity / duplicate-disambiguation", () => {
     const t = REASONER_INSTRUCTIONS;
     /* Headline themes — fragile if someone renames an example, by
      * design (the renaming should be deliberate, not silent). */
-    expect(t).toMatch(/Example 1.*patch one node, real change/);
+    expect(t).toMatch(/Example 1.*patch the focused.*node, real change/);
     expect(t).toMatch(/Example 2.*no-op reconciliation/);
     expect(t).toMatch(/Example 3.*compound ask with plan-first/);
     expect(t).toMatch(/Example 4.*analyze.*refactor on confirmation/);
     expect(t).toMatch(/Example 5.*ambiguity.*ask_user/);
+    expect(t).toMatch(/Example 6.*duplicate-text disambiguation/);
+  });
+
+  it("DEICTIC EDITS section is present (ADR-0069 F3)", () => {
+    const t = REASONER_INSTRUCTIONS;
+    expect(t).toMatch(/##\s+DEICTIC EDITS/);
+    expect(t).toMatch(/this\s*\/\s*that\s*\/\s*it\s*\/\s*isso/i);
+    expect(t).toMatch(/FOCUSED NODE/);
+    expect(t).toMatch(/SELECTED/);
+    expect(t).toMatch(/never pick a node by matching its config text/i);
   });
 
   it("VERIFICATION section now teaches self-verification after multi-step writes", () => {

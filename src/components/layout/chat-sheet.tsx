@@ -309,11 +309,18 @@ function extractReceipt(
         bulk?: Record<string, unknown>;
         attemptedPatch?: unknown;
         nodeId?: string;
+        nodeKind?: string;
       }
     | null;
   if (!r || typeof r !== "object") return null;
   if (r.ok === false && typeof r.error === "string" && r.error.includes("no-op")) {
-    return { kind: "noop", message: r.error, attemptedPatch: r.attemptedPatch };
+    return {
+      kind: "noop",
+      message: r.error,
+      attemptedPatch: r.attemptedPatch,
+      nodeId: r.nodeId,
+      nodeKind: r.nodeKind,
+    };
   }
   if (!Array.isArray(r.changed) || r.changed.length === 0) return null;
   if (r.changed[0] === "__create") {
@@ -331,6 +338,7 @@ function extractReceipt(
     before: r.before ?? {},
     after: r.after ?? {},
     nodeId: r.nodeId,
+    nodeKind: r.nodeKind,
   };
 }
 
@@ -341,11 +349,18 @@ type ToolCallReceipt =
       before: Record<string, unknown>;
       after: Record<string, unknown>;
       nodeId?: string;
+      nodeKind?: string;
     }
   | { kind: "create"; entity: Record<string, unknown> }
   | { kind: "delete"; entity: Record<string, unknown> }
   | { kind: "bulk"; bulk: Record<string, unknown> }
-  | { kind: "noop"; message: string; attemptedPatch?: unknown };
+  | {
+      kind: "noop";
+      message: string;
+      attemptedPatch?: unknown;
+      nodeId?: string;
+      nodeKind?: string;
+    };
 
 function truncateForUi(value: unknown, max = 60): string {
   if (value === undefined) return "—";
@@ -362,20 +377,109 @@ function truncateForUi(value: unknown, max = 60): string {
   return String(value);
 }
 
+/**
+ * Lookup the user-facing label for a node id from the workflow store.
+ *
+ * Returns the user-set `node.label` (preferred), or the schema title
+ * for that kind, or `null` when the node was deleted before the receipt
+ * rendered. Used by `PatchReceiptLine` so the user can confirm at a
+ * glance which node a patch landed on, especially for duplicate-text
+ * scenarios where two nodes share the same `config.text`.
+ */
+function lookupNodeLabel(
+  nodeId: string | undefined,
+  fallbackKind: string | undefined,
+): { label?: string; title?: string } {
+  if (!nodeId) {
+    if (fallbackKind) return { title: fallbackKind };
+    return {};
+  }
+  try {
+    // Lazy require so server-rendered storyshots don't pull in zustand.
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const { useWorkflowStore } = require("@/lib/stores/workflow-store") as typeof import("@/lib/stores/workflow-store");
+    const { nodeRegistry } = require("@/lib/engine/registry") as typeof import("@/lib/engine/registry");
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === nodeId);
+    if (!node) {
+      if (fallbackKind) return { title: nodeRegistry.get(fallbackKind)?.title ?? fallbackKind };
+      return {};
+    }
+    const schema = nodeRegistry.get(node.kind);
+    return {
+      label: node.label && node.label.trim().length > 0 ? node.label : undefined,
+      title: schema?.title ?? node.kind,
+    };
+  } catch {
+    if (fallbackKind) return { title: fallbackKind };
+    return {};
+  }
+}
+
+/**
+ * Patch receipt — ADR-0069 F5.
+ *
+ * Renders `nodeId [Title · "Label"]: key  "before" → "after"` so the user
+ * can immediately confirm:
+ *   1. WHICH node was patched (id + title + optional user label) — the
+ *      single most important upgrade over the pre-ADR-0069 receipt that
+ *      only showed `key: "after"` and made duplicate-text scenarios
+ *      indistinguishable from each other.
+ *   2. WHAT changed (each key on its own line for multi-key patches).
+ *   3. The before→after diff inline so the user can spot patches that
+ *      landed on the wrong node by reading the "before" value.
+ */
+function PatchReceiptLine({
+  receipt,
+}: {
+  receipt: Extract<ToolCallReceipt, { kind: "patch" }>;
+}) {
+  const { label, title } = lookupNodeLabel(receipt.nodeId, receipt.nodeKind);
+  const titlePart = title ? ` [${title}${label ? ` · "${label}"` : ""}]` : "";
+  const idPart = receipt.nodeId ?? "?";
+
+  return (
+    <div
+      className="ml-9 flex flex-col gap-0.5 text-[10.5px] text-muted-foreground/80"
+      data-testid="tool-call-receipt"
+      data-receipt-kind="patch"
+      data-receipt-node-id={receipt.nodeId ?? undefined}
+    >
+      <div>
+        →{" "}
+        <span className="font-mono text-foreground/85">
+          {idPart}
+        </span>
+        <span className="text-muted-foreground/70">{titlePart}</span>
+        :
+      </div>
+      {receipt.changed.map((key) => {
+        const before = truncateForUi(receipt.before[key]);
+        const after = truncateForUi(receipt.after[key]);
+        return (
+          <div
+            key={key}
+            className="ml-3 flex flex-wrap items-baseline gap-1 leading-snug"
+            data-receipt-changed-key={key}
+          >
+            <span className="font-mono text-foreground/85">{key}</span>
+            <span className="text-rose-600/80 dark:text-rose-400/80">
+              {before}
+            </span>
+            <span className="text-muted-foreground/60">→</span>
+            <span className="text-emerald-600/80 dark:text-emerald-400/80">
+              {after}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolCallReceiptLine({ receipt }: { receipt: ToolCallReceipt }) {
   if (receipt.kind === "patch") {
-    const text = receipt.changed
-      .map((key) => `${key}: ${truncateForUi(receipt.after[key])}`)
-      .join(", ");
-    return (
-      <div
-        className="ml-9 text-[10.5px] text-muted-foreground/80"
-        data-testid="tool-call-receipt"
-        data-receipt-kind="patch"
-      >
-        → {text}
-      </div>
-    );
+    return <PatchReceiptLine receipt={receipt} />;
   }
   if (receipt.kind === "create") {
     const id = typeof receipt.entity.id === "string" ? receipt.entity.id : "?";
@@ -420,11 +524,25 @@ function ToolCallReceiptLine({ receipt }: { receipt: ToolCallReceipt }) {
   }
   return (
     <div
-      className="ml-9 text-[10.5px] text-amber-600/80 dark:text-amber-400/80"
+      className="ml-9 flex flex-col gap-0.5 text-[10.5px] text-amber-600/80 dark:text-amber-400/80"
       data-testid="tool-call-receipt"
       data-receipt-kind="noop"
+      data-receipt-node-id={receipt.kind === "noop" ? receipt.nodeId : undefined}
     >
-      → no-op (config did not change)
+      <div>
+        → no-op (config did not change)
+        {receipt.kind === "noop" && receipt.nodeId ? (
+          <>
+            {" on "}
+            <span className="font-mono text-foreground/80">{receipt.nodeId}</span>
+          </>
+        ) : null}
+      </div>
+      {receipt.kind === "noop" && receipt.attemptedPatch ? (
+        <div className="ml-3 text-muted-foreground/70">
+          attempted: {truncateForUi(receipt.attemptedPatch, 80)}
+        </div>
+      ) : null}
     </div>
   );
 }

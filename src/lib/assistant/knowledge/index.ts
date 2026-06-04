@@ -1,4 +1,5 @@
 import { buildCanvasKnowledge } from "./canvas";
+import { buildFocusedNodeKnowledge } from "./focused";
 import { buildGalleryKnowledge } from "./gallery";
 import { buildIdentityKnowledge } from "./identity";
 import { buildLibraryKnowledge } from "./library";
@@ -130,9 +131,17 @@ export async function buildKnowledgeBundle(
   const dynamicSections: string[] = [];
   if (recipeMd) dynamicSections.push(recipeMd);
   if (!skip.canvas) dynamicSections.push(buildCanvasKnowledge());
-  // Selection block lives RIGHT after canvas — same scope, more focused.
-  // Returns null when the user has 0/1 nodes selected, so we just skip
-  // the push instead of branching on selection size here.
+  // ADR-0069: focused-node block lives RIGHT after canvas — same scope,
+  // single-node deictic anchor. Returns null unless EXACTLY one node is
+  // selected, so the multi-node case below still emits its richer
+  // SELECTION block. Reuses the `skip.selection` flag so the "skip
+  // selection-related dimensions" intent (tests, cost-sensitive recursion)
+  // covers both modules in one switch.
+  const focusedMd = buildFocusedNodeKnowledge({ skip: skip.selection });
+  if (focusedMd) dynamicSections.push(focusedMd);
+  // Selection block lives RIGHT after focused — same scope, multi-node
+  // subgraph. Returns null when the user has 0/1 nodes selected, so we
+  // just skip the push instead of branching on selection size here.
   const selectionMd = buildSelectionKnowledge({ skip: skip.selection });
   if (selectionMd) dynamicSections.push(selectionMd);
   // Pending refactor — only present when there's a queued proposal.

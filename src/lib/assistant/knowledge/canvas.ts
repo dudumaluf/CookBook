@@ -82,6 +82,7 @@ export function buildCanvasKnowledge(): string {
   const header = `## CANVAS (${truncated}, ${edges.length} edges${selectedSummary})`;
 
   const visibleNodes = nodes.slice(0, NODE_LIMIT);
+  const selectedSet = new Set(selectedNodeIds);
 
   const lines: string[] = [header, "", "Nodes:"];
   for (const node of visibleNodes) {
@@ -95,8 +96,14 @@ export function buildCanvasKnowledge(): string {
         : undefined;
     const cfg = formatConfig(node.config);
     const status = formatStatus(record?.status, cost);
+    // ADR-0069: inline " · SELECTED" marker so the LLM can't miss which
+    // nodes the user has highlighted, even when scanning the list quickly.
+    // Cheap (~10 chars per selected node) but eliminates the entire class
+    // of "patched the wrong duplicate" bugs that used to require the LLM
+    // to cross-reference the trailing `Selected:` line.
+    const selectedMarker = selectedSet.has(node.id) ? " · SELECTED" : "";
     lines.push(
-      `  ${node.id} [${title}${reactive} @ (${Math.round(node.position.x)}, ${Math.round(node.position.y)})]${cfg} · ${status}`,
+      `  ${node.id} [${title}${reactive} @ (${Math.round(node.position.x)}, ${Math.round(node.position.y)})]${cfg} · ${status}${selectedMarker}`,
     );
   }
 

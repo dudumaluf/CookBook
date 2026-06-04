@@ -189,6 +189,178 @@ describe("buildCanvasKnowledge", () => {
     expect(md).toContain("n2.user");
     expect(md).toContain("Selected: n2");
   });
+
+  it("marks selected nodes inline with `· SELECTED` (ADR-0069 F2)", () => {
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "text_orig",
+          kind: "text",
+          position: { x: 40, y: 40 },
+          config: { text: "Foo" },
+        },
+        {
+          id: "text_dupe",
+          kind: "text",
+          position: { x: 70, y: 70 },
+          config: { text: "Foo" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: ["text_dupe"],
+      selectedEdgeIds: [],
+    });
+    const md = buildCanvasKnowledge();
+    // The duplicate row gets the inline marker; the original does NOT.
+    const lines = md.split("\n");
+    const dupeLine = lines.find((l) => l.includes("text_dupe"));
+    const origLine = lines.find((l) => l.includes("text_orig"));
+    expect(dupeLine).toBeDefined();
+    expect(origLine).toBeDefined();
+    expect(dupeLine).toMatch(/· SELECTED/);
+    expect(origLine).not.toMatch(/· SELECTED/);
+  });
+});
+
+describe("buildFocusedNodeKnowledge (ADR-0069 F1)", () => {
+  it("returns null when nothing is selected", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [{ id: "n1", kind: "text", position: { x: 0, y: 0 }, config: {} }],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+    expect(buildFocusedNodeKnowledge()).toBeNull();
+  });
+
+  it("returns null when 2+ nodes are selected (delegated to ## SELECTION)", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "a", kind: "text", position: { x: 0, y: 0 }, config: {} },
+        { id: "b", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: ["a", "b"],
+      selectedEdgeIds: [],
+    });
+    expect(buildFocusedNodeKnowledge()).toBeNull();
+  });
+
+  it("emits the FOCUSED NODE block with the deictic-anchor preamble for 1 selected", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "text_xyz",
+          kind: "text",
+          position: { x: 70, y: 70 },
+          config: { text: "Subject prompt content" },
+          label: "Subject",
+        },
+      ],
+      edges: [],
+      selectedNodeIds: ["text_xyz"],
+      selectedEdgeIds: [],
+    });
+    const md = buildFocusedNodeKnowledge();
+    expect(md).toContain("## FOCUSED NODE");
+    expect(md).toMatch(/deictic anchor/i);
+    expect(md).toContain("id: text_xyz");
+    expect(md).toContain("kind: text");
+    expect(md).toContain("title: Text");
+    expect(md).toContain("label: Subject");
+    expect(md).toContain("position: (70, 70)");
+    expect(md).toContain("Subject prompt content");
+  });
+
+  it("includes upstream + downstream wiring with target node titles", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "src",
+          kind: "text",
+          position: { x: 0, y: 0 },
+          config: { text: "source" },
+          label: "Source Title",
+        },
+        {
+          id: "focus",
+          kind: "llm-text",
+          position: { x: 200, y: 0 },
+          config: { model: "anthropic/claude-sonnet-4.5" },
+        },
+        {
+          id: "dst",
+          kind: "text",
+          position: { x: 400, y: 0 },
+          config: { text: "" },
+          label: "Sink Title",
+        },
+      ],
+      edges: [
+        { id: "e1", source: "src", sourceHandle: "out", target: "focus", targetHandle: "user" },
+        { id: "e2", source: "focus", sourceHandle: "out", target: "dst", targetHandle: "var-x" },
+      ],
+      selectedNodeIds: ["focus"],
+      selectedEdgeIds: [],
+    });
+    const md = buildFocusedNodeKnowledge();
+    expect(md).toContain("upstream:");
+    expect(md).toContain("src.out → focus.user");
+    expect(md).toContain("Source Title");
+    expect(md).toContain("downstream:");
+    expect(md).toContain("focus.out → dst.var-x");
+    expect(md).toContain("Sink Title");
+  });
+
+  it("renders empty wiring sections as `_(none)_`", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "lonely",
+          kind: "text",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [],
+      selectedNodeIds: ["lonely"],
+      selectedEdgeIds: [],
+    });
+    const md = buildFocusedNodeKnowledge();
+    expect(md).toContain("upstream:");
+    expect(md).toContain("downstream:");
+    expect((md || "").match(/_\(none\)_/g)?.length).toBe(2);
+  });
+
+  it("respects skip flag", async () => {
+    const { buildFocusedNodeKnowledge } = await import(
+      "@/lib/assistant/knowledge/focused"
+    );
+    useWorkflowStore.setState({
+      nodes: [
+        { id: "n1", kind: "text", position: { x: 0, y: 0 }, config: {} },
+      ],
+      edges: [],
+      selectedNodeIds: ["n1"],
+      selectedEdgeIds: [],
+    });
+    expect(buildFocusedNodeKnowledge({ skip: true })).toBeNull();
+  });
 });
 
 describe("buildLibraryKnowledge", () => {
@@ -368,6 +540,34 @@ describe("buildKnowledgeBundle", () => {
       projectId: "p1",
     });
     expect(bundle.system).not.toContain("## SELECTION");
+    // ADR-0069: a single-node selection now emits ## FOCUSED NODE in
+    // place of the multi-node ## SELECTION block, so the deictic
+    // anchor is unambiguous even with duplicate-named nodes.
+    expect(bundle.system).toContain("## FOCUSED NODE");
+    expect(bundle.system).toContain("id: a");
+  });
+
+  it("auto-attaches ## FOCUSED NODE for a single-node selection (ADR-0069)", async () => {
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "text_dupe",
+          kind: "text",
+          position: { x: 70, y: 70 },
+          config: { text: "Subject" },
+        },
+      ],
+      edges: [],
+      selectedNodeIds: ["text_dupe"],
+      selectedEdgeIds: [],
+    });
+    const bundle = await buildKnowledgeBundle({
+      ownerId: "user-1",
+      projectId: "p1",
+    });
+    expect(bundle.system).toContain("## FOCUSED NODE");
+    expect(bundle.system).toContain("id: text_dupe");
+    expect(bundle.system).toMatch(/deictic anchor/i);
   });
 
   it("honors skip.selection even when 2+ nodes are selected", async () => {
