@@ -25,7 +25,9 @@ import { executePlan } from "@/lib/assistant/run";
 import { clearChatForProject } from "@/lib/sync/chat-sync";
 import type { AssistantMessage } from "@/lib/assistant/types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 /**
  * ChatSheet — Slice 7.3 (ADR-0042).
@@ -251,6 +253,11 @@ function ToolCallRow({
     (result.result as { ok?: boolean }).ok !== false;
   const receipt = extractReceipt(result);
   const preflight = extractPreflightHealth(result);
+  const isRunTool =
+    call.toolName === "run_workflow" ||
+    call.toolName === "run_from" ||
+    call.toolName === "regenerate";
+  const inFlight = result === undefined;
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-start gap-2 text-xs">
@@ -271,11 +278,104 @@ function ToolCallRow({
           </span>
         ) : null}
       </div>
+      {/* ADR-0069 F23 — live engine progress while a run_* tool is in flight.
+          The tool itself awaits completion (F14), so the chat would otherwise
+          just show a spinner for several seconds with no signal. The inline
+          progress chip subscribes to the execution store and updates per-node
+          status in real time. */}
+      {isRunTool && inFlight ? <RunProgressInline /> : null}
       {receipt ? (
         <ToolCallReceiptLine receipt={receipt} />
       ) : null}
       {preflight ? (
         <PreflightHealthChip preflight={preflight} />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * RunProgressInline — ADR-0069 F23.
+ *
+ * Live per-node engine progress, rendered under a `run_workflow` /
+ * `run_from` / `regenerate` ToolCallRow while the run is in flight.
+ * Subscribes to the execution + workflow stores and aggregates the
+ * status counts so the user sees something more useful than a bare
+ * spinner during a 10-second run.
+ *
+ * The component shows three pieces of information:
+ *   - "X / Y nodes complete" overall progress.
+ *   - The currently-running node's id + kind ("running n5 [LLM Text]").
+ *   - The most recent failed node, if any (red dot + id).
+ *
+ * Falls back to nothing when the store says we're not running — that
+ * way the row collapses cleanly the moment the engine finishes, even
+ * if the tool's result hasn't reached the chat yet.
+ */
+function RunProgressInline() {
+  const isRunning = useExecutionStore((s) => s.isRunning);
+  const records = useExecutionStore((s) => s.records);
+  const totalNodes = useWorkflowStore((s) => s.nodes.length);
+
+  if (!isRunning) return null;
+  if (totalNodes === 0) return null;
+
+  let done = 0;
+  let cached = 0;
+  let errored = 0;
+  let runningId: string | null = null;
+  let runningKind: string | null = null;
+  let lastErrorId: string | null = null;
+  for (const [nodeId, rec] of records) {
+    if (rec.status === "done") done++;
+    if (rec.status === "cached") cached++;
+    if (rec.status === "error") {
+      errored++;
+      lastErrorId = nodeId;
+    }
+    if (rec.status === "running" && !runningId) {
+      runningId = nodeId;
+      const node = useWorkflowStore
+        .getState()
+        .nodes.find((n) => n.id === nodeId);
+      runningKind = node?.kind ?? null;
+    }
+  }
+  const completed = done + cached;
+  return (
+    <div
+      data-testid="run-progress-inline"
+      className="ml-5 flex flex-col gap-0.5 text-[10.5px] text-muted-foreground/85"
+    >
+      <div className="flex items-center gap-1.5">
+        <Loader2 className="h-2.5 w-2.5 animate-spin text-emerald-500/80" />
+        <span>
+          <span className="font-mono text-foreground/85">
+            {completed}
+          </span>{" "}
+          / {totalNodes} nodes complete
+          {cached > 0 ? (
+            <span className="text-muted-foreground/55"> ({cached} cached)</span>
+          ) : null}
+        </span>
+      </div>
+      {runningId ? (
+        <div className="ml-4">
+          running{" "}
+          <span className="font-mono text-foreground/85">{runningId}</span>
+          {runningKind ? (
+            <span className="text-muted-foreground/65"> [{runningKind}]</span>
+          ) : null}
+        </div>
+      ) : null}
+      {errored > 0 && lastErrorId ? (
+        <div className="ml-4 flex items-center gap-1 text-destructive/80">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-destructive/80" />
+          <span>
+            {errored} error{errored === 1 ? "" : "s"} (latest:{" "}
+            <span className="font-mono">{lastErrorId}</span>)
+          </span>
+        </div>
       ) : null}
     </div>
   );
@@ -665,6 +765,7 @@ function Message({ message }: { message: AssistantMessage }) {
       </div>
     );
   }
+  const contradictions = detectContradictions(message);
   return (
     <div className="flex flex-col gap-2">
       <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-foreground/5 px-3 py-2 text-sm text-foreground/90">
@@ -683,6 +784,9 @@ function Message({ message }: { message: AssistantMessage }) {
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
       </div>
+      {contradictions.length > 0 ? (
+        <ContradictionBanner reasons={contradictions} />
+      ) : null}
       {message.toolReceipts && message.toolReceipts.length > 0 ? (
         <PersistedToolReceiptsBlock receipts={message.toolReceipts} />
       ) : null}
@@ -691,6 +795,103 @@ function Message({ message }: { message: AssistantMessage }) {
           {message.costUsd.toFixed(4)} USD
         </span>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * ADR-0069 F22 — contradiction detection.
+ *
+ * Cheap heuristic that flags when the assistant's chat text claims an
+ * action but the corresponding tool receipt isn't present. Two
+ * patterns matter:
+ *
+ *   1. RUN claim with no run tool. The LLM says "rodei / executei /
+ *      regenerated / I'm running …" but `run_workflow` /
+ *      `run_from` / `regenerate` never fired this turn.
+ *   2. CHANGE claim with no mutation tool. The LLM says "mudei /
+ *      atualizei / changed / set …" but `update_node_config` /
+ *      `add_node` / `add_edge` / `remove_*` / similar never fired.
+ *
+ * Both are conservative: we only flag pretérito perfeito + present-
+ * progressive ("I'm running") past-tense claims, not future ("I'll
+ * run when you click"). Negations are heuristically suppressed
+ * ("I didn't run", "não rodei").
+ *
+ * False positive cost: the user sees an extra "verify the canvas"
+ * banner. False negative cost: the user trusts a phantom claim and
+ * burns time debugging an unchanged node. We optimise for the
+ * latter.
+ */
+const RUN_CLAIM_RE =
+  /\b(ran|running|executed|regenerated|kicked off|rodei|rodando|executei|gerei|regenerei|comecei|iniciei|started)\b/i;
+const CHANGE_CLAIM_RE =
+  /\b(changed|updated|modified|patched|set to|connected|wired|alterei|mudei|atualizei|modifiquei|coloquei|defini|conectei|liguei)\b/i;
+const NEGATION_RE =
+  /\b(didn'?t|didnt|did not|won'?t|will not|no longer|não|nao|sem)\s+(\w+\s+)?(run|change|update|patch|connect|rodei|mudei|alterei|atualizei|conectei|liguei)\b/i;
+const RUN_TOOLS = new Set(["run_workflow", "run_from", "regenerate"]);
+const MUTATION_TOOLS = new Set([
+  "update_node_config",
+  "add_node",
+  "remove_node",
+  "add_edge",
+  "remove_edge",
+  "move_node",
+  "instantiate_recipe",
+  "regenerate",
+  "diff_config",
+]);
+
+function detectContradictions(message: AssistantMessage): string[] {
+  // Skip when the message has no plain text claim to compare against.
+  if (message.error) return [];
+  if (message.plan) return [];
+  if (message.question) return [];
+  const text = (message.content ?? "").trim();
+  if (text.length === 0) return [];
+  // Negation early-out: if the message contains explicit negation
+  // matching the verbs we look for, skip detection — false positives
+  // there would erode trust in the banner.
+  if (NEGATION_RE.test(text)) return [];
+
+  const tools = new Set(
+    (message.toolReceipts ?? []).map((r) => r.tool).filter(Boolean),
+  );
+  const reasons: string[] = [];
+
+  if (RUN_CLAIM_RE.test(text)) {
+    const ranSomething = Array.from(RUN_TOOLS).some((t) => tools.has(t));
+    if (!ranSomething) {
+      reasons.push(
+        "Mensagem afirma execução, mas nenhum run_workflow / run_from / regenerate foi chamado neste turno.",
+      );
+    }
+  }
+  if (CHANGE_CLAIM_RE.test(text)) {
+    const mutated = Array.from(MUTATION_TOOLS).some((t) => tools.has(t));
+    if (!mutated) {
+      reasons.push(
+        "Mensagem afirma alteração, mas nenhum tool de escrita (update_node_config, add_node, add_edge, …) foi chamado neste turno.",
+      );
+    }
+  }
+  return reasons;
+}
+
+function ContradictionBanner({ reasons }: { reasons: string[] }) {
+  return (
+    <div
+      data-testid="contradiction-banner"
+      className="ml-2 max-w-[80%] rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/95"
+    >
+      <p className="mb-1 font-medium uppercase tracking-wide text-amber-200/80">
+        verifique antes de confiar
+      </p>
+      <ul className="ml-3 list-disc space-y-0.5">
+        {reasons.map((r, i) => (
+          <li key={i}>{r}</li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -747,13 +948,16 @@ function PersistedToolReceiptsBlock({
   receipts: NonNullable<AssistantMessage["toolReceipts"]>;
 }) {
   if (receipts.length === 0) return null;
+  const summary = summarizeReceiptsForTurn(receipts);
   return (
     <details
       className="ml-2 max-w-[80%] text-[10.5px] text-muted-foreground/85"
       data-testid="persisted-tool-receipts"
     >
-      <summary className="cursor-pointer select-none text-muted-foreground/65 transition-colors hover:text-muted-foreground">
-        ▸ {receipts.length} tool call{receipts.length === 1 ? "" : "s"}
+      <summary className="cursor-pointer select-none text-muted-foreground/70 transition-colors hover:text-muted-foreground">
+        ▸ <span className="font-medium">Run summary</span>{" "}
+        <span className="text-muted-foreground/55">·</span>{" "}
+        <span data-testid="run-summary-line">{summary}</span>
       </summary>
       <div className="mt-1 flex flex-col gap-1 border-l border-border/40 pl-2">
         {receipts.map((r) => (
@@ -781,6 +985,91 @@ function PersistedToolReceiptsBlock({
       </div>
     </details>
   );
+}
+
+/**
+ * ADR-0069 F24 — turn summary line for the persisted receipts block.
+ *
+ * Aggregates the per-tool receipts into a single human-readable line
+ * the user can scan without expanding the full list. Bucketed by:
+ *   - mutations (update_node_config, add_node, add_edge, remove_*,
+ *     move_node, instantiate_recipe — the writes that change canvas
+ *     state),
+ *   - runs (run_workflow / run_from / regenerate, with totalCostUsd
+ *     and node-completion counts pulled from each call's structured
+ *     result),
+ *   - reads (everything else — usually read_canvas, read_node_state).
+ *
+ * Falls back to a generic "N tool calls" string for receipts whose
+ * shape we don't recognise. Keeps the line short — long surfaces look
+ * cluttered against the muted-foreground baseline.
+ */
+function summarizeReceiptsForTurn(
+  receipts: NonNullable<AssistantMessage["toolReceipts"]>,
+): string {
+  let mutations = 0;
+  let runs = 0;
+  let runNodesDone = 0;
+  let runErrors = 0;
+  let runCostUsd = 0;
+  let reads = 0;
+  let proposed = 0;
+
+  const MUTATION = new Set([
+    "update_node_config",
+    "add_node",
+    "remove_node",
+    "add_edge",
+    "remove_edge",
+    "move_node",
+    "instantiate_recipe",
+    "diff_config",
+  ]);
+  const RUN = new Set(["run_workflow", "run_from", "regenerate"]);
+
+  for (const r of receipts) {
+    if (RUN.has(r.tool)) {
+      runs++;
+      const res = r.result as
+        | {
+            nodeSummary?: Array<{ status?: string }>;
+            errors?: Array<unknown>;
+            totalCostUsd?: number;
+          }
+        | undefined;
+      if (res && Array.isArray(res.nodeSummary)) {
+        runNodesDone += res.nodeSummary.filter(
+          (n) => n.status === "done" || n.status === "cached",
+        ).length;
+      }
+      if (res && Array.isArray(res.errors)) runErrors += res.errors.length;
+      if (res && typeof res.totalCostUsd === "number") {
+        runCostUsd += res.totalCostUsd;
+      }
+    } else if (r.tool === "propose_refactor") {
+      proposed++;
+    } else if (MUTATION.has(r.tool)) {
+      mutations++;
+    } else {
+      reads++;
+    }
+  }
+  const parts: string[] = [];
+  if (mutations > 0) parts.push(`${mutations} mutation${mutations === 1 ? "" : "s"}`);
+  if (runs > 0) {
+    const runDetails: string[] = [`${runNodesDone} done`];
+    if (runErrors > 0) runDetails.push(`${runErrors} error${runErrors === 1 ? "" : "s"}`);
+    if (runCostUsd > 0) runDetails.push(`$${runCostUsd.toFixed(4)}`);
+    parts.push(
+      `${runs} run${runs === 1 ? "" : "s"} (${runDetails.join(", ")})`,
+    );
+  }
+  if (proposed > 0) parts.push(`${proposed} refactor queued`);
+  if (reads > 0) parts.push(`${reads} read${reads === 1 ? "" : "s"}`);
+  if (parts.length === 0) {
+    return `${receipts.length} tool call${receipts.length === 1 ? "" : "s"}`;
+  }
+  return parts.join(" · ");
 }
 
 /**

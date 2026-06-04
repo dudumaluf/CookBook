@@ -263,3 +263,132 @@ describe("ChatSheet — __preflightHealth", () => {
     expect(screen.queryByTestId("tool-call-preflight")).toBeNull();
   });
 });
+
+describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
+  it("flags a run claim when no run_* tool fired this turn", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          content: "Pronto, executei tudo e o run terminou.",
+          timestamp: Date.now(),
+          toolReceipts: [
+            {
+              callId: "c1",
+              tool: "read_canvas",
+              durationMs: 4,
+              result: { ok: true, nodes: [], edges: [] },
+            },
+          ],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    const banner = screen.getByTestId("contradiction-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toContain("execução");
+  });
+
+  it("flags a change claim when no mutation tool fired", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          id: "m2",
+          role: "assistant",
+          content: "Atualizei o node de texto pra 'novo prompt'.",
+          timestamp: Date.now(),
+          toolReceipts: [
+            {
+              callId: "c1",
+              tool: "read_canvas",
+              durationMs: 4,
+              result: { ok: true },
+            },
+          ],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    const banner = screen.getByTestId("contradiction-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toContain("alteração");
+  });
+
+  it("does NOT flag when the matching tool actually fired", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          id: "m3",
+          role: "assistant",
+          content: "Atualizei o node n5 — agora o texto é 'novo'.",
+          timestamp: Date.now(),
+          toolReceipts: [
+            {
+              callId: "c1",
+              tool: "update_node_config",
+              durationMs: 4,
+              result: {
+                ok: true,
+                nodeId: "n5",
+                changed: ["text"],
+                before: { text: "old" },
+                after: { text: "novo" },
+              },
+            },
+          ],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    expect(screen.queryByTestId("contradiction-banner")).toBeNull();
+  });
+
+  it("respects negation — 'não rodei' should not raise the run banner", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          id: "m4",
+          role: "assistant",
+          content:
+            "Não rodei nada — apenas verifiquei o estado e te chamei aqui.",
+          timestamp: Date.now(),
+          toolReceipts: [
+            {
+              callId: "c1",
+              tool: "read_canvas",
+              durationMs: 4,
+              result: { ok: true },
+            },
+          ],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    expect(screen.queryByTestId("contradiction-banner")).toBeNull();
+  });
+});
