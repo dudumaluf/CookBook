@@ -25,7 +25,7 @@ const argsSchema = z
 export const narrateTool: AssistantTool = {
   name: "narrate",
   description:
-    "Surface a brief progress note in the chat (visible to the user). Use to keep them in the loop during long tool sequences. Does NOT mutate state.",
+    "Surface a brief progress note in the chat (visible to the user). Use to keep them in the loop during long tool sequences. Does NOT mutate state and does NOT trigger runs — narrate is a chat-only side channel. If the user asked to run / regenerate / re-execute something, you MUST call run_workflow / run_from / regenerate; saying 'I'm running it' via narrate without firing the actual run tool is a contradiction the chat will surface to the user.",
   parameters: {
     type: "object",
     properties: {

@@ -89,14 +89,18 @@ describe("add_edge tool", () => {
 
   it("creates an edge between two existing nodes + create receipt", async () => {
     const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
-    const id2 = useWorkflowStore.getState().addNode("text", { x: 200, y: 0 });
+    // ADR-0069 F15 — handle/type validation. Wiring text.out -> text.out
+    // used to slip through the lax store check; now the LLM-side tool
+    // catches the missing input handle. Switch the target to llm-text.user
+    // (both sides text → text) so the edge actually validates.
+    const id2 = useWorkflowStore.getState().addNode("llm-text", { x: 200, y: 0 });
     const tool = getTool("add_edge")!;
     const out = (await tool.execute(
       {
         source: id1,
         sourceHandle: "out",
         target: id2,
-        targetHandle: "out",
+        targetHandle: "user",
       },
       {},
     )) as {
@@ -110,6 +114,77 @@ describe("add_edge tool", () => {
     expect(out.entity.source).toBe(id1);
     expect(out.entity.target).toBe(id2);
     expect(useWorkflowStore.getState().edges).toHaveLength(1);
+  });
+
+  it("rejects unknown source handle with available list (F15)", async () => {
+    const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    const id2 = useWorkflowStore.getState().addNode("llm-text", { x: 200, y: 0 });
+    const tool = getTool("add_edge")!;
+    const out = (await tool.execute(
+      {
+        source: id1,
+        sourceHandle: "fake-out",
+        target: id2,
+        targetHandle: "user",
+      },
+      {},
+    )) as {
+      ok: boolean;
+      error?: string;
+      availableOutputs?: Array<{ id: string }>;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("fake-out");
+    expect(out.availableOutputs?.map((o) => o.id)).toContain("out");
+  });
+
+  it("rejects unknown target handle with available list (F15)", async () => {
+    const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    const id2 = useWorkflowStore.getState().addNode("llm-text", { x: 200, y: 0 });
+    const tool = getTool("add_edge")!;
+    const out = (await tool.execute(
+      {
+        source: id1,
+        sourceHandle: "out",
+        target: id2,
+        targetHandle: "ghost",
+      },
+      {},
+    )) as {
+      ok: boolean;
+      error?: string;
+      availableInputs?: Array<{ id: string }>;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("ghost");
+    expect(out.availableInputs?.map((i) => i.id)).toEqual(
+      expect.arrayContaining(["user", "system"]),
+    );
+  });
+
+  it("rejects datatype mismatch with hint (F15)", async () => {
+    const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    const id2 = useWorkflowStore.getState().addNode("llm-text", { x: 200, y: 0 });
+    const tool = getTool("add_edge")!;
+    // text.out (text) -> llm-text.image-0 (image): incompatible.
+    const out = (await tool.execute(
+      {
+        source: id1,
+        sourceHandle: "out",
+        target: id2,
+        targetHandle: "image-0",
+      },
+      {},
+    )) as {
+      ok: boolean;
+      error?: string;
+      sourceType?: string;
+      targetType?: string;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/Type mismatch/i);
+    expect(out.sourceType).toBe("text");
+    expect(out.targetType).toBe("image");
   });
 });
 
@@ -216,6 +291,52 @@ describe("update_node_config tool", () => {
     const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
     expect((node.config as { delimiter: string }).delimiter).toBe("**");
   });
+
+  it("rejects phantom keys on `text` with the valid key list (F17)", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("text", { x: 0, y: 0 }, { text: "hello" });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { fontSize: 18 } },
+      {},
+    )) as { ok: boolean; error?: string };
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("text");
+    expect(out.error).toContain("fontSize");
+    expect(out.error).toMatch(/Valid keys/);
+    const node = useWorkflowStore.getState().nodes.find((n) => n.id === id)!;
+    expect("fontSize" in (node.config as object)).toBe(false);
+  });
+
+  it("accepts the optional previewMode key on `text` (F17 allow-list)", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("text", { x: 0, y: 0 }, { text: "hello" });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { previewMode: "names" } },
+      {},
+    )) as { ok: boolean; changed: string[]; after: Record<string, unknown> };
+    expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(["previewMode"]);
+    expect(out.after.previewMode).toBe("names");
+  });
+
+  it("accepts optional llm-text fields not in defaultConfig (F17)", async () => {
+    const id = useWorkflowStore
+      .getState()
+      .addNode("llm-text", { x: 0, y: 0 });
+    const tool = getTool("update_node_config")!;
+    const out = (await tool.execute(
+      { nodeId: id, config: { temperature: 0.7, maxTokens: 256 } },
+      {},
+    )) as { ok: boolean; changed: string[]; after: Record<string, unknown> };
+    expect(out.ok).toBe(true);
+    expect(out.changed).toEqual(expect.arrayContaining(["temperature", "maxTokens"]));
+    expect(out.after.temperature).toBe(0.7);
+    expect(out.after.maxTokens).toBe(256);
+  });
 });
 
 describe("remove_node tool", () => {
@@ -300,9 +421,38 @@ describe("select_nodes tool", () => {
     const out = (await tool.execute(
       { nodeIds: [id1, id2] },
       {},
-    )) as { ok: boolean; selectedCount: number };
+    )) as {
+      ok: boolean;
+      selectedCount: number;
+      selectedIds: string[];
+      missingIds: string[];
+    };
+    expect(out.ok).toBe(true);
     expect(out.selectedCount).toBe(2);
+    expect(out.selectedIds).toEqual([id1, id2]);
+    expect(out.missingIds).toEqual([]);
     expect(useWorkflowStore.getState().selectedNodeIds).toEqual([id1, id2]);
+  });
+
+  it("filters out non-existent ids and reports them (F16)", async () => {
+    const id1 = useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+    const tool = getTool("select_nodes")!;
+    const out = (await tool.execute(
+      { nodeIds: [id1, "ghost-1", "ghost-2", id1] },
+      {},
+    )) as {
+      ok: boolean;
+      selectedCount: number;
+      selectedIds: string[];
+      missingIds: string[];
+      error?: string;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.selectedCount).toBe(1);
+    expect(out.selectedIds).toEqual([id1]);
+    expect(out.missingIds).toEqual(["ghost-1", "ghost-2"]);
+    expect(out.error).toContain("ghost-1");
+    expect(useWorkflowStore.getState().selectedNodeIds).toEqual([id1]);
   });
 });
 

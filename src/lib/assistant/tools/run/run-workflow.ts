@@ -4,17 +4,16 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
+import { awaitRunCompletion } from "./await-run-completion";
 
 /**
- * run_workflow — Slice 7.3 (ADR-0042).
+ * run_workflow — Slice 7.3 (ADR-0042), upgraded by ADR-0069 F14.
  *
  * Kick off a full workflow run via the engine (same path as the
- * user clicking the global Run button). Returns the runId.
- *
- * The tool returns AS SOON AS the run kicks off — it does NOT
- * await completion. The reasoner can poll read_node_state if it
- * wants to wait for results, or it can simply emit a final text
- * message and let the user watch the engine progress in the UI.
+ * user clicking the global Run button). AWAITS completion and
+ * returns a structured per-node summary, so the LLM can verify
+ * outcomes without a follow-up `read_node_state` round-trip — and,
+ * critically, CANNOT report success when nodes errored.
  */
 
 const argsSchema = z.object({}).strict();
@@ -22,7 +21,7 @@ const argsSchema = z.object({}).strict();
 export const runWorkflowTool: AssistantTool = {
   name: "run_workflow",
   description:
-    "Trigger a full engine run on the current canvas. Returns the runId immediately — does NOT block until completion. Use as the final step of a plan when you want the user to watch the engine in real time.",
+    "Trigger a full engine run on the current canvas and wait until every node finishes. Returns a structured summary `{ ok, runId, nodeSummary, errors, totalCostUsd }`. `ok` is false if any node errored; check `errors[]` and surface them to the user instead of declaring success.",
   parameters: {
     type: "object",
     properties: {},
@@ -40,10 +39,7 @@ export const runWorkflowTool: AssistantTool = {
         error: "A run is already in flight. Cancel it first or wait.",
       };
     }
-    useExecutionStore.getState().startRun();
-    return {
-      ok: true,
-      runId: useExecutionStore.getState().runId,
-    };
+    const runPromise = useExecutionStore.getState().startRun();
+    return awaitRunCompletion({ runPromise });
   },
 };

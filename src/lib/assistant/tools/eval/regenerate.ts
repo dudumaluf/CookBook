@@ -5,9 +5,11 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 import type { AssistantTool } from "../index";
+import { validateConfigPatch } from "../construct/validate-config-patch";
+import { awaitRunCompletion } from "../run/await-run-completion";
 
 /**
- * regenerate — Slice 7.4 (ADR-0043).
+ * regenerate — Slice 7.4 (ADR-0043), upgraded by ADR-0069 F14 + F18.
  *
  * Re-run the source node of a generation with optional config
  * adjustments. Convenience wrapper around update_node_config +
@@ -22,6 +24,16 @@ import type { AssistantTool } from "../index";
  * picking the right keys (Higgsfield's `aspectRatio`, LLM's `model`,
  * etc.) — the registry's defaultConfig + read_node_state give it
  * the schema to work from.
+ *
+ * F18: when `configPatch` is provided we run it through the SAME
+ * `validateConfigPatch` gate that `update_node_config` uses, so
+ * regenerate cannot smuggle a hallucinated key past the precision
+ * checks. Old behavior would happily merge `{ separator: "**" }`
+ * onto an array node, kick off the run, and return success against
+ * a graph the LLM had silently corrupted.
+ *
+ * AWAITS completion (F14) so the LLM gets the final node state
+ * — including any error — before composing its user-facing reply.
  */
 
 const argsSchema = z
@@ -34,7 +46,7 @@ const argsSchema = z
 export const regenerateTool: AssistantTool = {
   name: "regenerate",
   description:
-    "Re-run the source node of a generation, optionally patching its config first. Use when the user says 'try that again but with X'. The source node must still exist on canvas.",
+    "Re-run the source node of a generation (optionally patching config first) and WAIT until completion. The patch is validated against the source node's kind via the same precision gate as update_node_config — a bad key fails fast, before any run starts. Returns `{ ok, runId, nodeSummary, errors, totalCostUsd }`; surface errors to the user instead of claiming success.",
   parameters: {
     type: "object",
     properties: {
@@ -69,13 +81,34 @@ export const regenerateTool: AssistantTool = {
       };
     }
     if (args.configPatch) {
+      const validationError = validateConfigPatch(node.kind, args.configPatch);
+      if (validationError) {
+        return { ok: false, error: validationError, nodeId: gen.nodeId };
+      }
       ws.updateNodeConfig(gen.nodeId, args.configPatch);
     }
-    useExecutionStore.getState().startRunFrom(gen.nodeId);
-    return {
-      ok: true,
-      runId: useExecutionStore.getState().runId,
-      nodeId: gen.nodeId,
-    };
+    const affected = collectAncestors(gen.nodeId);
+    const runPromise = useExecutionStore.getState().startRunFrom(gen.nodeId);
+    const summary = await awaitRunCompletion({
+      runPromise,
+      affectedNodeIds: affected,
+    });
+    return { ...summary, nodeId: gen.nodeId };
   },
 };
+
+function collectAncestors(nodeId: string): string[] {
+  const { edges } = useWorkflowStore.getState();
+  const seen = new Set<string>([nodeId]);
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    for (const e of edges) {
+      if (e.target === cur && !seen.has(e.source)) {
+        seen.add(e.source);
+        stack.push(e.source);
+      }
+    }
+  }
+  return Array.from(seen);
+}

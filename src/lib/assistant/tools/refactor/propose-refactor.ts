@@ -35,7 +35,7 @@ import { validateConfigPatch } from "../construct/validate-config-patch";
 export const proposeRefactorTool: AssistantTool = {
   name: "propose_refactor",
   description:
-    "Queue a bundle of graph mutations (add_node, remove_node, update_node_config, move_node, add_edge, remove_edge) for the user to review in a preview modal. Use this — NOT the raw construct tools — when the user confirms an analysis suggestion. The user must click Apply in the modal before any mutation runs. Pass `summary` (one-line user-facing description) and `operations[]` (ordered list of ops to apply atomically). New `add_node` ops can carry `clientId`s that subsequent `add_edge` ops can reference as source/target.",
+    "Queue a bundle of graph mutations (add_node, remove_node, update_node_config, move_node, add_edge, remove_edge) for the user to review in a preview modal. Use this — NOT the raw construct tools — when the user confirms an analysis suggestion. Returns `{ ok: true, queued: true, applied: false, requiresUserApproval: true, id, opsQueued }` — the canvas is NOT mutated yet. The user must click Apply in the modal before any mutation runs. Pass `summary` (one-line user-facing description) and `operations[]` (ordered list of ops to apply atomically). New `add_node` ops can carry `clientId`s that subsequent `add_edge` ops can reference as source/target.",
   parameters: {
     type: "object",
     properties: {
@@ -183,11 +183,21 @@ export const proposeRefactorTool: AssistantTool = {
 
     return {
       ok: true,
+      // ADR-0069 F19 — the LLM was reading `ok: true` as "the canvas
+      // is now in the post-refactor state" and writing user-facing
+      // text like "I've collapsed the three texts into one Concat".
+      // The reality: the proposal is QUEUED, the user still has to
+      // click Apply in the modal. These flags make the queue-vs-apply
+      // distinction structural so the LLM can't gloss over it.
+      queued: true,
+      applied: false,
+      requiresUserApproval: true,
+      opsQueued: filteredOps.length,
       id,
       message:
         totalFiltered > 0
-          ? `Proposal queued (${noteParts.join(" + ")} filtered). Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.`
-          : "Proposal queued. Awaiting user confirmation in the refactor preview modal — write your final assistant message and stop calling tools.",
+          ? `Proposal queued (${noteParts.join(" + ")} filtered). Awaiting user confirmation in the refactor preview modal — write your final assistant message describing what WILL happen if the user approves, and stop calling tools.`
+          : "Proposal queued. Awaiting user confirmation in the refactor preview modal — write your final assistant message describing what WILL happen if the user approves, and stop calling tools.",
     };
   },
 };

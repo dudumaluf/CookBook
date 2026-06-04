@@ -36,6 +36,14 @@ interface InstantiateOptions {
 
 interface InstantiateResult {
   nodeIds: string[];
+  /**
+   * Mapping from saved-subgraph node id → live canvas node id. Callers
+   * that want to wire external upstream into the recipe's exposed
+   * inputs (e.g. ADR-0069 F20 `instantiate_recipe.bindings`) need this
+   * to translate the recipe's `RecipeExposedHandle.internalNodeId`
+   * into a live target.
+   */
+  idMap: Map<string, string>;
 }
 
 function makeId(): string {
@@ -92,5 +100,5 @@ export function instantiateRecipeOnCanvas({
     edges: [...state.edges, ...newEdges],
   }));
 
-  return { nodeIds: newNodes.map((n) => n.id) };
+  return { nodeIds: newNodes.map((n) => n.id), idMap };
 }
