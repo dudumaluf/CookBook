@@ -388,3 +388,66 @@ describe("ChatSheet — contradiction banner (ADR-0069 F22)", () => {
     expect(screen.queryByTestId("contradiction-banner")).toBeNull();
   });
 });
+
+describe("ChatSheet — hallucinated tool-call (ADR-0071 hard)", () => {
+  it("hides the prose and renders the red 'alucinação detectada' banner when the model echoes [tools fired:]", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          role: "assistant",
+          content:
+            "✓ `text_x.text` atualizado.\n\n[tools fired: update_node_config: text_x {text}]",
+          timestamp: Date.now(),
+          // NOTE: no actual receipts — the model faked it.
+          toolReceipts: [],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    const banner = screen.getByTestId("contradiction-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner.getAttribute("data-severity")).toBe("hard");
+    expect(banner.textContent?.toLowerCase()).toContain("alucinação");
+    // Primary message body renders the HallucinatedProseBlock instead
+    // of the normal `<p whitespace-pre-wrap>` text. The lying prose
+    // is preserved inside a <details> for forensic auditability, so
+    // we verify it lives there (parent is a <details>).
+    const block = screen.getByTestId("hallucinated-prose");
+    expect(block).toBeInTheDocument();
+    const proseInsideDetails = screen
+      .getAllByText(/\[tools fired:/)
+      .map((node) => node.closest("details"))
+      .filter(Boolean);
+    expect(proseInsideDetails.length).toBeGreaterThan(0);
+  });
+
+  it("also catches the new <system-tool-trace> tag echo (XML format)", () => {
+    useLayoutStore.setState({ chatSheetOpen: true });
+    useAssistantStore.setState({
+      messages: [
+        {
+          role: "assistant",
+          content:
+            "Done. <system-tool-trace>update_node_config: n5 {text}</system-tool-trace>",
+          timestamp: Date.now(),
+          toolReceipts: [],
+        },
+      ],
+      isThinking: false,
+      abortController: null,
+      liveEvents: [],
+      pendingQuestion: null,
+      pendingRefactor: null,
+    });
+    render(<ChatSheet />);
+    const banner = screen.getByTestId("contradiction-banner");
+    expect(banner.getAttribute("data-severity")).toBe("hard");
+    expect(screen.getByTestId("hallucinated-prose")).toBeInTheDocument();
+  });
+});

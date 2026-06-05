@@ -42,6 +42,40 @@ describe("textNodeSchema", () => {
     expect(updateConfig).toHaveBeenCalledWith({ text: "bye" });
   });
 
+  // ADR-0070 regression — the production report ("LLM said it changed
+  // the text but the canvas didn't update") implied either (a) the
+  // tool didn't mutate the workflow store, or (b) the body's editor
+  // didn't react to a config-prop change. (a) is covered by the
+  // verify-after-write check; this test covers (b): the editor MUST
+  // re-render when `config.text` changes between renders, otherwise
+  // an externally-driven mutation (like the assistant) shows the old
+  // text in the contenteditable even though the store is correct.
+  it("re-renders the editor when config.text changes between renders (assistant mutation path)", () => {
+    const Body = textNodeSchema.Body;
+    const { rerender } = render(
+      <Body
+        nodeId="text_external"
+        config={{ text: "OLD prompt content" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+
+    const editor = screen.getByLabelText("Text content") as HTMLDivElement;
+    expect(editor.textContent).toBe("OLD prompt content");
+
+    rerender(
+      <Body
+        nodeId="text_external"
+        config={{ text: "NEW prompt content" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+
+    expect(editor.textContent).toBe("NEW prompt content");
+  });
+
   it("execute returns a standardized text output derived from config", async () => {
     const out = await textNodeSchema.execute!({
       nodeId: "x",

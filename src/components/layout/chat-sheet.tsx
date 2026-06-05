@@ -21,6 +21,10 @@ import { PromptOverrideBadge } from "@/components/assistant/prompt-override-badg
 import { RolePicker } from "@/components/assistant/role-picker";
 import { Button } from "@/components/ui/button";
 import type { ReasonerEvent } from "@/lib/assistant/reasoner";
+import {
+  type ContradictionReason,
+  detectContradictions,
+} from "@/lib/assistant/contradictions";
 import { executePlan } from "@/lib/assistant/run";
 import { clearChatForProject } from "@/lib/sync/chat-sync";
 import type { AssistantMessage } from "@/lib/assistant/types";
@@ -803,7 +807,8 @@ function Message({ message }: { message: AssistantMessage }) {
       </div>
     );
   }
-  const contradictions = detectContradictions(message);
+  const contradictions = detectMessageContradictions(message);
+  const hard = contradictions.some((c) => c.severity === "hard");
   return (
     <div className="flex flex-col gap-2">
       <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-foreground/5 px-3 py-2 text-sm text-foreground/90">
@@ -818,12 +823,20 @@ function Message({ message }: { message: AssistantMessage }) {
             question={message.question.question}
             options={message.question.options}
           />
+        ) : hard ? (
+          // ADR-0071 — when the model echoes a system-only format
+          // marker (a 100%-positive hallucination signal) we replace
+          // the prose with a clear error block. The original (lying)
+          // text stays accessible behind a `<details>` toggle so the
+          // user can audit what the model claimed if they want, but
+          // it no longer reads as authoritative.
+          <HallucinatedProseBlock content={message.content ?? ""} />
         ) : (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
       </div>
       {contradictions.length > 0 ? (
-        <ContradictionBanner reasons={contradictions} />
+        <ContradictionBanner contradictions={contradictions} />
       ) : null}
       {message.toolReceipts && message.toolReceipts.length > 0 ? (
         <PersistedToolReceiptsBlock receipts={message.toolReceipts} />
@@ -838,98 +851,100 @@ function Message({ message }: { message: AssistantMessage }) {
 }
 
 /**
- * ADR-0069 F22 — contradiction detection.
+ * ADR-0069 F22 + ADR-0071 — contradiction detection.
  *
- * Cheap heuristic that flags when the assistant's chat text claims an
- * action but the corresponding tool receipt isn't present. Two
- * patterns matter:
+ * Thin wrapper around the pure detector in
+ * `@/lib/assistant/contradictions` that adapts an `AssistantMessage`
+ * (with its plan / question / error sub-payloads + persisted tool
+ * receipts) into the detector's `ContradictionInput` shape. The
+ * pure module is shared with the reasoner so server-side auto-retry
+ * (when the model echoes a system-only format token) and the
+ * client-side banner agree on the same definitions.
  *
- *   1. RUN claim with no run tool. The LLM says "rodei / executei /
- *      regenerated / I'm running …" but `run_workflow` /
- *      `run_from` / `regenerate` never fired this turn.
- *   2. CHANGE claim with no mutation tool. The LLM says "mudei /
- *      atualizei / changed / set …" but `update_node_config` /
- *      `add_node` / `add_edge` / `remove_*` / similar never fired.
+ * Why two tiers (hard / soft):
  *
- * Both are conservative: we only flag pretérito perfeito + present-
- * progressive ("I'm running") past-tense claims, not future ("I'll
- * run when you click"). Negations are heuristically suppressed
- * ("I didn't run", "não rodei").
- *
- * False positive cost: the user sees an extra "verify the canvas"
- * banner. False negative cost: the user trusts a phantom claim and
- * burns time debugging an unchanged node. We optimise for the
- * latter.
+ *   - **Hard** — the message contains a `<system-…>` tag or a legacy
+ *     `[tools fired:` / `[plan emitted:` / `[asked:` marker. These are
+ *     exclusively system-injected past-turn wrappers; if the model
+ *     emits them itself it is faking past tool execution. We hide
+ *     the prose by default and render a red error block.
+ *   - **Soft** — verb / receipt mismatch. "I patched X" with no
+ *     `update_node_config` receipt. Conservative; false positives
+ *     are tolerable. We render a yellow warning under the prose.
  */
-const RUN_CLAIM_RE =
-  /\b(ran|running|executed|regenerated|kicked off|rodei|rodando|executei|gerei|regenerei|comecei|iniciei|started)\b/i;
-const CHANGE_CLAIM_RE =
-  /\b(changed|updated|modified|patched|set to|connected|wired|alterei|mudei|atualizei|modifiquei|coloquei|defini|conectei|liguei)\b/i;
-const NEGATION_RE =
-  /\b(didn'?t|didnt|did not|won'?t|will not|no longer|não|nao|sem)\s+(\w+\s+)?(run|change|update|patch|connect|rodei|mudei|alterei|atualizei|conectei|liguei)\b/i;
-const RUN_TOOLS = new Set(["run_workflow", "run_from", "regenerate"]);
-const MUTATION_TOOLS = new Set([
-  "update_node_config",
-  "add_node",
-  "remove_node",
-  "add_edge",
-  "remove_edge",
-  "move_node",
-  "instantiate_recipe",
-  "regenerate",
-  "diff_config",
-]);
-
-function detectContradictions(message: AssistantMessage): string[] {
-  // Skip when the message has no plain text claim to compare against.
-  if (message.error) return [];
-  if (message.plan) return [];
-  if (message.question) return [];
-  const text = (message.content ?? "").trim();
-  if (text.length === 0) return [];
-  // Negation early-out: if the message contains explicit negation
-  // matching the verbs we look for, skip detection — false positives
-  // there would erode trust in the banner.
-  if (NEGATION_RE.test(text)) return [];
-
-  const tools = new Set(
-    (message.toolReceipts ?? []).map((r) => r.tool).filter(Boolean),
-  );
-  const reasons: string[] = [];
-
-  if (RUN_CLAIM_RE.test(text)) {
-    const ranSomething = Array.from(RUN_TOOLS).some((t) => tools.has(t));
-    if (!ranSomething) {
-      reasons.push(
-        "Mensagem afirma execução, mas nenhum run_workflow / run_from / regenerate foi chamado neste turno.",
-      );
-    }
-  }
-  if (CHANGE_CLAIM_RE.test(text)) {
-    const mutated = Array.from(MUTATION_TOOLS).some((t) => tools.has(t));
-    if (!mutated) {
-      reasons.push(
-        "Mensagem afirma alteração, mas nenhum tool de escrita (update_node_config, add_node, add_edge, …) foi chamado neste turno.",
-      );
-    }
-  }
-  return reasons;
+function detectMessageContradictions(
+  message: AssistantMessage,
+): ContradictionReason[] {
+  return detectContradictions({
+    text: message.content,
+    toolsFired: new Set(
+      (message.toolReceipts ?? []).map((r) => r.tool).filter(Boolean),
+    ),
+    hasNonProsePayload: Boolean(
+      message.error || message.plan || message.question,
+    ),
+  });
 }
 
-function ContradictionBanner({ reasons }: { reasons: string[] }) {
+function ContradictionBanner({
+  contradictions,
+}: {
+  contradictions: ContradictionReason[];
+}) {
+  const hard = contradictions.some((c) => c.severity === "hard");
   return (
     <div
       data-testid="contradiction-banner"
-      className="ml-2 max-w-[80%] rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/95"
+      data-severity={hard ? "hard" : "soft"}
+      className={
+        hard
+          ? "ml-2 max-w-[80%] rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-[11px] text-destructive"
+          : "ml-2 max-w-[80%] rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/95"
+      }
     >
-      <p className="mb-1 font-medium uppercase tracking-wide text-amber-200/80">
-        verifique antes de confiar
+      <p
+        className={
+          hard
+            ? "mb-1 font-semibold uppercase tracking-wide text-destructive"
+            : "mb-1 font-medium uppercase tracking-wide text-amber-200/80"
+        }
+      >
+        {hard ? "alucinação detectada" : "verifique antes de confiar"}
       </p>
       <ul className="ml-3 list-disc space-y-0.5">
-        {reasons.map((r, i) => (
-          <li key={i}>{r}</li>
+        {contradictions.map((c, i) => (
+          <li key={i}>{c.reason}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * ADR-0071 — replaces the model's prose when a hard contradiction
+ * (system-format echo) was detected. The original text is kept
+ * inside a collapsed `<details>` so the user can audit what the
+ * model claimed without it reading as truth.
+ */
+function HallucinatedProseBlock({ content }: { content: string }) {
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="hallucinated-prose">
+      <p className="text-destructive/90 font-medium">
+        ✗ A resposta original alegou ações que nenhuma ferramenta executou. O
+        texto foi escondido para não te enganar.
+      </p>
+      <p className="text-muted-foreground/80 text-[11px]">
+        Repita o pedido (ou peça <span className="font-mono">try again</span>) —
+        o sistema vai forçar uma chamada real de ferramenta.
+      </p>
+      <details className="text-[11px] text-muted-foreground/70">
+        <summary className="cursor-pointer hover:text-foreground/80">
+          mostrar resposta original (incorreta)
+        </summary>
+        <p className="mt-1 whitespace-pre-wrap break-words rounded-md border border-border/40 bg-background/40 p-2 font-mono text-[10.5px] text-muted-foreground/80">
+          {content}
+        </p>
+      </details>
     </div>
   );
 }

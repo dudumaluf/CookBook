@@ -4,7 +4,7 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
 /**
  * Knowledge dimension: conversation history — Slice 7.2 (ADR-0041),
  * extended by ADR-0069 F10 + F11 (persisted tool receipts + ask_user
- * questions).
+ * questions), and ADR-0071 (anti-LARP format).
  *
  * Slice 6.8 persists chat messages cloud-side. Slice 7.1 added the
  * Chat Completions `messages[]` shape. This module is the bridge:
@@ -20,22 +20,35 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
  * through the RAG path (find_similar_generations,
  * read_user_preferences).
  *
+ * ## ADR-0071 — anti-LARP format switch
+ *
+ * Pre-0071 the system injected past-turn metadata using square-bracket
+ * markers: `[tools fired: …]`, `[plan emitted: …]`, `[asked: "…"]`,
+ * `[error: …]`. The model SAW these in its context and learned the
+ * pattern, then started ECHOING the same format in its own prose to
+ * fake successful tool execution ("✓ patched X. [tools fired:
+ * update_node_config: text_x {text}]") — a hallucination class that
+ * the F22 contradiction banner caught but didn't stop, because the
+ * user-facing message still rendered the lie verbatim.
+ *
+ * The fix is twofold and lives in this file + `chat-sheet.tsx`:
+ *   1. Switch the system-emitted format to `<system-…>` XML tags
+ *      (Anthropic-native, harder to confuse with prose).
+ *   2. The contradiction detector treats ANY echo of
+ *      `<system-tool-trace>`, `[tools fired:`, or related markers in
+ *      the assistant's final text as a 100%-positive hallucination
+ *      signal — those formats are system-only, by construction.
+ *
  * Notes:
  *   - We DO NOT include the conversation in the SYSTEM prompt — it
  *     goes in the `messages[]` array, where the LLM expects multi-
  *     turn context.
  *   - Plan cards from previous assistant messages are flattened to
- *     plain JSON-in-text for now (we'd lose typed `tool_calls`
+ *     a `<system-plan>` tag for now (we'd lose typed `tool_calls`
  *     across turns otherwise).
- *   - ADR-0069 F10: persisted `toolReceipts` are summarized into the
- *     assistant content as a compact `[tools: …]` block so the LLM
- *     remembers what it did across submits without us having to
- *     fabricate `tool` role entries from a different turn (which the
- *     OpenAI shape rejects without matching `tool_call_id`).
- *   - ADR-0069 F11: persisted `question` (ask_user pause) is rendered
- *     verbatim into the assistant content so the LLM in the NEXT submit
- *     sees `[asked: "<question>"]` and connects the user's reply to
- *     its own question.
+ *   - ADR-0069 F10 / F11 unchanged in spirit: the tool receipts and
+ *     ask_user questions still get summarized for cross-submit
+ *     memory. Only the wrapping format changed.
  */
 
 const HISTORY_CAP = 20;
@@ -54,16 +67,19 @@ export function buildConversationMessages(): ChatMessage[] {
     if (m.role === "assistant") {
       // Compose content from raw content + plan summary + tool receipts
       // + question summary so cross-submit history is honest about what
-      // happened.
+      // happened. Wrapping format is `<system-…>` XML tags (ADR-0071);
+      // these are READ-ONLY context the LLM must NEVER echo (see
+      // `instructions.ts` § ANTI-HALLUCINATION).
       let content = m.content;
       if (m.plan && m.plan.steps) {
+        const planJson = JSON.stringify({
+          reasoning: m.plan.reasoning,
+          steps: m.plan.steps.map((s) => s.kind),
+          estimatedCostUsd: m.plan.estimatedCostUsd,
+        });
         content =
           (content ? content + "\n\n" : "") +
-          `[plan emitted: ${JSON.stringify({
-            reasoning: m.plan.reasoning,
-            steps: m.plan.steps.map((s) => s.kind),
-            estimatedCostUsd: m.plan.estimatedCostUsd,
-          })}]`;
+          `<system-plan>${planJson}</system-plan>`;
       }
       if (m.toolReceipts && m.toolReceipts.length > 0) {
         const receiptSummaries = m.toolReceipts
@@ -77,7 +93,7 @@ export function buildConversationMessages(): ChatMessage[] {
         if (receiptSummaries.length > 0) {
           content =
             (content ? content + "\n\n" : "") +
-            `[tools fired: ${receiptSummaries.join("; ")}${more}]`;
+            `<system-tool-trace>${receiptSummaries.join("; ")}${more}</system-tool-trace>`;
         }
       }
       if (m.question) {
@@ -87,11 +103,12 @@ export function buildConversationMessages(): ChatMessage[] {
             : "";
         content =
           (content ? content + "\n\n" : "") +
-          `[asked: "${m.question.question}"${opts}]`;
+          `<system-ask>"${m.question.question}"${opts}</system-ask>`;
       }
       if (m.error) {
         content =
-          (content ? content + "\n\n" : "") + `[error: ${m.error}]`;
+          (content ? content + "\n\n" : "") +
+          `<system-error>${m.error}</system-error>`;
       }
       out.push({ role: "assistant", content: content || null });
       continue;

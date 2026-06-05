@@ -19,6 +19,10 @@ import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { buildKnowledgeBundle } from "./knowledge";
 import { REASONER_INSTRUCTIONS } from "./instructions";
 import {
+  detectContradictions,
+  hasHardContradiction,
+} from "./contradictions";
+import {
   buildReferencesNote,
   type PromptReference,
 } from "./prompt-references";
@@ -70,6 +74,19 @@ import type { AssistantTool, ToolExecutionContext } from "./tools";
  */
 
 const MAX_TURNS = 20;
+/**
+ * ADR-0071 — auto-retry budget for hallucinated tool calls.
+ *
+ * When the model emits a "final" message that fakes tool execution
+ * (echoes a system-only format token like `<system-tool-trace>` or
+ * `[tools fired:`), we inject a corrective system message and loop
+ * again instead of handing the lying prose to the user. Capped at
+ * one retry per `runReasoner` call so a stubbornly-mendacious model
+ * can't burn the cost / turn budget. After the cap, the lying turn
+ * reaches the UI but the chat-sheet's red HallucinatedProseBlock
+ * hides the prose and tells the user to retry manually.
+ */
+const MAX_HALLUCINATION_RETRIES = 1;
 /**
  * Hard cap per `runReasoner` call.
  *
@@ -342,6 +359,9 @@ export async function runReasoner(
   const toolDefs = getToolDefinitions();
 
   let totalCostUsd = 0;
+  // ADR-0071 — auto-retry counter for hallucinated tool calls.
+  // Reset per `runReasoner` call (one budget per submit).
+  let hallucinationRetries = 0;
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (signal.aborted) {
@@ -439,8 +459,51 @@ export async function runReasoner(
     };
     messages.push(assistantMsg);
 
-    // No tool calls → final answer.
+    // No tool calls → final answer (or hallucinated final answer).
     if (!response.toolCalls || response.toolCalls.length === 0) {
+      // ADR-0071 — before handing the final text to the user, check
+      // whether it's a hallucinated completion (model echoes a
+      // system-only format token without having actually invoked any
+      // tool). If yes and we still have retry budget, inject a
+      // corrective turn and loop. Bound the retry to one shot — past
+      // that, fall through and let the chat-sheet's
+      // `HallucinatedProseBlock` hide the prose so the user can't be
+      // misled, even if the model insists on lying.
+      const toolsFired = new Set(
+        events
+          .filter(
+            (e): e is Extract<ReasonerEvent, { type: "tool_call" }> =>
+              e.type === "tool_call",
+          )
+          .map((e) => e.toolName),
+      );
+      const contradictions = detectContradictions({
+        text: response.text,
+        toolsFired,
+      });
+      if (
+        hasHardContradiction(contradictions) &&
+        hallucinationRetries < MAX_HALLUCINATION_RETRIES
+      ) {
+        hallucinationRetries += 1;
+        emit({
+          type: "narration",
+          content:
+            "Detected hallucinated tool call (the model echoed a system-only format marker without invoking any actual tool). Retrying with a corrective nudge…",
+        });
+        // We push a `user`-role corrective turn rather than a
+        // mid-stream `system` because most chat-completion models
+        // weight user messages more heavily for plan-correction
+        // mid-conversation. The instruction names the exact failure
+        // mode in the model's own format vocabulary so it knows
+        // what NOT to do on the retry.
+        messages.push({
+          role: "user",
+          content:
+            "STOP. Sua resposta anterior continha um marcador `<system-…>` ou `[tools fired:` / `[plan emitted:` / `[asked:`. Esses formatos são EXCLUSIVOS do contexto que o sistema injeta sobre turnos passados — eles NUNCA devem aparecer numa resposta sua. Nenhuma ferramenta de escrita foi de fato chamada neste turno. Refaça AGORA: (a) chame a ferramenta de verdade (ex.: `update_node_config`) e cite o receipt literal; OU (b) admita em prose plana que não consegue cumprir o pedido e peça pra eu esclarecer. NÃO ecoe `<system-…>`, `[tools fired:`, `[plan emitted:` ou `[asked:` na sua próxima resposta.",
+        });
+        continue;
+      }
       emit({
         type: "assistant_text",
         content: response.text,

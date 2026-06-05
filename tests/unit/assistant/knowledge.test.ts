@@ -487,10 +487,13 @@ describe("buildConversationMessages", () => {
     expect(out).toHaveLength(3);
     expect(out[0]?.role).toBe("user");
     expect(out[1]?.role).toBe("assistant");
-    // Plan is flattened into the content as a synthetic [plan emitted: ...]
-    // marker — Slice 7.3 will preserve tool_calls properly.
+    // ADR-0071 — plan is flattened into the content as a
+    // `<system-plan>…</system-plan>` tag (was `[plan emitted: …]` pre-
+    // 0071, switched to system-* XML tags as part of the anti-LARP
+    // format split so the LLM can't fake-emit the same syntax in its
+    // own prose).
     expect(out[2]?.role).toBe("assistant");
-    expect(JSON.stringify(out[2])).toContain("plan emitted");
+    expect(JSON.stringify(out[2])).toContain("<system-plan>");
   });
 });
 
