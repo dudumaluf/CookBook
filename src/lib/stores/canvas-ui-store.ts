@@ -29,7 +29,7 @@ import { create } from "zustand";
  * the timer (pulse animation re-fires from frame 0).
  */
 
-const PULSE_TTL_MS = 1500;
+const PULSE_TTL_MS = 3000;
 
 export interface CanvasUiState {
   /**

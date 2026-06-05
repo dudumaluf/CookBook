@@ -109,10 +109,52 @@ export const updateNodeConfigTool: AssistantTool = {
     }
     const before = { ...(node.config as Record<string, unknown>) };
     ws.updateNodeConfig(resolvedNodeId, args.config);
+    // Re-read from the LIVE store (post-write) — this is also our
+    // verify-after-write checkpoint. If `after` doesn't reflect the
+    // patch fields, the store mutation silently dropped on the floor
+    // and we have to surface that as an error instead of pretending
+    // success.
+    const liveNode = useWorkflowStore
+      .getState()
+      .nodes.find((n) => n.id === resolvedNodeId);
+    if (!liveNode) {
+      // Node was deleted between our read and write — exceedingly
+      // rare, but theoretically possible if a parallel tool removes
+      // it. Be loud rather than silently dropping.
+      return {
+        ok: false,
+        error: `verify-after-write failed: node ${resolvedNodeId} disappeared between read and write.`,
+        nodeId: resolvedNodeId,
+      };
+    }
     const after = {
-      ...(useWorkflowStore.getState().nodes.find((n) => n.id === resolvedNodeId)
-        ?.config as Record<string, unknown> | undefined),
+      ...(liveNode.config as Record<string, unknown> | undefined),
     };
+    // ADR-0070 verify-after-write: every key the LLM tried to set
+    // MUST be present and equal in the post-write read-back. Without
+    // this check, a corrupted store path (e.g. middleware swallowing
+    // updates, bad migration overlay) could let the tool report
+    // success against a canvas that never received the change — the
+    // exact failure mode the user kept hitting in production.
+    const verifyMismatches: { key: string; expected: unknown; got: unknown }[] =
+      [];
+    for (const [k, expected] of Object.entries(args.config)) {
+      const got = (after as Record<string, unknown>)[k];
+      if (!shallowEqual(got, expected)) {
+        verifyMismatches.push({ key: k, expected, got });
+      }
+    }
+    if (verifyMismatches.length > 0) {
+      return {
+        ok: false,
+        error: `verify-after-write failed on node ${resolvedNodeId}: re-reading the canvas after the patch did NOT show the expected value(s). The store path is corrupted — DO NOT claim the change landed. Mismatches: ${JSON.stringify(
+          verifyMismatches.slice(0, 4),
+        )}`,
+        nodeId: resolvedNodeId,
+        nodeKind: node.kind,
+        verifyMismatches,
+      };
+    }
     const { changed, pickedBefore, pickedAfter } = diffShallow(before, after);
     if (changed.length === 0) {
       return {
@@ -141,3 +183,46 @@ export const updateNodeConfigTool: AssistantTool = {
     };
   },
 };
+
+/**
+ * Cheap structural equality used by the verify-after-write check.
+ * Strings/numbers/booleans/null compare with `Object.is`; arrays
+ * compare element-wise; plain objects compare key-wise (one level
+ * deep). Anything more exotic falls back to `JSON.stringify`. The
+ * intent is to catch the common "patch didn't land" failure modes
+ * (string flipped, number not updated, simple object replaced) WITHOUT
+ * triggering false positives on identity-vs-equality nits like a new
+ * array reference holding the same items.
+ */
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!Object.is(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (typeof a === "object" && typeof b === "object") {
+    const ao = a as Record<string, unknown>;
+    const bo = b as Record<string, unknown>;
+    const ak = Object.keys(ao);
+    const bk = Object.keys(bo);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+      if (!Object.is(ao[k], bo[k])) {
+        // One level of structural fallback so a fresh array reference
+        // holding the same primitive items still counts as equal.
+        try {
+          if (JSON.stringify(ao[k]) !== JSON.stringify(bo[k])) return false;
+        } catch {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  return false;
+}

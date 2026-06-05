@@ -25,6 +25,7 @@ import { executePlan } from "@/lib/assistant/run";
 import { clearChatForProject } from "@/lib/sync/chat-sync";
 import type { AssistantMessage } from "@/lib/assistant/types";
 import { useAssistantStore } from "@/lib/stores/assistant-store";
+import { useCanvasUiStore } from "@/lib/stores/canvas-ui-store";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
@@ -537,17 +538,54 @@ function PatchReceiptLine({
   const { label, title } = lookupNodeLabel(receipt.nodeId, receipt.nodeKind);
   const titlePart = title ? ` [${title}${label ? ` · "${label}"` : ""}]` : "";
   const idPart = receipt.nodeId ?? "?";
+  const canFocus = Boolean(receipt.nodeId);
+
+  // ADR-0070 — clicking a patch receipt focuses the canvas on the
+  // affected node: select it (so the focus ring lights up) and re-mark
+  // it as recently mutated (re-fires the pulse + auto-pans the
+  // viewport via the canvas-flow subscription). Lets the user move
+  // from a chat-side claim ("I patched n5") to canvas-side verification
+  // ("yes, n5 holds the new value") in one click instead of squinting
+  // at every node.
+  function focusOnPatchedNode() {
+    if (!receipt.nodeId) return;
+    const exists = useWorkflowStore
+      .getState()
+      .nodes.some((n) => n.id === receipt.nodeId);
+    if (!exists) {
+      // The node was deleted between the patch and the click. Be honest
+      // and toast — silently doing nothing reads as a broken click.
+      toast.error(`Node ${receipt.nodeId} no longer exists on the canvas.`);
+      return;
+    }
+    useWorkflowStore.getState().setSelectedNodeIds([receipt.nodeId]);
+    useCanvasUiStore.getState().markRecentlyMutated(receipt.nodeId);
+  }
+
+  const Container = canFocus ? "button" : "div";
+  const containerProps = canFocus
+    ? {
+        type: "button" as const,
+        onClick: focusOnPatchedNode,
+        title: `Click to focus ${receipt.nodeId} on the canvas`,
+        className:
+          "group/receipt ml-9 flex w-fit cursor-pointer flex-col items-start gap-0.5 rounded-md border border-transparent px-1.5 py-0.5 text-left text-[10.5px] text-muted-foreground/80 transition-colors hover:border-accent/30 hover:bg-accent/5 hover:text-foreground/90",
+      }
+    : {
+        className:
+          "ml-9 flex flex-col gap-0.5 text-[10.5px] text-muted-foreground/80",
+      };
 
   return (
-    <div
-      className="ml-9 flex flex-col gap-0.5 text-[10.5px] text-muted-foreground/80"
+    <Container
       data-testid="tool-call-receipt"
       data-receipt-kind="patch"
       data-receipt-node-id={receipt.nodeId ?? undefined}
+      {...containerProps}
     >
       <div>
         →{" "}
-        <span className="font-mono text-foreground/85">
+        <span className="font-mono text-foreground/85 group-hover/receipt:text-accent">
           {idPart}
         </span>
         <span className="text-muted-foreground/70">{titlePart}</span>
@@ -573,7 +611,7 @@ function PatchReceiptLine({
           </div>
         );
       })}
-    </div>
+    </Container>
   );
 }
 

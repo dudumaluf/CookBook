@@ -252,46 +252,51 @@
 /*
  * After the assistant successfully patches / moves / wires a node, the
  * canvas-ui-store marks that node id as `recentlyMutated`. BaseNode
- * applies the `.cookbook-mutation-pulse` class for 1.5s (the store's
- * TTL); the keyframe pulses an accent-colored ring so the user can
- * see AT A GLANCE which card actually changed — eliminating the
+ * applies the `.cookbook-mutation-pulse` class for 3s (the store's
+ * TTL); the keyframe pulses a saturated accent-colored ring so the user
+ * can see AT A GLANCE which card actually changed — eliminating the
  * "did anything happen?" confusion when patches land on duplicate-text
  * nodes the user wasn't watching.
  *
- * Triple-pulse rhythm (start fast, two echoes) reads as deliberate
- * agent action, not as a glitch. Color = accent so it harmonizes with
- * the existing selection ring without colliding visually (selection is
- * a static ring; this is an animated ring).
+ * ADR-0070: pulse strengthened (3s, brighter alphas, larger blast
+ * radius) so it's visible after a 350ms auto-pan in canvas-flow.
+ *
+ * Color = accent so it harmonizes with the existing selection ring
+ * without colliding visually (selection is a static ring; this is an
+ * animated ring).
  */
 @keyframes cookbook-mutation-pulse {
   0% {
-    box-shadow: 0 0 0 0 oklch(0.72 0.13 73 / 0.55);
+    box-shadow: 0 0 0 0 oklch(0.72 0.13 73 / 0.85);
   }
-  20% {
-    box-shadow: 0 0 0 8px oklch(0.72 0.13 73 / 0.2);
+  15% {
+    box-shadow: 0 0 0 14px oklch(0.72 0.13 73 / 0.35);
   }
-  40% {
-    box-shadow: 0 0 0 0 oklch(0.72 0.13 73 / 0.4);
+  30% {
+    box-shadow: 0 0 0 4px oklch(0.72 0.13 73 / 0.6);
   }
-  60% {
-    box-shadow: 0 0 0 6px oklch(0.72 0.13 73 / 0.15);
+  50% {
+    box-shadow: 0 0 0 12px oklch(0.72 0.13 73 / 0.25);
   }
-  80% {
-    box-shadow: 0 0 0 0 oklch(0.72 0.13 73 / 0.25);
+  70% {
+    box-shadow: 0 0 0 4px oklch(0.72 0.13 73 / 0.45);
+  }
+  90% {
+    box-shadow: 0 0 0 10px oklch(0.72 0.13 73 / 0.12);
   }
   100% {
-    box-shadow: 0 0 0 4px oklch(0.72 0.13 73 / 0);
+    box-shadow: 0 0 0 0 oklch(0.72 0.13 73 / 0);
   }
 }
 
 .cookbook-mutation-pulse {
-  animation: cookbook-mutation-pulse 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)
+  animation: cookbook-mutation-pulse 3s cubic-bezier(0.25, 0.46, 0.45, 0.94)
     forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .cookbook-mutation-pulse {
     animation-duration: 0ms;
-    box-shadow: 0 0 0 2px oklch(0.72 0.13 73 / 0.5);
+    box-shadow: 0 0 0 3px oklch(0.72 0.13 73 / 0.7);
   }
 }

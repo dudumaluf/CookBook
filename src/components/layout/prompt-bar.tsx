@@ -25,6 +25,7 @@ import { useSession } from "@/lib/auth/use-session";
 import { runReasoner } from "@/lib/assistant/reasoner";
 import type { PromptReference } from "@/lib/assistant/prompt-references";
 import { attachFileAsReference } from "@/lib/library/attach-file";
+import { nodeRegistry } from "@/lib/engine/registry";
 import { getGenerationRepository } from "@/lib/repositories/supabase-generation-repository";
 import { persistMessage } from "@/lib/sync/chat-sync";
 import { useAssistantSettingsStore } from "@/lib/stores/assistant-settings-store";
@@ -32,6 +33,7 @@ import { useAssistantStore } from "@/lib/stores/assistant-store";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import { useLayoutStore } from "@/lib/stores/layout-store";
 import { useProjectStore } from "@/lib/stores/project-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
 /**
  * PromptBar
@@ -270,6 +272,8 @@ export function PromptBar() {
 
       <RefactorPreviewModal />
 
+      <AnchorBadge />
+
       {pickerOpen ? (
         <div className="pointer-events-auto">
           <PromptReferencePicker
@@ -498,6 +502,93 @@ function ReferenceChip({
       >
         <X className="h-3 w-3" />
       </button>
+    </span>
+  );
+}
+
+/**
+ * AnchorBadge — ADR-0070.
+ *
+ * Always-visible chip just above the prompt that mirrors what the
+ * assistant will treat as the deictic anchor ("this/that/it/isso") in
+ * the next request:
+ *
+ *   - 1 node selected → `📌 text_xyz · "Subject" [Text]` (the EXACT id
+ *     the LLM will see in `## FOCUSED NODE`)
+ *   - 2+ nodes        → `📌 N selected — assistant will treat as group`
+ *   - 0 selected      → nothing (no chip, no whitespace) so the prompt
+ *     surface stays clean when there's no anchor to communicate
+ *
+ * The user reported that the assistant kept claiming changes that
+ * didn't land — typically because their selection was lost between
+ * highlight and submit. The badge collapses that ambiguity into a
+ * single glance: if the badge doesn't say what you expected, fix the
+ * selection BEFORE pressing enter.
+ *
+ * Visual: small pill, accent-tinted, sits flush with the prompt's
+ * width so it reads as part of the same surface. Wraps gracefully on
+ * narrow viewports. Click selects + scrolls the canvas to the node
+ * (matches ADR-0070's auto-pan flow on receipts).
+ */
+function AnchorBadge() {
+  const selectedNodeIds = useWorkflowStore((s) => s.selectedNodeIds);
+
+  if (selectedNodeIds.length === 0) return null;
+
+  return (
+    <div
+      data-testid="anchor-badge"
+      className="pointer-events-auto mx-auto flex w-full max-w-[640px] items-center justify-start"
+    >
+      {selectedNodeIds.length === 1 ? (
+        <SingleAnchorChip nodeId={selectedNodeIds[0]!} />
+      ) : (
+        <MultiAnchorChip count={selectedNodeIds.length} />
+      )}
+    </div>
+  );
+}
+
+function SingleAnchorChip({ nodeId }: { nodeId: string }) {
+  const node = useWorkflowStore((s) => s.nodes.find((n) => n.id === nodeId));
+  if (!node) return null;
+  const schema = nodeRegistry.get(node.kind);
+  const title = schema?.title ?? node.kind;
+  const label = node.label && node.label.trim().length > 0 ? node.label : null;
+  return (
+    <span
+      data-testid="anchor-badge-single"
+      data-anchor-node-id={nodeId}
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-[10.5px] text-accent-foreground/90 shadow-sm"
+    >
+      <span aria-hidden className="text-accent">
+        ◆
+      </span>
+      <span className="font-mono text-foreground/85">{nodeId}</span>
+      <span className="text-muted-foreground/80">·</span>
+      <span className="truncate text-foreground/75">
+        {label ? `"${label}" / ${title}` : title}
+      </span>
+      <span className="ml-1 text-muted-foreground/60">
+        — assistant will treat as &quot;this/that/it/isso&quot;
+      </span>
+    </span>
+  );
+}
+
+function MultiAnchorChip({ count }: { count: number }) {
+  return (
+    <span
+      data-testid="anchor-badge-multi"
+      className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-[10.5px] text-accent-foreground/90 shadow-sm"
+    >
+      <span aria-hidden className="text-accent">
+        ◆
+      </span>
+      <span className="text-foreground/85">{count} nodes selected</span>
+      <span className="ml-1 text-muted-foreground/60">
+        — assistant will treat as the selection set
+      </span>
     </span>
   );
 }

@@ -24,6 +24,7 @@ import { useTheme } from "next-themes";
 import "@/lib/engine/all-nodes";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { useCanvasUiStore } from "@/lib/stores/canvas-ui-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import {
   ASSET_DRAG_MIME,
@@ -343,7 +344,7 @@ function CanvasFlowInner() {
   const resizeNode = useWorkflowStore((s) => s.resizeNode);
   const setSelectedNodeIds = useWorkflowStore((s) => s.setSelectedNodeIds);
   const setSelectedEdgeIds = useWorkflowStore((s) => s.setSelectedEdgeIds);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
 
   // Expose a viewport-aware spawn-position getter so consumers outside the
   // ReactFlowProvider (the Add Node popover, the clipboard paste path) can
@@ -357,6 +358,58 @@ function CanvasFlowInner() {
     });
     return () => setSpawnPositionGetter(null);
   }, [screenToFlowPosition]);
+
+  // ADR-0070 — auto-pan to mutated node.
+  //
+  // The ADR-0069 F7 pulse animation on its own isn't enough when the chat
+  // sheet covers most of the canvas: a successful patch lights up a node
+  // the user can't see. Subscribe to `canvas-ui-store.recentlyMutated`
+  // and pan the viewport (preserving zoom) to center the freshly mutated
+  // node so the pulse is ALWAYS in view. We also re-fire the pulse for
+  // long enough that the user can react after the pan (handled in the
+  // store's PULSE_TTL_MS).
+  //
+  // We track the last "panned to" id with a ref so a single mutation pans
+  // exactly once — not on every re-render that observes the same id in
+  // the set. When two patches happen back-to-back on different ids, both
+  // get a pan (because the ref differs from the new most-recent id).
+  const lastPannedToRef = useRef<string | null>(null);
+  useEffect(() => {
+    const unsubscribe = useCanvasUiStore.subscribe((state, prev) => {
+      // Find the id that just transitioned from absent → present in the
+      // set. There can only be one new id per `markRecentlyMutated` call
+      // (the action is a single set add).
+      let newlyMutated: string | null = null;
+      for (const id of state.recentlyMutated) {
+        if (!prev.recentlyMutated.has(id)) {
+          newlyMutated = id;
+          break;
+        }
+      }
+      if (!newlyMutated) return;
+      if (lastPannedToRef.current === newlyMutated) return;
+      lastPannedToRef.current = newlyMutated;
+      // Look up the live position from the workflow store — canvas-ui
+      // store doesn't carry positional info on purpose (decoupled).
+      const node = useWorkflowStore
+        .getState()
+        .nodes.find((n) => n.id === newlyMutated);
+      if (!node) return;
+      // Center on the node's TOP-LEFT plus half of its rendered size so
+      // the actual visual center of the card lands at the viewport
+      // center. Falling back to a reasonable default size when neither
+      // schema nor instance carries one (rare — most nodes have it).
+      const schema = nodeRegistry.get(node.kind);
+      const w = node.size?.width ?? schema?.size?.defaultWidth ?? 280;
+      const h = node.size?.height ?? schema?.size?.defaultHeight ?? 160;
+      const cx = node.position.x + w / 2;
+      const cy = node.position.y + h / 2;
+      // Preserve current zoom — sudden zoom changes are disorienting.
+      const zoom = getZoom();
+      setCenter(cx, cy, { zoom, duration: 350 });
+    });
+    return unsubscribe;
+  }, [setCenter, getZoom]);
 
   const selectedNodeIdSet = useMemo(
     () => new Set(selectedNodeIds),
