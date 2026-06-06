@@ -79,3 +79,57 @@ export function aspectFromImageDimensions(
   }
   return `${width} / ${height}`;
 }
+
+/** Minimal shape shared by `ImageRef` and `VideoRef` metadata. */
+export interface MediaDimensionRef {
+  width?: number;
+  height?: number;
+}
+
+const DEFAULT_LANDSCAPE_ASPECT = "16 / 9";
+
+/**
+ * CSS `aspect-ratio` from optional media metadata (`width` / `height` on
+ * an `ImageRef` or `VideoRef`). Falls back when metadata is missing —
+ * common for freshly-generated Fal outputs that only carry a URL until
+ * the preview measures intrinsic dimensions.
+ */
+export function aspectFromMediaDimensions(
+  ref: MediaDimensionRef | null | undefined,
+  fallback: string = DEFAULT_LANDSCAPE_ASPECT,
+): string {
+  if (
+    ref &&
+    typeof ref.width === "number" &&
+    typeof ref.height === "number" &&
+    ref.width > 0 &&
+    ref.height > 0
+  ) {
+    return aspectFromImageDimensions(ref.width, ref.height);
+  }
+  return fallback;
+}
+
+/**
+ * Pick the first usable aspect ratio from an ordered list of media refs.
+ * Returns `null` when none carry valid dimensions — caller should fall
+ * back to intrinsic measurement or a default.
+ */
+export function aspectFromFirstMediaDimensions(
+  refs: ReadonlyArray<MediaDimensionRef | null | undefined>,
+): string | null {
+  for (const ref of refs) {
+    if (
+      ref &&
+      typeof ref.width === "number" &&
+      typeof ref.height === "number" &&
+      ref.width > 0 &&
+      ref.height > 0
+    ) {
+      return aspectFromImageDimensions(ref.width, ref.height);
+    }
+  }
+  return null;
+}
+
+export { DEFAULT_LANDSCAPE_ASPECT };

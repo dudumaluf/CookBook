@@ -168,6 +168,6 @@ export const audioNodeSchema = defineNode<AudioNodeConfig>({
     defaultWidth: 260,
     minWidth: 220,
     maxWidth: 480,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

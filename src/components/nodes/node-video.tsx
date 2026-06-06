@@ -166,6 +166,6 @@ export const videoNodeSchema = defineNode<VideoNodeConfig>({
     defaultWidth: 280,
     minWidth: 220,
     maxWidth: 560,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

@@ -265,6 +265,6 @@ export const imageConcatNodeSchema = defineNode<ImageConcatNodeConfig>({
     defaultWidth: 320,
     minWidth: 260,
     maxWidth: 720,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

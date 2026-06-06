@@ -199,8 +199,12 @@ export function BaseNode({
     ...(size?.height !== undefined ? { height: size.height } : {}),
   };
 
-  const resizable = size?.resizable ?? "none";
-  const hasResize = resizable !== "none";
+  // ADR-0028 + resize standardization: one affordance only — corner
+  // drag (`both`). Legacy schemas may still declare `"horizontal"` or
+  // `"vertical"`; we normalize those to `"both"` so every resizable node
+  // behaves the same (proportional free resize on both axes).
+  const resizable = normalizeResizable(size?.resizable);
+  const hasResize = resizable === "both";
   // The body wrapper needs `flex-1 min-h-0` whenever the card has an
   // upper bound on height — either an explicit `height` (user-resized) or
   // a schema `maxHeight` (ADR-0028). Without it, a body that wants to
@@ -312,9 +316,7 @@ export function BaseNode({
         {children}
       </div>
 
-      {hasResize && (
-        <NodeBodyResizeHandle direction={resizable} size={size} />
-      )}
+      {hasResize && <NodeBodyResizeHandle size={size} />}
 
       {/* Handle rails on each side. Inputs left, outputs right.
        *
@@ -588,11 +590,18 @@ function RunHereButton({ nodeId }: { nodeId: string }) {
   );
 }
 
+/** Map legacy axis-locked values to the single supported mode. */
+function normalizeResizable(
+  value: NodeResizable | undefined,
+): "none" | "both" {
+  if (!value || value === "none") return "none";
+  return "both";
+}
+
 /**
  * Standardized drag handle for ADR-0028 resizable nodes. Renders an
  * absolutely-positioned `NodeResizeControl` in the bottom-right corner
- * (for `both`), right edge (for `horizontal`), or bottom edge (for
- * `vertical`) with the schema's `min*` / `max*` as the drag bounds.
+ * with the schema's `min*` / `max*` as the drag bounds.
  *
  * The visual is a tiny two-line "corner" mark — the universally-recognized
  * resize affordance used by macOS, GTK, browser textareas, etc. — drawn
@@ -605,13 +614,7 @@ function RunHereButton({ nodeId }: { nodeId: string }) {
  * drag. The corner is offset 1 px out from the card so it doesn't sit
  * inside the rounded-xl clip and end up partially hidden.
  */
-function NodeBodyResizeHandle({
-  direction,
-  size,
-}: {
-  direction: Exclude<NodeResizable, "none">;
-  size?: BaseNodeSize;
-}) {
+function NodeBodyResizeHandle({ size }: { size?: BaseNodeSize }) {
   // `NodeResizeControl` defaults `minWidth` to 10 and `minHeight` to 10
   // (effectively zero). We back-fill our own defaults so a user can't
   // accidentally drag a node into a 10×10 unreadable square:
@@ -621,18 +624,8 @@ function NodeBodyResizeHandle({
   //     enough to fit the header + a handle dot or two).
   const minWidth = size?.minWidth ?? DEFAULT_MIN_WIDTH;
   const minHeight = size?.minHeight ?? DEFAULT_RESIZE_MIN_HEIGHT;
-  const position: ControlPosition =
-    direction === "horizontal"
-      ? "right"
-      : direction === "vertical"
-        ? "bottom"
-        : "bottom-right";
+  const position: ControlPosition = "bottom-right";
 
-  // The default NodeResizeControl renders a 5×5 white square with a border
-  // — fine for the demo, ugly in our card. We pass `style={{ background:
-  // "transparent", border: "none" }}` to wipe its chrome and put our own
-  // visual inside via children. `className=""` overrides the lib's default
-  // class so the absolute-positioning + cursor styles below take effect.
   return (
     <NodeResizeControl
       position={position}
@@ -640,77 +633,34 @@ function NodeBodyResizeHandle({
       minHeight={minHeight}
       maxWidth={size?.maxWidth}
       maxHeight={size?.maxHeight}
-      // The lib renders an absolutely-positioned wrapper; we let it own the
-      // position math (it knows about React Flow's measurement units) and
-      // just style the visible thumb via children.
       style={{
         background: "transparent",
         border: "none",
-        width: direction === "vertical" ? "100%" : 16,
-        height: direction === "horizontal" ? "100%" : 16,
+        width: 16,
+        height: 16,
       }}
     >
       <div
         aria-hidden
         data-testid="node-resize-handle"
-        data-direction={direction}
+        data-direction="both"
         className={cn(
-          // Visual sits flush in the corner / edge mid-point — the
-          // wrapper from NodeResizeControl already handles the bounds.
-          "pointer-events-none absolute text-muted-foreground/40 transition-colors",
-          // Hover state: comes from `group/node` on the BaseNode card —
-          // we use the card's hover signal so the affordance "lights up"
-          // as the user approaches even before they touch the handle.
+          "pointer-events-none absolute bottom-0.5 right-0.5 text-muted-foreground/40 transition-colors",
           "group-hover:text-muted-foreground/80",
-          // Cursor per direction (visual matches the drag axis).
-          direction === "horizontal" && "right-0.5 top-1/2 -translate-y-1/2",
-          direction === "vertical" && "bottom-0.5 left-1/2 -translate-x-1/2",
-          direction === "both" && "bottom-0.5 right-0.5",
         )}
       >
-        {direction === "both" ? (
-          // Two short diagonals — the canonical macOS / browser-textarea
-          // "drag corner" mark. Drawn as a 10×10 SVG so it scales with
-          // the surrounding text color.
-          <svg
-            width={10}
-            height={10}
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.2}
-            strokeLinecap="round"
-          >
-            <path d="M 1 9 L 9 1" />
-            <path d="M 5 9 L 9 5" />
-          </svg>
-        ) : direction === "horizontal" ? (
-          // Short vertical grip line on the right edge.
-          <svg
-            width={3}
-            height={14}
-            viewBox="0 0 3 14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.2}
-            strokeLinecap="round"
-          >
-            <path d="M 1.5 1 L 1.5 13" />
-          </svg>
-        ) : (
-          // Short horizontal grip line on the bottom edge.
-          <svg
-            width={14}
-            height={3}
-            viewBox="0 0 14 3"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.2}
-            strokeLinecap="round"
-          >
-            <path d="M 1 1.5 L 13 1.5" />
-          </svg>
-        )}
+        <svg
+          width={10}
+          height={10}
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.2}
+          strokeLinecap="round"
+        >
+          <path d="M 1 9 L 9 1" />
+          <path d="M 5 9 L 9 5" />
+        </svg>
       </div>
     </NodeResizeControl>
   );

@@ -804,7 +804,7 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
     defaultWidth: 320,
     minWidth: 280,
     maxWidth: 720,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
 

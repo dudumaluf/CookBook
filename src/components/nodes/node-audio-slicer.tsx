@@ -285,6 +285,6 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
     defaultWidth: 280,
     minWidth: 240,
     maxWidth: 520,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

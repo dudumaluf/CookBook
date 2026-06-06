@@ -191,6 +191,6 @@ export const soulIdNodeSchema = defineNode<SoulIdNodeConfig>({
     defaultWidth: 260,
     minWidth: 240,
     maxWidth: 420,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

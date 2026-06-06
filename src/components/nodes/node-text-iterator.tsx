@@ -339,7 +339,7 @@ export const textIteratorNodeSchema = defineNode<TextIteratorNodeConfig>({
     defaultWidth: 260,
     minWidth: 240,
     maxWidth: 400,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
 

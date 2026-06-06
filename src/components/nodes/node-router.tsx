@@ -180,7 +180,7 @@ export const routerNodeSchema = defineNode<RouterNodeConfig>({
     defaultWidth: 240,
     minWidth: 200,
     maxWidth: 360,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
 

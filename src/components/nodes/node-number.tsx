@@ -294,6 +294,6 @@ export const numberNodeSchema = defineNode<NumberNodeConfig>({
     defaultWidth: 220,
     minWidth: 200,
     maxWidth: 360,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

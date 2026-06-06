@@ -447,6 +447,6 @@ export const scribeV2NodeSchema = defineNode<ScribeV2NodeConfig>({
     defaultWidth: 320,
     minWidth: 280,
     maxWidth: 560,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

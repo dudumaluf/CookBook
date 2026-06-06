@@ -132,6 +132,6 @@ export const exportNodeSchema = defineNode<ExportNodeConfig>({
     defaultWidth: 240,
     minWidth: 220,
     maxWidth: 360,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

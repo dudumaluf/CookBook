@@ -375,6 +375,6 @@ export const heygenLipsyncNodeSchema = defineNode<HeygenLipsyncNodeConfig>({
     defaultWidth: 340,
     minWidth: 300,
     maxWidth: 720,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

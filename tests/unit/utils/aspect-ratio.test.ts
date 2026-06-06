@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  aspectFromFirstMediaDimensions,
   aspectFromImageDimensions,
+  aspectFromMediaDimensions,
   parseAspectRatio,
 } from "@/lib/utils/aspect-ratio";
 
@@ -60,5 +62,34 @@ describe("aspectFromImageDimensions (Slice 5.6.2)", () => {
     expect(aspectFromImageDimensions(100, Number.POSITIVE_INFINITY)).toBe(
       "1 / 1",
     );
+  });
+});
+
+describe("aspectFromMediaDimensions", () => {
+  it("reads width/height from ImageRef-style metadata", () => {
+    expect(
+      aspectFromMediaDimensions({ width: 1080, height: 1920 }),
+    ).toBe("1080 / 1920");
+  });
+
+  it("falls back when metadata is missing", () => {
+    expect(aspectFromMediaDimensions({ url: "x" } as never)).toBe("16 / 9");
+    expect(aspectFromMediaDimensions(undefined, "3 / 4")).toBe("3 / 4");
+  });
+});
+
+describe("aspectFromFirstMediaDimensions", () => {
+  it("returns the first ref with valid dimensions", () => {
+    expect(
+      aspectFromFirstMediaDimensions([
+        undefined,
+        { width: 1080, height: 1920 },
+        { width: 1920, height: 1080 },
+      ]),
+    ).toBe("1080 / 1920");
+  });
+
+  it("returns null when no ref has dimensions", () => {
+    expect(aspectFromFirstMediaDimensions([{}, { url: "x" } as never])).toBeNull();
   });
 });

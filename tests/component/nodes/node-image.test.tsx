@@ -336,11 +336,11 @@ describe("imageNodeSchema", () => {
   });
 
   describe("schema.size — width-only resize (height follows aspect ratio) — ADR-0028", () => {
-    it("declares horizontal-only resize because the preview's height follows the linked asset's aspect", () => {
+    it("declares corner resize (both axes) with aspect-aware preview", () => {
       // Vertical or 'both' would be confusing — the container's height is
       // derived from style.aspectRatio (Slice 5.6.2), so a manual vertical
       // drag wouldn't actually stretch the image.
-      expect(imageNodeSchema.size?.resizable).toBe("horizontal");
+      expect(imageNodeSchema.size?.resizable).toBe("both");
     });
 
     it("caps width range so the preview stays useful but doesn't dominate the canvas", () => {

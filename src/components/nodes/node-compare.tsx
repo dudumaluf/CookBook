@@ -2,10 +2,16 @@
 
 import { Columns2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+// `useEffect` stays — `useSyncedVideos` below relies on it.
 
 import { defineNode } from "@/lib/engine/define-node";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
+import {
+  aspectFromFirstMediaDimensions,
+  aspectFromImageDimensions,
+  DEFAULT_LANDSCAPE_ASPECT,
+} from "@/lib/utils/aspect-ratio";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 /**
@@ -45,20 +51,28 @@ function useInputItem(nodeId: string, handle: string): StandardizedOutput | unde
   return Array.isArray(out) ? out[0] : out;
 }
 
+type CompareMedia = StandardizedOutput & { type: "image" | "video" };
+
 function MediaLayer({
   item,
   testid,
   videoRef,
   loop = true,
+  onIntrinsicAspect,
 }: {
-  item: StandardizedOutput & { type: "image" | "video" };
+  item: CompareMedia;
   testid?: string;
   /** When comparing two videos, the parent owns playback to sync them. */
   videoRef?: React.Ref<HTMLVideoElement>;
   loop?: boolean;
+  /** Fired when metadata / intrinsic dims reveal the true aspect ratio. */
+  onIntrinsicAspect?: (cssAspect: string) => void;
 }) {
+  // `object-contain` — never crop portrait assets into a landscape box.
+  // Letterboxing is intentional; the stage aspect ratio is derived from
+  // the wired media (metadata first, intrinsic measurement second).
   const common =
-    "absolute inset-0 h-full w-full select-none object-cover";
+    "absolute inset-0 h-full w-full select-none object-contain";
   if (item.type === "image") {
     return (
       // eslint-disable-next-line @next/next/no-img-element
@@ -68,6 +82,14 @@ function MediaLayer({
         draggable={false}
         data-testid={testid}
         onPointerDown={(e) => e.stopPropagation()}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            onIntrinsicAspect?.(
+              aspectFromImageDimensions(img.naturalWidth, img.naturalHeight),
+            );
+          }
+        }}
         className={common}
       />
     );
@@ -82,9 +104,56 @@ function MediaLayer({
       playsInline
       data-testid={testid}
       onPointerDown={(e) => e.stopPropagation()}
+      onLoadedMetadata={(e) => {
+        const video = e.currentTarget;
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          onIntrinsicAspect?.(
+            aspectFromImageDimensions(video.videoWidth, video.videoHeight),
+          );
+        }
+      }}
       className={common}
     />
   );
+}
+
+/**
+ * Per-side measured-aspect slot keyed by url. We reset DURING render when
+ * the wired url changes (React 19's recommended "derive state from props"
+ * pattern — no effect needed) so a fresh image kicks back to "measure
+ * intrinsic" instead of inheriting the previous side's aspect ratio.
+ */
+type MeasuredSlot = { url: string | undefined; measured: string | null };
+
+function useMeasuredAspectSlot(url: string | undefined) {
+  const [slot, setSlot] = useState<MeasuredSlot>({
+    url,
+    measured: null,
+  });
+  if (slot.url !== url) {
+    setSlot({ url, measured: null });
+  }
+  function setMeasured(measured: string) {
+    setSlot((prev) => ({ url: prev.url, measured }));
+  }
+  return [slot.measured, setMeasured] as const;
+}
+
+/** Stage aspect: metadata on A → B, then intrinsic measure on A → B. */
+function useCompareStageAspect(
+  aMedia: CompareMedia | undefined,
+  bMedia: CompareMedia | undefined,
+) {
+  const [aMeasured, setAMeasured] = useMeasuredAspectSlot(aMedia?.value.url);
+  const [bMeasured, setBMeasured] = useMeasuredAspectSlot(bMedia?.value.url);
+
+  const cssAspect =
+    aspectFromFirstMediaDimensions([aMedia?.value, bMedia?.value]) ??
+    aMeasured ??
+    bMeasured ??
+    DEFAULT_LANDSCAPE_ASPECT;
+
+  return { cssAspect, onAMeasured: setAMeasured, onBMeasured: setBMeasured };
 }
 
 /**
@@ -159,6 +228,8 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
 
   const aMedia = isMedia(a) ? a : undefined;
   const bMedia = isMedia(b) ? b : undefined;
+  const { cssAspect: stageAspect, onAMeasured, onBMeasured } =
+    useCompareStageAspect(aMedia, bMedia);
 
   // Sync playback only when BOTH sides are videos.
   const bothVideos = aMedia?.type === "video" && bMedia?.type === "video";
@@ -188,9 +259,14 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
         // Only one side wired — just show it, no slider yet.
         <div
           className="relative w-full overflow-hidden rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
+          style={{ aspectRatio: stageAspect }}
+          data-testid="compare-stage-aspect"
+          data-aspect={stageAspect}
         >
-          <MediaLayer item={(aMedia ?? bMedia)!} />
+          <MediaLayer
+            item={(aMedia ?? bMedia)!}
+            onIntrinsicAspect={aMedia ? onAMeasured : onBMeasured}
+          />
           <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] text-white/90">
             {aMedia ? "A" : "B"} · wire the other side to compare
           </span>
@@ -199,10 +275,11 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
         <div
           ref={ref}
           data-testid="compare-stage"
+          data-aspect={stageAspect}
           onMouseMove={(e) => onMove(e.clientX)}
           onPointerDown={(e) => e.stopPropagation()}
           className="relative w-full cursor-ew-resize overflow-hidden rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
+          style={{ aspectRatio: stageAspect }}
         >
           {/* A = bottom layer (revealed on the right). */}
           <MediaLayer
@@ -210,6 +287,7 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
             testid="compare-a"
             videoRef={bothVideos ? aVideoRef : undefined}
             loop={!bothVideos}
+            onIntrinsicAspect={onAMeasured}
           />
           {/* B = top layer, clipped to the left of the divider. */}
           <div
@@ -221,6 +299,7 @@ function CompareBody({ nodeId }: NodeBodyProps<CompareNodeConfig>) {
               testid="compare-b"
               videoRef={bothVideos ? bVideoRef : undefined}
               loop={!bothVideos}
+              onIntrinsicAspect={onBMeasured}
             />
           </div>
           {/* Divider that follows the mouse. */}
@@ -270,6 +349,8 @@ export const compareNodeSchema = defineNode<CompareNodeConfig>({
     defaultWidth: 320,
     minWidth: 260,
     maxWidth: 720,
-    resizable: "horizontal",
+    minHeight: 200,
+    maxHeight: 900,
+    resizable: "both",
   },
 });

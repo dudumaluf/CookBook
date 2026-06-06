@@ -670,7 +670,7 @@ export const higgsfieldImageGenNodeSchema =
       defaultWidth: 320,
       minWidth: 280,
       maxWidth: 720,
-      resizable: "horizontal",
+      resizable: "both",
     },
   });
 

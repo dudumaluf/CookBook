@@ -532,7 +532,7 @@ export const imageIteratorNodeSchema = defineNode<ImageIteratorNodeConfig>({
     defaultWidth: 240,
     minWidth: 220,
     maxWidth: 360,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
 

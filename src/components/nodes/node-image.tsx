@@ -305,16 +305,13 @@ export const imageNodeSchema = defineNode<ImageNodeConfig>({
     return { type: "image", value: { url: config.url } };
   },
   Body: ImageNodeBody,
-  // Size contract (ADR-0028). Width-only resize: the preview's aspect
-  // ratio is derived from the linked asset (or the loaded image) — height
-  // naturally follows width, so a "both" handle would be redundant and a
-  // vertical-only handle would be confusing (the image wouldn't actually
-  // stretch). Horizontal range tuned so a preview stays useful (≥ 200 px)
-  // but doesn't dominate the canvas (≤ 480 px).
+  // Size contract (ADR-0028). Corner resize on both axes; preview aspect
+  // is derived from the linked asset (or intrinsic measurement) with
+  // `object-contain` so the image never warps inside the card.
   size: {
     defaultWidth: 240,
     minWidth: 200,
     maxWidth: 480,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

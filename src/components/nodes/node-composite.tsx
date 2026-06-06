@@ -484,6 +484,6 @@ export const compositeNodeSchema = defineNode<CompositeNodeConfig>({
     defaultWidth: 240,
     minWidth: 200,
     maxWidth: 400,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

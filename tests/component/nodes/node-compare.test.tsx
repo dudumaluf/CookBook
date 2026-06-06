@@ -72,6 +72,27 @@ describe("compare node", () => {
     expect(() => fireEvent.mouseMove(stage, { clientX: 100 })).not.toThrow();
   });
 
+  it("uses portrait aspect ratio from wired image metadata (not hardcoded 16:9)", () => {
+    useWorkflowStore.setState({
+      nodes: [{ id: "cmp", kind: "compare", position: { x: 0, y: 0 }, config: {} }],
+      edges: [],
+    });
+    wire("a", "srcA", {
+      type: "image",
+      value: { url: "https://x/a.png", width: 1080, height: 1920 },
+    });
+    wire("b", "srcB", {
+      type: "image",
+      value: { url: "https://x/b.png", width: 1080, height: 1920 },
+    });
+
+    const Body = compareNodeSchema.Body;
+    render(<Body nodeId="cmp" config={{}} updateConfig={vi.fn()} selected={false} />);
+
+    const stage = screen.getByTestId("compare-stage");
+    expect(stage.getAttribute("data-aspect")).toBe("1080 / 1920");
+  });
+
   it("disables per-video loop when comparing two videos (parent syncs them)", () => {
     useWorkflowStore.setState({
       nodes: [{ id: "cmp", kind: "compare", position: { x: 0, y: 0 }, config: {} }],

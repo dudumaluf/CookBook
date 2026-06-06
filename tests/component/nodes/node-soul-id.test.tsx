@@ -39,8 +39,8 @@ describe("soulIdNodeSchema", () => {
     expect(soulIdNodeSchema.outputs[0]?.dataType).toBe("soul-id");
   });
 
-  it("declares horizontal-only resize (single-row body)", () => {
-    expect(soulIdNodeSchema.size?.resizable).toBe("horizontal");
+  it("declares corner resize (single-row body)", () => {
+    expect(soulIdNodeSchema.size?.resizable).toBe("both");
     expect(soulIdNodeSchema.size?.minWidth).toBeGreaterThan(0);
     expect(soulIdNodeSchema.size?.maxWidth).toBeGreaterThan(
       soulIdNodeSchema.size!.minWidth!,

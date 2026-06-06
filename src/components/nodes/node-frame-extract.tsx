@@ -191,6 +191,6 @@ export const frameExtractNodeSchema = defineNode<FrameExtractNodeConfig>({
     defaultWidth: 240,
     minWidth: 220,
     maxWidth: 480,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

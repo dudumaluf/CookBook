@@ -155,6 +155,6 @@ export const arrayNodeSchema = defineNode<ArrayNodeConfig>({
     defaultWidth: 220,
     minWidth: 200,
     maxWidth: 360,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

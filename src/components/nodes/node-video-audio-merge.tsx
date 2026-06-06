@@ -100,6 +100,6 @@ export const videoAudioMergeNodeSchema = defineNode({
     defaultWidth: 300,
     minWidth: 260,
     maxWidth: 560,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

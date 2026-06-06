@@ -411,6 +411,6 @@ export const marlinNodeSchema = defineNode<MarlinNodeConfig>({
     defaultWidth: 340,
     minWidth: 300,
     maxWidth: 640,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

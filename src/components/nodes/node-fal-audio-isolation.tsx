@@ -139,6 +139,6 @@ export const falAudioIsolationNodeSchema = defineNode({
     defaultWidth: 280,
     minWidth: 260,
     maxWidth: 480,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

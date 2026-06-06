@@ -413,6 +413,6 @@ export const hunyuan3dNodeSchema = defineNode<Hunyuan3dNodeConfig>({
     defaultWidth: 320,
     minWidth: 300,
     maxWidth: 640,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

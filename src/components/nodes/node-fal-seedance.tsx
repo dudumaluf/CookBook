@@ -726,6 +726,6 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     defaultWidth: 360,
     minWidth: 280,
     maxWidth: 720,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });

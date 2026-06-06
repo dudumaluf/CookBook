@@ -232,7 +232,7 @@ export const videoPadNodeSchema = defineNode<VideoPadNodeConfig>({
     defaultWidth: 280,
     minWidth: 240,
     maxWidth: 560,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
 

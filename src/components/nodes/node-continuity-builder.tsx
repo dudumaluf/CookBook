@@ -493,6 +493,6 @@ export const continuityBuilderNodeSchema =
       defaultWidth: 360,
       minWidth: 300,
       maxWidth: 720,
-      resizable: "horizontal",
+      resizable: "both",
     },
   });

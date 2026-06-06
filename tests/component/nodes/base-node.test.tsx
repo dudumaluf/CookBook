@@ -488,7 +488,7 @@ describe("<BaseNode />", () => {
       expect(handle!.getAttribute("data-direction")).toBe("both");
     });
 
-    it("renders a right-edge handle for resizable='horizontal'", () => {
+    it("normalizes legacy resizable='horizontal' to the corner handle", () => {
       const { container } = renderShell({
         size: { minWidth: 200, maxWidth: 480, resizable: "horizontal" },
       });
@@ -496,10 +496,10 @@ describe("<BaseNode />", () => {
         "[data-testid='node-resize-handle']",
       ) as HTMLElement | null;
       expect(handle).not.toBeNull();
-      expect(handle!.getAttribute("data-direction")).toBe("horizontal");
+      expect(handle!.getAttribute("data-direction")).toBe("both");
     });
 
-    it("renders a bottom-edge handle for resizable='vertical'", () => {
+    it("normalizes legacy resizable='vertical' to the corner handle", () => {
       const { container } = renderShell({
         size: { minHeight: 100, maxHeight: 320, resizable: "vertical" },
       });
@@ -507,7 +507,7 @@ describe("<BaseNode />", () => {
         "[data-testid='node-resize-handle']",
       ) as HTMLElement | null;
       expect(handle).not.toBeNull();
-      expect(handle!.getAttribute("data-direction")).toBe("vertical");
+      expect(handle!.getAttribute("data-direction")).toBe("both");
     });
 
     it("renders the Run-here button only for non-reactive schemas with execute() defined (Slice 5.8 + 6.4 hotfix)", () => {

@@ -288,6 +288,6 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
     defaultWidth: 320,
     minWidth: 260,
     maxWidth: 640,
-    resizable: "horizontal",
+    resizable: "both",
   },
 });
