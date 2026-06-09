@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
@@ -32,7 +33,7 @@ export async function callHeygenLipsync(
 
   let submitRes: Response;
   try {
-    submitRes = await fetch("/api/fal/heygen-lipsync", {
+    submitRes = await authedFetch("/api/fal/heygen-lipsync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -67,7 +68,7 @@ export async function callHeygenLipsync(
 
     let statusRes: Response;
     try {
-      statusRes = await fetch("/api/fal/heygen-lipsync/status", {
+      statusRes = await authedFetch("/api/fal/heygen-lipsync/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, endpoint }),

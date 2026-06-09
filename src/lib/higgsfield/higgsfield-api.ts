@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  MissingCredentialsError,
+  resolveHiggsfieldCredentials,
+  type UserContext,
+} from "@/lib/byok/resolver";
+
 import type {
   HiggsfieldErrorCode,
   HiggsfieldImageRequest,
@@ -45,17 +51,18 @@ interface Credentials {
   secret: string;
 }
 
-function loadCredentials(): Credentials {
-  const key = process.env.HIGGSFIELD_API_KEY?.trim();
-  const secret = process.env.HIGGSFIELD_API_SECRET?.trim();
-  if (!key || !secret) {
-    const err = new Error(
-      "HIGGSFIELD_API_KEY / HIGGSFIELD_API_SECRET missing from server env. Set both in .env.local — see .env.example.",
-    );
-    annotate(err, "missing_keys");
+async function loadCredentials(user?: UserContext): Promise<Credentials> {
+  try {
+    const resolved = await resolveHiggsfieldCredentials(user);
+    return { key: resolved.key, secret: resolved.secret };
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      const e = new Error(err.message);
+      annotate(e, "missing_keys");
+      throw e;
+    }
     throw err;
   }
-  return { key, secret };
 }
 
 /**
@@ -250,8 +257,9 @@ interface RawCustomReferenceList {
  */
 export async function listSoulIds(
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<HiggsfieldSoulIdSummary[]> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   const all: HiggsfieldSoulIdSummary[] = [];
   for (let page = 1; page <= 50; page++) {
     const res = await fetchJson<RawCustomReferenceList>(
@@ -352,8 +360,9 @@ export async function createSoulId(
     imageUrls: string[];
   },
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<HiggsfieldSoulIdRecord> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   const name = params.name.trim();
   if (!name) {
     const err = new Error("Soul ID name is required.");
@@ -385,8 +394,9 @@ export async function createSoulId(
 export async function getSoulId(
   id: string,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<HiggsfieldSoulIdRecord> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   const raw = await fetchJson<RawCustomReferenceListItem>(
     `${API_BASE}/v1/custom-references/${encodeURIComponent(id)}`,
     creds,
@@ -399,8 +409,9 @@ export async function getSoulId(
 export async function deleteSoulId(
   id: string,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<void> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   await fetchJson<unknown>(
     `${API_BASE}/v1/custom-references/${encodeURIComponent(id)}`,
     creds,
@@ -432,8 +443,9 @@ interface RawSoulStyle {
  */
 export async function listSoulStyles(
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<HiggsfieldSoulStyle[]> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   // Endpoint returns a bare `RawSoulStyle[]`, not `{ items: [...] }`.
   const raw = await fetchJson<RawSoulStyle[]>(
     `${API_BASE}/v1/text2image/soul-styles/v2`,
@@ -529,8 +541,9 @@ export async function generateSoulImage(
   args: HiggsfieldImageRequest,
   signal: AbortSignal,
   options: { pollIntervalMs?: number; timeoutMs?: number } = {},
+  user?: UserContext,
 ): Promise<HiggsfieldImageSuccessResponse> {
-  const creds = loadCredentials();
+  const creds = await loadCredentials(user);
   const endpoint = SOUL_ENDPOINT_BY_VARIANT[args.variant];
 
   // Build the per-mode body. We're explicit about which fields we send so

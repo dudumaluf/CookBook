@@ -1,7 +1,9 @@
 import "server-only";
 
-import { fal } from "@fal-ai/client";
+import type { UserContext } from "@/lib/byok/resolver";
+import { MissingCredentialsError } from "@/lib/byok/resolver";
 
+import { buildFalClient } from "./client-factory";
 import {
   describeFalError,
   MARLIN_ENDPOINT,
@@ -31,23 +33,6 @@ type FalErrorCode =
 function annotate(err: Error, code: FalErrorCode): Error {
   (err as Error & { code?: FalErrorCode }).code = code;
   return err;
-}
-
-let configured = false;
-function ensureConfigured(): void {
-  const key = process.env.FAL_KEY?.trim();
-  if (!key) {
-    throw annotate(
-      new Error(
-        "FAL_KEY missing from server env. Set it in .env.local — see .env.example.",
-      ),
-      "missing_key",
-    );
-  }
-  if (!configured) {
-    fal.config({ credentials: key });
-    configured = true;
-  }
 }
 
 function buildInput(req: MarlinRequest): Record<string, unknown> {
@@ -94,8 +79,18 @@ function isAbort(err: unknown, signal: AbortSignal): boolean {
 export async function submitMarlin(
   req: MarlinRequest,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<MarlinSubmitResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
@@ -116,8 +111,18 @@ export async function getMarlinResult(
   endpoint: string,
   requestId: string,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<MarlinStatusResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }

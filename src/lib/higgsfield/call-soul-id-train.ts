@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { HiggsfieldCallError } from "./call-higgsfield-image";
 import type { HiggsfieldErrorResponse } from "./types";
 
@@ -40,7 +41,7 @@ export async function trainSoulId(args: {
   const { signal, ...body } = args;
   let res: Response;
   try {
-    res = await fetch("/api/higgsfield/soul-id/train", {
+    res = await authedFetch("/api/higgsfield/soul-id/train", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -62,7 +63,7 @@ export async function getSoulIdStatus(
   id: string,
   signal: AbortSignal,
 ): Promise<SoulIdRecord> {
-  const res = await fetch(`/api/higgsfield/soul-id/${encodeURIComponent(id)}`, {
+  const res = await authedFetch(`/api/higgsfield/soul-id/${encodeURIComponent(id)}`, {
     method: "GET",
     signal,
   });
@@ -75,7 +76,7 @@ export async function deleteSoulIdRemote(
   id: string,
   signal: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`/api/higgsfield/soul-id/${encodeURIComponent(id)}`, {
+  const res = await authedFetch(`/api/higgsfield/soul-id/${encodeURIComponent(id)}`, {
     method: "DELETE",
     signal,
   });

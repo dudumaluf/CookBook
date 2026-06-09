@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
@@ -30,7 +31,7 @@ export async function callMarlin(
 
   let submitRes: Response;
   try {
-    submitRes = await fetch("/api/fal/marlin", {
+    submitRes = await authedFetch("/api/fal/marlin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -65,7 +66,7 @@ export async function callMarlin(
 
     let statusRes: Response;
     try {
-      statusRes = await fetch("/api/fal/marlin/status", {
+      statusRes = await authedFetch("/api/fal/marlin/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, endpoint }),

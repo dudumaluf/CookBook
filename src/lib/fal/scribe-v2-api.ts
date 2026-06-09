@@ -1,7 +1,9 @@
 import "server-only";
 
-import { fal } from "@fal-ai/client";
+import type { UserContext } from "@/lib/byok/resolver";
+import { MissingCredentialsError } from "@/lib/byok/resolver";
 
+import { buildFalClient } from "./client-factory";
 import {
   describeFalError,
   SCRIBE_V2_ENDPOINT,
@@ -29,23 +31,6 @@ type FalErrorCode =
 function annotate(err: Error, code: FalErrorCode): Error {
   (err as Error & { code?: FalErrorCode }).code = code;
   return err;
-}
-
-let configured = false;
-function ensureConfigured(): void {
-  const key = process.env.FAL_KEY?.trim();
-  if (!key) {
-    throw annotate(
-      new Error(
-        "FAL_KEY missing from server env. Set it in .env.local — see .env.example.",
-      ),
-      "missing_key",
-    );
-  }
-  if (!configured) {
-    fal.config({ credentials: key });
-    configured = true;
-  }
 }
 
 function buildInput(req: ScribeV2Request): Record<string, unknown> {
@@ -109,8 +94,18 @@ function isAbort(err: unknown, signal: AbortSignal): boolean {
 export async function submitScribeV2(
   req: ScribeV2Request,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<ScribeV2SubmitResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
@@ -131,8 +126,18 @@ export async function getScribeV2Result(
   endpoint: string,
   requestId: string,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<ScribeV2StatusResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }

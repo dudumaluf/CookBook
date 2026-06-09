@@ -1,5 +1,12 @@
 import "server-only";
 
+import {
+  MissingCredentialsError,
+  resolveFalCredentials,
+  resolveSimpleProviderCredentials,
+  type UserContext,
+} from "@/lib/byok/resolver";
+
 /**
  * Provider abstraction — Slice 7.1 (ADR-0041).
  *
@@ -36,26 +43,33 @@ export interface LlmProvider {
   /** POST URL for non-streaming + streaming chat completions. */
   endpoint: string;
   /**
-   * Builds the `Authorization` header for outgoing requests. Throws
-   * with `code: "missing_key"` if the env var isn't set.
+   * Builds the `Authorization` header for outgoing requests. Async
+   * because Slice 7.7 (BYOK) resolves credentials from the DB; throws
+   * with `code: "missing_key"` if neither BYOK nor env is configured.
+   * The `user` arg is optional so background jobs (cron) can keep
+   * using platform credentials without an authenticated context.
    */
-  authHeader(): string;
+  authHeader(user?: UserContext): Promise<string>;
+}
+
+function annotateMissing(err: MissingCredentialsError): Error {
+  const e = new Error(err.message);
+  (e as Error & { code?: string }).code = "missing_key";
+  return e;
 }
 
 /** Fal's OpenAI-compat router — our default. */
 const falOpenaiCompat: LlmProvider = {
   id: "fal-openai-compat",
   endpoint: "https://fal.run/openrouter/router/openai/v1/chat/completions",
-  authHeader() {
-    const key = process.env.FAL_KEY;
-    if (!key) {
-      const err = new Error(
-        "FAL_KEY missing from server env. Set it in .env.local — see .env.example.",
-      );
-      (err as Error & { code?: string }).code = "missing_key";
+  async authHeader(user?: UserContext) {
+    try {
+      const resolved = await resolveFalCredentials(user);
+      return `Key ${resolved.key}`;
+    } catch (err) {
+      if (err instanceof MissingCredentialsError) throw annotateMissing(err);
       throw err;
     }
-    return `Key ${key}`;
   },
 };
 
@@ -67,16 +81,22 @@ const falOpenaiCompat: LlmProvider = {
 const openrouterDirect: LlmProvider = {
   id: "openrouter",
   endpoint: "https://openrouter.ai/api/v1/chat/completions",
-  authHeader() {
-    const key = process.env.OPENROUTER_API_KEY;
-    if (!key) {
-      const err = new Error(
-        "OPENROUTER_API_KEY missing — set it in .env.local before flipping the provider.",
+  async authHeader(user?: UserContext) {
+    try {
+      // OpenRouter doesn't have a dedicated BYOK provider entry yet
+      // (the user's BYOK row is keyed on `openai`/`anthropic`/etc.). For
+      // now this stays env-only; users can still flip per-deploy via
+      // `OPENROUTER_API_KEY`.
+      const resolved = await resolveSimpleProviderCredentials(
+        user,
+        "openai",
+        "OPENROUTER_API_KEY",
       );
-      (err as Error & { code?: string }).code = "missing_key";
+      return `Bearer ${resolved.key}`;
+    } catch (err) {
+      if (err instanceof MissingCredentialsError) throw annotateMissing(err);
       throw err;
     }
-    return `Bearer ${key}`;
   },
 };
 
@@ -93,7 +113,6 @@ export function getProvider(): LlmProvider {
     case "openrouter":
       return openrouterDirect;
     case "openai":
-      // Reserved — implement when a real reason to bypass comes up.
       throw new Error("openai provider not implemented yet");
     case "fal-openai-compat":
     default:

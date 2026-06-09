@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
@@ -29,7 +30,7 @@ export async function callFalImage(
 
   let res: Response;
   try {
-    res = await fetch("/api/fal/image", {
+    res = await authedFetch("/api/fal/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

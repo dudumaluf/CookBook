@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import type {
   LlmErrorResponse,
   LlmRequest,
@@ -47,7 +48,7 @@ export async function callOpenRouter(
 
   let res: Response;
   try {
-    res = await fetch(CHAT_COMPLETIONS_ROUTE, {
+    res = await authedFetch(CHAT_COMPLETIONS_ROUTE, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

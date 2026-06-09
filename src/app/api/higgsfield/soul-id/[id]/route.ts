@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireUser } from "@/lib/auth/require-user";
 
 import { deleteSoulId, getSoulId } from "@/lib/higgsfield/higgsfield-api";
 import type { HiggsfieldErrorResponse } from "@/lib/higgsfield/types";
@@ -16,9 +17,12 @@ export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const __auth = await requireUser(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   const { id } = await ctx.params;
   try {
-    const record = await getSoulId(id, req.signal);
+    const record = await getSoulId(id, req.signal, { userId: __auth.userId, accessToken: __auth.accessToken });
     return NextResponse.json({ record }, { status: 200 });
   } catch (err) {
     return mapErrorToResponse(err);
@@ -29,9 +33,12 @@ export async function DELETE(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const __auth = await requireUser(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   const { id } = await ctx.params;
   try {
-    await deleteSoulId(id, req.signal);
+    await deleteSoulId(id, req.signal, { userId: __auth.userId, accessToken: __auth.accessToken });
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err) {
     return mapErrorToResponse(err);

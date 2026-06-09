@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireUser } from "@/lib/auth/require-user";
 
 import { listSoulStyles } from "@/lib/higgsfield/higgsfield-api";
 import type {
@@ -30,8 +31,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
+  const __auth = await requireUser(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   try {
-    const items = await listSoulStyles(req.signal);
+    const items = await listSoulStyles(req.signal, { userId: __auth.userId, accessToken: __auth.accessToken });
     const body: HiggsfieldSoulStylesResponse = { items };
     return NextResponse.json(body, { status: 200 });
   } catch (err) {

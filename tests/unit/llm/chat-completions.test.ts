@@ -208,7 +208,7 @@ describe("callChatCompletions", () => {
         { model: "anthropic/claude-sonnet-4.5", user: "Hi" },
         new AbortController().signal,
       ),
-    ).rejects.toThrowError(/FAL_KEY missing/);
+    ).rejects.toThrowError(/FAL_KEY/);
   });
 
   it("throws AbortError when signal is already aborted", async () => {

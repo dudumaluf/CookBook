@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
@@ -31,7 +32,7 @@ export async function callHunyuan3d(
 
   let submitRes: Response;
   try {
-    submitRes = await fetch("/api/fal/hunyuan-3d", {
+    submitRes = await authedFetch("/api/fal/hunyuan-3d", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -66,7 +67,7 @@ export async function callHunyuan3d(
 
     let statusRes: Response;
     try {
-      statusRes = await fetch("/api/fal/hunyuan-3d/status", {
+      statusRes = await authedFetch("/api/fal/hunyuan-3d/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, endpoint }),

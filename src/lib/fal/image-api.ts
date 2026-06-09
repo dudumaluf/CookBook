@@ -1,7 +1,9 @@
 import "server-only";
 
-import { fal } from "@fal-ai/client";
+import type { UserContext } from "@/lib/byok/resolver";
+import { MissingCredentialsError } from "@/lib/byok/resolver";
 
+import { buildFalClient } from "./client-factory";
 import {
   describeFalError,
   FAL_IMAGE_MODEL_CAPS,
@@ -52,23 +54,6 @@ const ENDPOINTS: Record<FalImageModel, { gen: string; edit?: string }> = {
   "krea-v2-large": { gen: "krea/v2/large/text-to-image" },
 };
 
-let configured = false;
-function ensureConfigured(): void {
-  const key = process.env.FAL_KEY?.trim();
-  if (!key) {
-    throw annotate(
-      new Error(
-        "FAL_KEY missing from server env. Set it in .env.local — see .env.example.",
-      ),
-      "missing_key",
-    );
-  }
-  if (!configured) {
-    fal.config({ credentials: key });
-    configured = true;
-  }
-}
-
 interface FalImageRawOutput {
   images?: Array<{ url?: string }>;
   seed?: number;
@@ -77,8 +62,18 @@ interface FalImageRawOutput {
 export async function generateFalImage(
   req: FalImageRequest,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<FalImageSuccessResponse> {
-  ensureConfigured();
+  let bound;
+  try {
+    bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = bound;
   if (signal.aborted) throw annotate(new Error("Request cancelled"), "aborted");
 
   const caps = FAL_IMAGE_MODEL_CAPS[req.model];

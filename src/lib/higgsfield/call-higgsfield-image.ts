@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import type {
   HiggsfieldErrorResponse,
   HiggsfieldImageRequest,
@@ -50,7 +51,7 @@ export async function callHiggsfieldImage(
 
   let res: Response;
   try {
-    res = await fetch("/api/higgsfield/image", {
+    res = await authedFetch("/api/higgsfield/image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -84,7 +85,7 @@ export async function fetchSoulIds(
 ): Promise<HiggsfieldSoulIdSummary[]> {
   let res: Response;
   try {
-    res = await fetch("/api/higgsfield/soul-ids", { signal });
+    res = await authedFetch("/api/higgsfield/soul-ids", { signal });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;
     throw new HiggsfieldCallError(
@@ -122,7 +123,7 @@ export async function fetchSoulStyles(
 ): Promise<HiggsfieldSoulStyle[]> {
   let res: Response;
   try {
-    res = await fetch("/api/higgsfield/soul-styles", { signal });
+    res = await authedFetch("/api/higgsfield/soul-styles", { signal });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;
     throw new HiggsfieldCallError(

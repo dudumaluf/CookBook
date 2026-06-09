@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   AudioIsolationRequest,
@@ -28,7 +29,7 @@ export async function callAudioIsolation(
 
   let submitRes: Response;
   try {
-    submitRes = await fetch("/api/fal/audio-isolation", {
+    submitRes = await authedFetch("/api/fal/audio-isolation", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -63,7 +64,7 @@ export async function callAudioIsolation(
 
     let statusRes: Response;
     try {
-      statusRes = await fetch("/api/fal/audio-isolation/status", {
+      statusRes = await authedFetch("/api/fal/audio-isolation/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, endpoint }),

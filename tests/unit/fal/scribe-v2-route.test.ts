@@ -72,6 +72,7 @@ describe("POST /api/fal/scribe-v2 (submit)", () => {
     expect(submitScribeV2).toHaveBeenCalledWith(
       expect.objectContaining({ audioUrl: "https://x/clip.mp3" }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -97,6 +98,7 @@ describe("POST /api/fal/scribe-v2 (submit)", () => {
         diarize: false,
         keyterms: ["fal", "elevenlabs"],
       }),
+      expect.anything(),
       expect.anything(),
     );
   });

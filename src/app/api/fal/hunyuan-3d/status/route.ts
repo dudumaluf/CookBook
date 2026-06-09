@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireUser } from "@/lib/auth/require-user";
 
 import { getHunyuan3dResult } from "@/lib/fal/hunyuan-3d-api";
 import {
@@ -14,6 +15,9 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const __auth = await requireUser(req);
+  if (__auth instanceof NextResponse) return __auth;
+
   let json: unknown;
   try {
     json = await req.json();
@@ -35,8 +39,7 @@ export async function POST(req: NextRequest) {
     const result = await getHunyuan3dResult(
       parsed.data.endpoint,
       parsed.data.requestId,
-      req.signal,
-    );
+      req.signal, { userId: __auth.userId, accessToken: __auth.accessToken });
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     return mapErrorToResponse(err);

@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import type {
   FalErrorResponse,
   SeedanceStatusResponse,
@@ -74,7 +75,7 @@ async function postJson<T>(
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await authedFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

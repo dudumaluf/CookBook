@@ -159,6 +159,7 @@ function buildMessagesFromLegacyShape(args: LlmRequest): ChatMessage[] {
 export async function callChatCompletions(
   args: LlmRequest,
   signal: AbortSignal,
+  user?: import("@/lib/byok/resolver").UserContext,
 ): Promise<LlmSuccessResponse> {
   const provider = getProvider();
   if (signal.aborted) throw makeAbort();
@@ -171,7 +172,7 @@ export async function callChatCompletions(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: provider.authHeader(),
+        Authorization: await provider.authHeader(user),
       },
       body: JSON.stringify(body),
       signal,

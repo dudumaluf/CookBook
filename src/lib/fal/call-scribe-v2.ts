@@ -1,3 +1,4 @@
+import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
@@ -31,7 +32,7 @@ export async function callScribeV2(
 
   let submitRes: Response;
   try {
-    submitRes = await fetch("/api/fal/scribe-v2", {
+    submitRes = await authedFetch("/api/fal/scribe-v2", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -66,7 +67,7 @@ export async function callScribeV2(
 
     let statusRes: Response;
     try {
-      statusRes = await fetch("/api/fal/scribe-v2/status", {
+      statusRes = await authedFetch("/api/fal/scribe-v2/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ requestId, endpoint }),

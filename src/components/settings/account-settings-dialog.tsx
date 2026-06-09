@@ -4,6 +4,7 @@ import { Loader2, LogOut, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { BYOKPanel } from "@/components/settings/byok-panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -90,7 +91,7 @@ export function AccountSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="account-settings-dialog"
-        className="sm:max-w-[460px]"
+        className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle>Account</DialogTitle>
@@ -171,6 +172,10 @@ export function AccountSettingsDialog({
               Save password
             </Button>
           </section>
+
+          <div className="border-t border-border/40 pt-4">
+            <BYOKPanel />
+          </div>
 
           <section className="flex flex-col gap-2 border-t border-border/40 pt-4">
             <header className="flex items-center gap-2">

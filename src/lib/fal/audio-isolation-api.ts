@@ -1,7 +1,9 @@
 import "server-only";
 
-import { fal } from "@fal-ai/client";
+import type { UserContext } from "@/lib/byok/resolver";
+import { MissingCredentialsError } from "@/lib/byok/resolver";
 
+import { buildFalClient } from "./client-factory";
 import {
   AUDIO_ISOLATION_ENDPOINT,
   describeFalError,
@@ -29,23 +31,6 @@ function annotate(err: Error, code: FalErrorCode): Error {
   return err;
 }
 
-let configured = false;
-function ensureConfigured(): void {
-  const key = process.env.FAL_KEY?.trim();
-  if (!key) {
-    throw annotate(
-      new Error(
-        "FAL_KEY missing from server env. Set it in .env.local — see .env.example.",
-      ),
-      "missing_key",
-    );
-  }
-  if (!configured) {
-    fal.config({ credentials: key });
-    configured = true;
-  }
-}
-
 function buildInput(req: AudioIsolationRequest): Record<string, unknown> {
   const input: Record<string, unknown> = {};
   if (req.audioUrl) input.audio_url = req.audioUrl;
@@ -64,8 +49,18 @@ function isAbort(err: unknown, signal: AbortSignal): boolean {
 export async function submitAudioIsolation(
   req: AudioIsolationRequest,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<AudioIsolationSubmitResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
@@ -86,8 +81,18 @@ export async function getAudioIsolationResult(
   endpoint: string,
   requestId: string,
   signal: AbortSignal,
+  user?: UserContext,
 ): Promise<AudioIsolationStatusResponse> {
-  ensureConfigured();
+  let __bound;
+  try {
+    __bound = await buildFalClient(user);
+  } catch (err) {
+    if (err instanceof MissingCredentialsError) {
+      throw annotate(new Error(err.message), "missing_key");
+    }
+    throw err;
+  }
+  const { client: fal } = __bound;
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
