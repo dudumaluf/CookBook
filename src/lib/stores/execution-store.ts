@@ -14,11 +14,30 @@ import type {
 import { useWorkflowStore } from "./workflow-store";
 
 /**
- * Cap for per-node history (Slice 5.8). Tuned so "I want to revisit a
- * good generation 5 runs ago" works without bloating memory. Tune up
- * if user feedback says it's too low.
+ * Cap for per-node history (Slice 5.8 → 6.6).
+ *
+ * Originally 10 — small enough that the project document stayed light and
+ * the body's `‹ N/M ›` cursor didn't get unwieldy. User feedback was
+ * straightforward: "don't limit it." So this is now `Infinity`. Practical
+ * implications callers should be aware of:
+ *
+ *  - `Array.prototype.slice(-Infinity)` returns the whole array, so the
+ *    three slice sites in `execution-store.ts` + `lib/project/document.ts`
+ *    keep working unchanged — they're effectively no-ops now but stay in
+ *    place so reverting to a finite cap is a one-line change.
+ *  - The history is serialized into the project document on save; growth
+ *    is unbounded in principle. In practice each entry is URLs + usage
+ *    metadata (no bytes), so a heavy node accumulating 1000 entries is
+ *    still on the order of ~2 MB — Supabase JSONB handles that fine.
+ *  - The Gallery (`cookbook_generations`) remains the durable, queryable
+ *    corpus and has its own per-node cap of 50 in the repo. Nothing here
+ *    affects that.
+ *
+ * If a future project balloons past comfortable serialization size, the
+ * intended escape hatch is a per-project setting + an explicit "trim
+ * history" affordance — not silently re-introducing a global cap.
  */
-export const HISTORY_CAP = 10;
+export const HISTORY_CAP: number = Number.POSITIVE_INFINITY;
 
 /**
  * Execution store — live status + outputs for the most recent run.

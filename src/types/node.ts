@@ -518,11 +518,15 @@ export interface ExecutionRecord {
    */
   fanOut?: { total: number; done: number };
   /**
-   * Per-node ring buffer of past `done` outputs (Slice 5.8). Capped at
-   * `HISTORY_CAP` (10). View-only — UI navigates via the
-   * `<IteratorCursor>` cursor on supported nodes (Higgsfield + LLM
-   * Text). The current run's output is also the last entry, so the
-   * cursor at `history.length - 1` shows the live result.
+   * Per-node history of past `done` outputs (Slice 5.8 → 6.6).
+   *
+   * Originally a ring buffer capped at `HISTORY_CAP = 10`; bumped to
+   * unlimited (`HISTORY_CAP = Infinity`) per user feedback — see the
+   * docblock on `HISTORY_CAP` in `execution-store.ts` for the
+   * trade-offs. View-only — UI navigates via the `<IteratorCursor>`
+   * cursor on supported nodes (Higgsfield + LLM Text). The current
+   * run's output is also the last entry, so the cursor at
+   * `history.length - 1` shows the live result.
    *
    * Cached records do NOT add an entry — replays aren't new outputs.
    * Cleared by `clearRun()` along with `records`.

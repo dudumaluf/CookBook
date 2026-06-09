@@ -215,7 +215,7 @@ describe("execution-store", () => {
   });
 
   describe("history ring buffer (Slice 5.8)", () => {
-    it("appends a history entry on every `done` record (cap = 10)", async () => {
+    it("appends a history entry on every `done` record (no cap — Slice 6.6)", async () => {
       const textId = useWorkflowStore
         .getState()
         .addNode("text", { x: 0, y: 0 }, { text: "v0" });
@@ -274,6 +274,33 @@ describe("execution-store", () => {
       rec = useExecutionStore.getState().getRecord(textId);
       expect(rec?.status).toBe("cached");
       expect(rec?.history).toHaveLength(1);
+    });
+
+    it("history grows past the legacy cap of 10 (Slice 6.6 — unlimited)", async () => {
+      // Old behavior: HISTORY_CAP = 10, history.slice(-10) trimmed older
+      // entries. New behavior: HISTORY_CAP = Infinity, so 15 distinct runs
+      // accumulate 15 entries with the oldest still present at index 0.
+      const textId = useWorkflowStore
+        .getState()
+        .addNode("text", { x: 0, y: 0 }, { text: "v0" });
+      for (let i = 0; i < 15; i++) {
+        useWorkflowStore
+          .getState()
+          .updateNodeConfig(textId, { text: `v${i}` });
+        await useExecutionStore.getState().startRun();
+      }
+      const rec = useExecutionStore.getState().getRecord(textId);
+      expect(rec?.history).toHaveLength(15);
+      const first = rec!.history![0]!.output;
+      const last = rec!.history![14]!.output;
+      expect(
+        !Array.isArray(first) && first.type === "text" ? first.value : null,
+      ).toBe("v0");
+      expect(
+        !Array.isArray(last) && last.type === "text" ? last.value : null,
+      ).toBe("v14");
+      // Cursor auto-tracks the freshest run.
+      expect(rec?.cursorIndex).toBe(14);
     });
   });
 
