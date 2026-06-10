@@ -16,6 +16,7 @@ import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageConcatNodeSchema } from "@/components/nodes/node-image-concat";
 import { imageCropNodeSchema } from "@/components/nodes/node-image-crop";
+import { imageGridNodeSchema } from "@/components/nodes/node-image-grid";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { listNodeSchema } from "@/components/nodes/node-list";
@@ -76,6 +77,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(videoAudioMergeNodeSchema);
   nodeRegistry.register(videoPadNodeSchema);
   nodeRegistry.register(imageConcatNodeSchema);
+  nodeRegistry.register(imageGridNodeSchema);
   nodeRegistry.register(textConcatNodeSchema);
   nodeRegistry.register(imageCropNodeSchema);
   nodeRegistry.register(compareNodeSchema);
