@@ -48,7 +48,13 @@ export {
 
 export { probeMedia, type MediaProbeResult } from "./probe";
 
-export { extractFrame, type FramePosition } from "./extract-frame";
+export { extractFrame, extractFrames, type FramePosition } from "./extract-frame";
+
+export {
+  frameTimestampsMs,
+  type FrameSamplingMode,
+  type FrameSamplingSpec,
+} from "./frame-timestamps";
 
 export { sliceAudio } from "./slice-audio";
 

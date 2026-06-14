@@ -186,14 +186,71 @@ describe("image-grid node", () => {
     expect(callOpts.cellAspect).toBeUndefined();
   });
 
-  it("grows the socket list with portCount", () => {
+  it("grows the socket list with portCount and keeps the array socket first", () => {
     expect(imageGridNodeSchema.getInputs!({}).map((h) => h.id)).toEqual([
+      "images",
       "image-0",
       "image-1",
     ]);
     expect(
       imageGridNodeSchema.getInputs!({ portCount: 4 }).map((h) => h.id),
-    ).toEqual(["image-0", "image-1", "image-2", "image-3"]);
+    ).toEqual(["images", "image-0", "image-1", "image-2", "image-3"]);
+  });
+
+  it("exposes the images[] socket as a multiple image input", () => {
+    const arr = imageGridNodeSchema.getInputs!({}).find((h) => h.id === "images");
+    expect(arr).toBeDefined();
+    expect(arr?.multiple).toBe(true);
+    expect(arr?.dataType).toBe("image");
+  });
+
+  it("composes an array fed into the images[] socket", async () => {
+    await imageGridNodeSchema.execute!(
+      ctx(
+        {
+          images: [
+            img("https://x/f1.png"),
+            img("https://x/f2.png"),
+            img("https://x/f3.png"),
+          ],
+        },
+        { portCount: 2 },
+      ) as never,
+    );
+    expect(composeImageGrid).toHaveBeenCalledWith(
+      ["https://x/f1.png", "https://x/f2.png", "https://x/f3.png"],
+      expect.objectContaining({ fit: "cover" }),
+    );
+  });
+
+  it("merges numbered sockets first, then the images[] array", async () => {
+    await imageGridNodeSchema.execute!(
+      ctx(
+        {
+          "image-0": img("https://x/a.png"),
+          "image-1": img("https://x/b.png"),
+          images: [img("https://x/f1.png"), img("https://x/f2.png")],
+        },
+        { portCount: 2 },
+      ) as never,
+    );
+    expect(composeImageGrid).toHaveBeenCalledWith(
+      [
+        "https://x/a.png",
+        "https://x/b.png",
+        "https://x/f1.png",
+        "https://x/f2.png",
+      ],
+      expect.anything(),
+    );
+  });
+
+  it("passes a single array item through without composing", async () => {
+    const out = (await imageGridNodeSchema.execute!(
+      ctx({ images: [img("https://x/only.png")] }) as never,
+    )) as StandardizedOutput;
+    expect(out).toEqual({ type: "image", value: { url: "https://x/only.png" } });
+    expect(composeImageGrid).not.toHaveBeenCalled();
   });
 
   it("registers under the 'compose' category with the right kind", () => {

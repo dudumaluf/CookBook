@@ -70,3 +70,54 @@ export async function extractFrame(
     input.dispose();
   }
 }
+
+/**
+ * Pull MANY frames in one pass — Slice 7.9.
+ *
+ * Opens the mediabunny `Input` (and its `VideoSampleSink`) ONCE, then
+ * decodes a frame at each requested timestamp. Far cheaper than calling
+ * `extractFrame` N times, which would re-demux the whole file per
+ * frame. Returns one PNG Blob per timestamp; timestamps that yield no
+ * sample (past the end, etc.) are skipped, so the result can be shorter
+ * than the input array.
+ *
+ * Timestamps should be sorted ascending for best decoder locality
+ * (`frameTimestampsMs` already emits them in order). Browser-only —
+ * same WebCodecs constraints as `extractFrame`.
+ */
+export async function extractFrames(
+  src: Blob | string,
+  timestampsMs: number[],
+): Promise<Blob[]> {
+  const input = makeInput(src);
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    if (!track) {
+      throw new Error("No video track to extract frames from.");
+    }
+    const sink = new VideoSampleSink(track);
+    const blobs: Blob[] = [];
+    for (const ms of timestampsMs) {
+      const timestampSec = Math.max(0, ms / 1000);
+      const sample = await sink.getSample(timestampSec);
+      if (!sample) continue;
+      const width = sample.displayWidth;
+      const height = sample.displayHeight;
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        sample.close();
+        throw new Error("Could not acquire a 2D context for frame extraction.");
+      }
+      sample.draw(ctx, 0, 0, width, height);
+      sample.close();
+      blobs.push(await canvas.convertToBlob({ type: "image/png" }));
+    }
+    if (blobs.length === 0) {
+      throw new Error("No frames could be extracted at the requested times.");
+    }
+    return blobs;
+  } finally {
+    input.dispose();
+  }
+}

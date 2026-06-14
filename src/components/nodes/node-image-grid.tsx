@@ -4,7 +4,10 @@ import { Grid3x3, Loader2 } from "lucide-react";
 import { useEffect, useId, useMemo } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
-import { extractInputByType } from "@/lib/engine/extract-input";
+import {
+  extractInputArrayByType,
+  extractInputByType,
+} from "@/lib/engine/extract-input";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
 import {
   composeImageGrid,
@@ -51,6 +54,15 @@ import type {
 
 const MIN_PORTS = 2;
 const PORT_PREFIX = "image-";
+/**
+ * Dedicated `multiple: true` socket for ARRAY sources (Frames Extract,
+ * Image Iterator, List). One edge carries an entire `image[]` and the
+ * runner accumulates every item into a single grid execution (the
+ * multi-handle branch in run-workflow.ts spreads arrays — no fan-out).
+ * Distinct id from the numbered `image-N` single sockets so the
+ * auto-grow logic never confuses the two.
+ */
+const ARRAY_PORT = "images";
 const DEFAULT_MAX_OUTPUT_EDGE = 2048;
 
 type GridLayoutMode = "auto" | "manual";
@@ -95,11 +107,23 @@ export interface ImageGridNodeConfig {
 
 function imageInputs(portCount: number | undefined): NodeIO[] {
   const n = Math.max(MIN_PORTS, portCount ?? MIN_PORTS);
-  return Array.from({ length: n }, (_, i) => ({
+  const numbered: NodeIO[] = Array.from({ length: n }, (_, i) => ({
     id: `${PORT_PREFIX}${i}`,
     label: `image ${i + 1}`,
     dataType: "image" as const,
   }));
+  // Array socket first so array sources (frames, iterators, lists) land
+  // at the top; numbered single sockets below for manual one-by-one
+  // wiring. Both feed the same grid — execute merges them.
+  return [
+    {
+      id: ARRAY_PORT,
+      label: "images[]",
+      dataType: "image" as const,
+      multiple: true,
+    },
+    ...numbered,
+  ];
 }
 
 function portIndex(handle: string | undefined): number {
@@ -163,6 +187,9 @@ function ImageGridBody({
     }
     return m;
   });
+  const hasArraySource = useWorkflowStore((s) =>
+    s.edges.some((e) => e.target === nodeId && e.targetHandle === ARRAY_PORT),
+  );
   // Always keep one trailing empty slot so users can wire one more.
   const desired = Math.max(MIN_PORTS, maxConnected + 2);
   const current = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
@@ -174,17 +201,20 @@ function ImageGridBody({
 
   const layoutMode = config.layoutMode ?? "auto";
   const summary = useMemo(() => {
-    if (wiredCount <= 0) return null;
     if (layoutMode === "manual") {
       const cols = Math.max(1, config.cols ?? 2);
       const rows =
         config.rows && config.rows > 0
           ? config.rows
-          : Math.max(1, Math.ceil(wiredCount / cols));
+          : Math.max(1, Math.ceil(Math.max(wiredCount, 1) / cols));
       return { cols, rows };
     }
+    // Auto + an array source: the frame count is only known at run time,
+    // so we can't predict cols×rows. Show it after the run instead.
+    if (hasArraySource) return null;
+    if (wiredCount <= 0) return null;
     return autoFlow(wiredCount);
-  }, [config.cols, config.rows, layoutMode, wiredCount]);
+  }, [config.cols, config.rows, layoutMode, wiredCount, hasArraySource]);
 
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
@@ -228,9 +258,13 @@ function ImageGridBody({
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Grid3x3 className="h-3 w-3" />
           <span>
-            {wiredCount >= MIN_PORTS
-              ? `${wiredCount} images wired · Run to grid`
-              : `Wire ${MIN_PORTS - Math.max(0, wiredCount)} more image${MIN_PORTS - Math.max(0, wiredCount) === 1 ? "" : "s"} to grid`}
+            {hasArraySource
+              ? wiredCount > 0
+                ? `${wiredCount} wired + array source · Run to grid`
+                : "Array source wired · Run to grid"
+              : wiredCount >= MIN_PORTS
+                ? `${wiredCount} images wired · Run to grid`
+                : `Wire ${MIN_PORTS - Math.max(0, wiredCount)} more image${MIN_PORTS - Math.max(0, wiredCount) === 1 ? "" : "s"} to grid`}
           </span>
         </div>
       )}
@@ -503,7 +537,7 @@ export const imageGridNodeSchema = defineNode<ImageGridNodeConfig>({
   category: "compose",
   title: "Image Grid",
   description:
-    "Lay N wired images into a uniform-cell grid. Auto-flow by default (square-ish), with manual columns/rows override. Pick cell aspect (source / 1:1 / 16:9 / …), fit (cover / contain / stretch), and a 9-position anchor for cropping.",
+    "Lay N images into a uniform-cell grid. Wire images one-by-one into the numbered sockets, or feed an array (Frames Extract, Image Iterator, List) into the images[] socket. Auto-flow by default (square-ish), with manual columns/rows override. Pick cell aspect (source / 1:1 / 16:9 / …), fit (cover / contain / stretch), and a 9-position anchor for cropping.",
   icon: Grid3x3,
   inputs: imageInputs(MIN_PORTS),
   getInputs: (config) => imageInputs(config.portCount),
@@ -550,12 +584,21 @@ export const imageGridNodeSchema = defineNode<ImageGridNodeConfig>({
   execute: async ({ config, inputs }) => {
     const n = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
     const refs: ImageRef[] = [];
+    // Numbered single sockets first (explicit manual order)…
     for (let i = 0; i < n; i++) {
       const ref = extractInputByType(inputs, `${PORT_PREFIX}${i}`, "image");
       if (ref?.url) refs.push(ref);
     }
+    // …then every item from the `images[]` array socket (frames,
+    // iterators, lists). The runner already accumulated all upstream
+    // arrays into one list on this handle.
+    for (const ref of extractInputArrayByType(inputs, ARRAY_PORT, "image")) {
+      if (ref?.url) refs.push(ref);
+    }
     if (refs.length === 0) {
-      throw new Error("Wire at least two images into the ordered sockets.");
+      throw new Error(
+        "Wire at least two images — into the numbered sockets or the images[] array socket.",
+      );
     }
     if (refs.length === 1) {
       // Single image — return as-is, no point composing a 1×1 grid.

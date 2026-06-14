@@ -13,6 +13,7 @@ import { marlinNodeSchema } from "@/components/nodes/node-fal-marlin";
 import { scribeV2NodeSchema } from "@/components/nodes/node-fal-scribe-v2";
 import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
+import { framesExtractNodeSchema } from "@/components/nodes/node-frames-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
 import { imageConcatNodeSchema } from "@/components/nodes/node-image-concat";
 import { imageCropNodeSchema } from "@/components/nodes/node-image-crop";
@@ -73,6 +74,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(audioSlicerNodeSchema);
   nodeRegistry.register(videoSlicerNodeSchema);
   nodeRegistry.register(frameExtractNodeSchema);
+  nodeRegistry.register(framesExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(videoAudioMergeNodeSchema);
   nodeRegistry.register(videoPadNodeSchema);
