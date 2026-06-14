@@ -11,7 +11,10 @@ vi.mock("@/lib/media", async (importOriginal) => {
 });
 vi.mock("@/lib/library/upload-asset", () => ({ uploadImageAsset }));
 
-import { framesExtractNodeSchema } from "@/components/nodes/node-frames-extract";
+import {
+  framesExtractNodeSchema,
+  framesSourceSignature,
+} from "@/components/nodes/node-frames-extract";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 const video = (url: string, durationMs?: number): StandardizedOutput => ({
@@ -114,5 +117,84 @@ describe("frames-extract node", () => {
     const out = framesExtractNodeSchema.outputs[0]!;
     expect(out.dataType).toBe("image");
     expect(out.multiple).toBe(true);
+  });
+});
+
+describe("frames-extract node — curation / caching", () => {
+  it("reuses cached frames (no re-extract) and drops excluded indices", async () => {
+    const cachedFrames = [
+      { url: "https://x/c0.png" },
+      { url: "https://x/c1.png" },
+      { url: "https://x/c2.png" },
+    ];
+    const baseConfig = { mode: "count", count: 3 } as Record<string, unknown>;
+    const sig = framesSourceSignature("https://x/clip.mp4", baseConfig);
+    const result = (await framesExtractNodeSchema.execute!(
+      ctx(
+        { video: video("https://x/clip.mp4", 6000) },
+        {
+          ...baseConfig,
+          frames: cachedFrames,
+          sourceSig: sig,
+          excludedIndices: [1],
+        },
+      ) as never,
+    )) as StandardizedOutput[];
+    expect(extractFrames).not.toHaveBeenCalled();
+    expect(probeMedia).not.toHaveBeenCalled();
+    expect(result).toHaveLength(2);
+    expect(
+      result.map((o) => (o.type === "image" ? o.value.url : "")),
+    ).toEqual(["https://x/c0.png", "https://x/c2.png"]);
+  });
+
+  it("re-extracts when the sampling signature is stale", async () => {
+    const result = (await framesExtractNodeSchema.execute!(
+      ctx(
+        { video: video("https://x/clip.mp4", 6000) },
+        {
+          mode: "count",
+          count: 5,
+          frames: [{ url: "https://x/old.png" }],
+          sourceSig: "stale-signature",
+          excludedIndices: [0],
+        },
+      ) as never,
+    )) as StandardizedOutput[];
+    expect(extractFrames).toHaveBeenCalled();
+    // 3 blobs from the mock → exclusions reset on fresh extraction.
+    expect(result).toHaveLength(3);
+  });
+
+  it("throws when every cached frame is excluded", async () => {
+    const baseConfig = { mode: "count", count: 2 } as Record<string, unknown>;
+    const sig = framesSourceSignature("https://x/clip.mp4", baseConfig);
+    await expect(
+      framesExtractNodeSchema.execute!(
+        ctx(
+          { video: video("https://x/clip.mp4", 6000) },
+          {
+            ...baseConfig,
+            frames: [{ url: "https://x/c0.png" }, { url: "https://x/c1.png" }],
+            sourceSig: sig,
+            excludedIndices: [0, 1],
+          },
+        ) as never,
+      ),
+    ).rejects.toThrow(/All frames are excluded/);
+  });
+
+  it("signature ignores curation + UI state, tracks sampling params", () => {
+    const a = framesSourceSignature("u", { mode: "count", count: 4 });
+    const b = framesSourceSignature("u", {
+      mode: "count",
+      count: 4,
+      excludedIndices: [1, 2],
+    });
+    expect(a).toBe(b); // curation must not bust the extraction cache
+    const c = framesSourceSignature("u", { mode: "count", count: 8 });
+    expect(c).not.toBe(a); // changing the count must
+    const d = framesSourceSignature("u", { mode: "interval", intervalSec: 2 });
+    expect(d).not.toBe(a);
   });
 });
