@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Dices,
   Film,
   ImageIcon,
   LayoutGrid,
@@ -75,15 +76,21 @@ const DEFAULT_MODE: FramesSamplingMode = "count";
 const DEFAULT_COUNT = 4;
 const DEFAULT_INTERVAL_SEC = 1;
 const DEFAULT_MAX_FRAMES = 64;
+const DEFAULT_JITTER = 0;
+const DEFAULT_SEED = 0;
 
 export interface FramesExtractNodeConfig {
   mode?: FramesSamplingMode;
-  /** mode "count": number of evenly-spaced frames. */
+  /** modes "count" / "span": number of frames. */
   count?: number;
   /** mode "interval": seconds between frames. */
   intervalSec?: number;
   /** Hard cap on emitted frames. */
   maxFrames?: number;
+  /** mode "span": fraction [0,1] of spacing to randomly offset interior frames. */
+  jitter?: number;
+  /** mode "span": seed for the jitter PRNG (reproducible variations). */
+  seed?: number;
   /**
    * Cached full extracted set (stable URLs). Written by execute() the
    * first time it extracts for a given `sourceSig`; the body curates
@@ -114,17 +121,29 @@ export function framesSourceSignature(
 ): string {
   const mode = config.mode ?? DEFAULT_MODE;
   const maxFrames = clampMaxFrames(config.maxFrames);
-  const knob =
-    mode === "count"
-      ? (config.count ?? DEFAULT_COUNT)
-      : (config.intervalSec ?? DEFAULT_INTERVAL_SEC);
-  return `${url}|${mode}|${knob}|${maxFrames}`;
+  if (mode === "interval") {
+    return `${url}|interval|${config.intervalSec ?? DEFAULT_INTERVAL_SEC}|${maxFrames}`;
+  }
+  if (mode === "span") {
+    // seed + jitter change WHICH frames land, so they belong in the
+    // cache key — re-rolling the seed should re-extract a new variation.
+    const count = config.count ?? DEFAULT_COUNT;
+    const jitter = config.jitter ?? DEFAULT_JITTER;
+    const seed = config.seed ?? DEFAULT_SEED;
+    return `${url}|span|${count}|${jitter}|${seed}|${maxFrames}`;
+  }
+  return `${url}|count|${config.count ?? DEFAULT_COUNT}|${maxFrames}`;
 }
 
 function summaryLabel(config: FramesExtractNodeConfig): string {
   const mode = config.mode ?? DEFAULT_MODE;
   if (mode === "interval") {
     return `every ${config.intervalSec ?? DEFAULT_INTERVAL_SEC}s`;
+  }
+  if (mode === "span") {
+    const n = config.count ?? DEFAULT_COUNT;
+    const jitter = config.jitter ?? DEFAULT_JITTER;
+    return `${n} across clip${jitter > 0 ? " · jittered" : ""}`;
   }
   return `${config.count ?? DEFAULT_COUNT} frames`;
 }
@@ -366,10 +385,13 @@ function FramesExtractSettings({
   const modeId = useId();
   const countId = useId();
   const intervalId = useId();
+  const jitterId = useId();
+  const seedId = useId();
   const maxId = useId();
   const cls =
     "h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs";
   const mode = config.mode ?? DEFAULT_MODE;
+  const jitterPct = Math.round((config.jitter ?? DEFAULT_JITTER) * 100);
   return (
     <div className="flex flex-col gap-3 text-xs">
       <div className="flex flex-col gap-1.5">
@@ -385,32 +407,12 @@ function FramesExtractSettings({
           className={cls}
         >
           <option value="count">Count — N evenly-spaced frames</option>
+          <option value="span">Span — N frames start → end (whole clip)</option>
           <option value="interval">Interval — a frame every X seconds</option>
         </select>
       </div>
 
-      {mode === "count" ? (
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={countId} className="font-medium text-foreground/90">
-            Frames
-          </label>
-          <input
-            id={countId}
-            type="number"
-            min={1}
-            max={config.maxFrames ?? DEFAULT_MAX_FRAMES}
-            value={config.count ?? DEFAULT_COUNT}
-            onChange={(e) =>
-              updateConfig({ count: Math.max(1, Number(e.target.value) || 1) })
-            }
-            className={cls}
-          />
-          <p className="text-[10.5px] leading-snug text-muted-foreground/80">
-            Spread evenly across the clip. Pair with the Image Grid node to
-            pack them into a contact sheet.
-          </p>
-        </div>
-      ) : (
+      {mode === "interval" ? (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={intervalId} className="font-medium text-foreground/90">
             Interval (seconds)
@@ -432,7 +434,96 @@ function FramesExtractSettings({
             One frame every X seconds from the start, capped by Max frames.
           </p>
         </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={countId} className="font-medium text-foreground/90">
+            Frames
+          </label>
+          <input
+            id={countId}
+            type="number"
+            min={1}
+            max={config.maxFrames ?? DEFAULT_MAX_FRAMES}
+            value={config.count ?? DEFAULT_COUNT}
+            onChange={(e) =>
+              updateConfig({ count: Math.max(1, Number(e.target.value) || 1) })
+            }
+            className={cls}
+          />
+          <p className="text-[10.5px] leading-snug text-muted-foreground/80">
+            {mode === "span"
+              ? "Spans the whole clip — frame 1 is the very start, frame N the very end."
+              : "Spread evenly across the clip. Pair with the Image Grid node to pack them into a contact sheet."}
+          </p>
+        </div>
       )}
+
+      {mode === "span" ? (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={jitterId} className="font-medium text-foreground/90">
+              Jitter{" "}
+              <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                {jitterPct}%
+              </span>
+            </label>
+            <input
+              id={jitterId}
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={jitterPct}
+              onChange={(e) =>
+                updateConfig({
+                  jitter: Math.max(0, Math.min(1, Number(e.target.value) / 100)),
+                })
+              }
+              className="w-full accent-accent"
+            />
+            <p className="text-[10.5px] leading-snug text-muted-foreground/80">
+              Nudges interior frames off the even grid (endpoints stay pinned).
+              0% = perfectly even.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={seedId} className="font-medium text-foreground/90">
+              Seed
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                id={seedId}
+                type="number"
+                min={0}
+                step={1}
+                value={config.seed ?? DEFAULT_SEED}
+                onChange={(e) =>
+                  updateConfig({
+                    seed: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                  })
+                }
+                className={cls}
+              />
+              <button
+                type="button"
+                aria-label="Randomize seed"
+                title="Randomize seed"
+                onClick={() =>
+                  updateConfig({ seed: Math.floor(Math.random() * 1_000_000) })
+                }
+                className="flex h-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/40 px-2 text-foreground/80 hover:bg-foreground/10"
+              >
+                <Dices className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="text-[10.5px] leading-snug text-muted-foreground/80">
+              Same seed → same frames. Roll the dice for a fresh variation of
+              the same span.
+            </p>
+          </div>
+        </>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={maxId} className="font-medium text-foreground/90">
@@ -471,20 +562,28 @@ export const framesExtractNodeSchema = defineNode<FramesExtractNodeConfig>({
   category: "transform",
   title: "Frames Extract",
   description:
-    "Pull multiple frames from a video as an array of images — N evenly-spaced (count) or one every X seconds (interval). Preview each frame and exclude the ones you don't want, then wire the array into the Image Grid node for a contact sheet. Client-side (mediabunny).",
+    "Pull multiple frames from a video as an array of images. Three modes: count (N evenly-spaced thumbnails), span (N frames across the WHOLE clip — frame 1 = start, frame N = end, with a seeded jitter to vary the spacing), or interval (one frame every X seconds). Preview each frame and exclude the ones you don't want, then wire the array into the Image Grid node for a contact sheet. Client-side (mediabunny).",
   icon: Film,
   inputs: [{ id: "video", label: "video", dataType: "video" }],
   outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],
   configParams: {
-    mode: { control: "select", options: ["count", "interval"], label: "sampling" },
+    mode: {
+      control: "select",
+      options: ["count", "span", "interval"],
+      label: "sampling",
+    },
     count: { control: "number", label: "frames" },
     intervalSec: { control: "number", label: "interval (s)" },
+    jitter: { control: "number", label: "jitter" },
+    seed: { control: "number", label: "seed" },
     maxFrames: { control: "number", label: "max frames" },
   },
   defaultConfig: {
     mode: DEFAULT_MODE,
     count: DEFAULT_COUNT,
     intervalSec: DEFAULT_INTERVAL_SEC,
+    jitter: DEFAULT_JITTER,
+    seed: DEFAULT_SEED,
     maxFrames: DEFAULT_MAX_FRAMES,
   },
   reactive: false,
@@ -518,6 +617,8 @@ export const framesExtractNodeSchema = defineNode<FramesExtractNodeConfig>({
         ...(config.intervalSec !== undefined
           ? { intervalSec: config.intervalSec }
           : {}),
+        ...(config.jitter !== undefined ? { jitter: config.jitter } : {}),
+        ...(config.seed !== undefined ? { seed: config.seed } : {}),
         maxFrames,
       });
 

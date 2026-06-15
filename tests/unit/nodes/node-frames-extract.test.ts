@@ -113,6 +113,41 @@ describe("frames-extract node", () => {
     expect(timestamps).toEqual([0, 1000, 2000, 3000, 4000]);
   });
 
+  it("passes span-mode endpoint-inclusive timestamps to extractFrames", async () => {
+    await framesExtractNodeSchema.execute!(
+      ctx(
+        { video: video("https://x/clip.mp4", 4000) },
+        { mode: "span", count: 5 },
+      ) as never,
+    );
+    const [url, timestamps] = extractFrames.mock.calls[0]!;
+    expect(url).toBe("https://x/clip.mp4");
+    // First = start, last = end (clamped 1ms inside).
+    expect((timestamps as number[])[0]).toBe(0);
+    expect((timestamps as number[]).at(-1)).toBe(3999);
+  });
+
+  it("threads span seed + jitter into the timestamp computation", async () => {
+    await framesExtractNodeSchema.execute!(
+      ctx(
+        { video: video("https://x/clip.mp4", 8000) },
+        { mode: "span", count: 6, jitter: 1, seed: 5 },
+      ) as never,
+    );
+    const a = extractFrames.mock.calls[0]![1] as number[];
+
+    extractFrames.mockClear();
+    await framesExtractNodeSchema.execute!(
+      ctx(
+        { video: video("https://x/clip.mp4", 8000) },
+        { mode: "span", count: 6, jitter: 1, seed: 6 },
+      ) as never,
+    );
+    const b = extractFrames.mock.calls[0]![1] as number[];
+    // Different seed ⇒ different interior sampling.
+    expect(a).not.toEqual(b);
+  });
+
   it("declares a multiple image output for array consumers", () => {
     const out = framesExtractNodeSchema.outputs[0]!;
     expect(out.dataType).toBe("image");
@@ -196,5 +231,28 @@ describe("frames-extract node — curation / caching", () => {
     expect(c).not.toBe(a); // changing the count must
     const d = framesSourceSignature("u", { mode: "interval", intervalSec: 2 });
     expect(d).not.toBe(a);
+  });
+
+  it("span signature tracks seed + jitter (re-rolling re-extracts)", () => {
+    const base = framesSourceSignature("u", { mode: "span", count: 6 });
+    const sameSeed = framesSourceSignature("u", {
+      mode: "span",
+      count: 6,
+      seed: 0,
+      jitter: 0,
+    });
+    expect(base).toBe(sameSeed);
+    const newSeed = framesSourceSignature("u", {
+      mode: "span",
+      count: 6,
+      seed: 12,
+    });
+    expect(newSeed).not.toBe(base);
+    const newJitter = framesSourceSignature("u", {
+      mode: "span",
+      count: 6,
+      jitter: 0.5,
+    });
+    expect(newJitter).not.toBe(base);
   });
 });
