@@ -119,6 +119,99 @@ describe("image-grid node", () => {
     );
   });
 
+  describe("pagination (both cols + rows pinned)", () => {
+    function fiveImages() {
+      return {
+        images: [
+          img("https://x/1.png"),
+          img("https://x/2.png"),
+          img("https://x/3.png"),
+          img("https://x/4.png"),
+          img("https://x/5.png"),
+        ],
+      };
+    }
+
+    it("splits overflow across uniform pages and returns an array", async () => {
+      let n = 0;
+      uploadImageAsset.mockImplementation(async () => ({
+        url: `https://cdn/grid-${++n}.png`,
+      }));
+
+      const result = await imageGridNodeSchema.execute!(
+        ctx(fiveImages(), {
+          portCount: 2,
+          layoutMode: "manual",
+          cols: 2,
+          rows: 2, // capacity 4 → 5 images → 2 pages
+        }) as never,
+      );
+
+      // First page gets the first 4 urls, second page the remaining 1.
+      expect(composeImageGrid).toHaveBeenCalledTimes(2);
+      expect(composeImageGrid.mock.calls[0]![0]).toEqual([
+        "https://x/1.png",
+        "https://x/2.png",
+        "https://x/3.png",
+        "https://x/4.png",
+      ]);
+      expect(composeImageGrid.mock.calls[1]![0]).toEqual(["https://x/5.png"]);
+
+      const out = (result as { output: StandardizedOutput[] }).output;
+      expect(Array.isArray(out)).toBe(true);
+      expect(out).toHaveLength(2);
+      expect(out.map((o) => (o.type === "image" ? o.value.url : null))).toEqual([
+        "https://cdn/grid-1.png",
+        "https://cdn/grid-2.png",
+      ]);
+    });
+
+    it("uses identical cols/rows geometry for every page", async () => {
+      await imageGridNodeSchema.execute!(
+        ctx(fiveImages(), {
+          portCount: 2,
+          layoutMode: "manual",
+          cols: 2,
+          rows: 2,
+        }) as never,
+      );
+      for (const call of composeImageGrid.mock.calls) {
+        expect(call[1]).toMatchObject({ cols: 2, rows: 2 });
+      }
+    });
+
+    it("does NOT paginate when only cols is pinned (rows grows to fit)", async () => {
+      const result = await imageGridNodeSchema.execute!(
+        ctx(fiveImages(), {
+          portCount: 2,
+          layoutMode: "manual",
+          cols: 2,
+          // rows omitted ⇒ single grid that grows to fit all 5
+        }) as never,
+      );
+      expect(composeImageGrid).toHaveBeenCalledTimes(1);
+      expect(composeImageGrid.mock.calls[0]![0]).toHaveLength(5);
+      // Single page ⇒ single (non-array) output.
+      const out = (result as { output: StandardizedOutput }).output;
+      expect(Array.isArray(out)).toBe(false);
+      expect(out.type).toBe("image");
+    });
+
+    it("stays a single grid when inputs fit one pinned page", async () => {
+      const result = await imageGridNodeSchema.execute!(
+        ctx(
+          {
+            images: [img("https://x/1.png"), img("https://x/2.png")],
+          },
+          { portCount: 2, layoutMode: "manual", cols: 2, rows: 2 },
+        ) as never,
+      );
+      expect(composeImageGrid).toHaveBeenCalledTimes(1);
+      const out = (result as { output: StandardizedOutput }).output;
+      expect(Array.isArray(out)).toBe(false);
+    });
+  });
+
   it("ignores manual cols/rows when layoutMode is auto", async () => {
     await imageGridNodeSchema.execute!(
       ctx(

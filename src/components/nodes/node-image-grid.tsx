@@ -4,6 +4,7 @@ import { Grid3x3, Loader2 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 
 import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
+import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { defineNode } from "@/lib/engine/define-node";
 import {
   extractInputArrayByType,
@@ -168,6 +169,16 @@ function autoFlow(n: number): { cols: number; rows: number } {
   return { cols, rows: Math.max(1, Math.ceil(n / cols)) };
 }
 
+/** Split `items` into consecutive chunks of at most `size`. */
+function chunk<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
 function ImageGridBody({
   nodeId,
   config,
@@ -176,11 +187,24 @@ function ImageGridBody({
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
   const output = record?.output;
-  const url =
-    output && !Array.isArray(output) && output.type === "image"
-      ? output.value.url
-      : null;
+  // A run can emit one grid (single) or several pages (array). Normalise
+  // to a flat list of page URLs so the body pages through them.
+  const pageUrls = useMemo(() => {
+    if (!output) return [] as string[];
+    const arr = Array.isArray(output) ? output : [output];
+    return arr
+      .filter(
+        (o): o is Extract<StandardizedOutput, { type: "image" }> =>
+          o.type === "image" && Boolean(o.value?.url),
+      )
+      .map((o) => o.value.url);
+  }, [output]);
+  const pageCount = pageUrls.length;
+
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
+  const safePage = Math.min(Math.max(0, pageIndex), Math.max(0, pageCount - 1));
+  const currentUrl = pageCount > 0 ? pageUrls[safePage]! : null;
 
   const maxConnected = useWorkflowStore((s) => {
     let m = -1;
@@ -205,17 +229,24 @@ function ImageGridBody({
   const summary = useMemo(() => {
     if (layoutMode === "manual") {
       const cols = Math.max(1, config.cols ?? 2);
+      const rowsPinned = config.rows && config.rows > 0 ? config.rows : null;
       const rows =
-        config.rows && config.rows > 0
-          ? config.rows
-          : Math.max(1, Math.ceil(Math.max(wiredCount, 1) / cols));
-      return { cols, rows };
+        rowsPinned ?? Math.max(1, Math.ceil(Math.max(wiredCount, 1) / cols));
+      // Both axes pinned ⇒ fixed capacity ⇒ overflow paginates. We can
+      // only predict the page count for numbered sockets; an array
+      // source's length is unknown until the run, so leave it to the
+      // post-run "page i/n" readout.
+      const pages =
+        rowsPinned && !hasArraySource && wiredCount > cols * rowsPinned
+          ? Math.ceil(wiredCount / (cols * rowsPinned))
+          : 1;
+      return { cols, rows, pages };
     }
     // Auto + an array source: the frame count is only known at run time,
     // so we can't predict cols×rows. Show it after the run instead.
     if (hasArraySource) return null;
     if (wiredCount <= 0) return null;
-    return autoFlow(wiredCount);
+    return { ...autoFlow(wiredCount), pages: 1 };
   }, [config.cols, config.rows, layoutMode, wiredCount, hasArraySource]);
 
   return (
@@ -229,6 +260,12 @@ function ImageGridBody({
             <span>
               {summary.cols}×{summary.rows}
             </span>
+            {summary.pages > 1 ? (
+              <>
+                <span className="text-muted-foreground/60">·</span>
+                <span>{summary.pages} pages</span>
+              </>
+            ) : null}
           </>
         ) : null}
         <span className="text-muted-foreground/60">·</span>
@@ -248,30 +285,52 @@ function ImageGridBody({
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>Composing grid…</span>
         </div>
-      ) : url ? (
+      ) : currentUrl ? (
         <>
-          <button
-            type="button"
-            aria-label="Preview grid"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => setPreviewOpen(true)}
-            className="group relative block w-full overflow-hidden rounded-md bg-black/20"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={url}
-              alt="Grid"
-              className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
-            />
-            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
-              Click to preview
-            </span>
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={
+                pageCount > 1
+                  ? `Preview grid page ${safePage + 1} of ${pageCount}`
+                  : "Preview grid"
+              }
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setPreviewOpen(true)}
+              className="group relative block w-full overflow-hidden rounded-md bg-black/20"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={currentUrl}
+                alt={pageCount > 1 ? `Grid page ${safePage + 1}` : "Grid"}
+                className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
+              />
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
+                Click to preview
+              </span>
+            </button>
+            {pageCount > 1 ? (
+              <div
+                className="absolute inset-x-1 bottom-1 flex justify-center"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <IteratorCursor
+                  count={pageCount}
+                  cursor={safePage}
+                  onCursorChange={setPageIndex}
+                  ariaLabelPrefix="Grid page"
+                  className="bg-background/75 shadow-sm backdrop-blur-sm"
+                />
+              </div>
+            ) : null}
+          </div>
           {previewOpen ? (
             <ImagePreviewModal
-              url={url}
-              alt="Image grid"
-              downloadName="image-grid"
+              url={currentUrl}
+              alt={pageCount > 1 ? `Image grid page ${safePage + 1}` : "Image grid"}
+              downloadName={
+                pageCount > 1 ? `image-grid-${safePage + 1}` : "image-grid"
+              }
               onClose={() => setPreviewOpen(false)}
             />
           ) : null}
@@ -391,7 +450,7 @@ function ImageGridSettings({
             <label htmlFor={rowsId} className="font-medium text-foreground/90">
               Rows{" "}
               <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                (blank = auto)
+                (blank = grow to fit)
               </span>
             </label>
             <input
@@ -409,6 +468,12 @@ function ImageGridSettings({
               className={cls}
             />
           </div>
+          <p className="col-span-2 text-[10px] leading-relaxed text-muted-foreground/70">
+            Pin both columns and rows to cap each grid (e.g. 3×3 = 9 per
+            page). Extra images spill onto more grid pages — 50 images →
+            6 pages you can flip through with the arrows. Leave rows blank
+            for one grid that grows to fit everything.
+          </p>
         </div>
       ) : null}
 
@@ -559,11 +624,11 @@ export const imageGridNodeSchema = defineNode<ImageGridNodeConfig>({
   category: "compose",
   title: "Image Grid",
   description:
-    "Lay N images into a uniform-cell grid. Wire images one-by-one into the numbered sockets, or feed an array (Frames Extract, Image Iterator, List) into the images[] socket. Auto-flow by default (square-ish), with manual columns/rows override. Pick cell aspect (source / 1:1 / 16:9 / …), fit (cover / contain / stretch), and a 9-position anchor for cropping.",
+    "Lay N images into a uniform-cell grid. Wire images one-by-one into the numbered sockets, or feed an array (Frames Extract, Image Iterator, List) into the images[] socket. Auto-flow by default (square-ish), with manual columns/rows override. Pinning BOTH columns and rows caps each grid (e.g. 3×3) and spills overflow onto multiple grid pages you can page through — great for turning 50 images into a stack of 3×3 contact sheets. Pick cell aspect (source / 1:1 / 16:9 / …), fit (cover / contain / stretch), and a 9-position anchor for cropping.",
   icon: Grid3x3,
   inputs: imageInputs(MIN_PORTS),
   getInputs: (config) => imageInputs(config.portCount),
-  outputs: [{ id: "out", label: "out", dataType: "image" }],
+  outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],
   defaultConfig: {
     layoutMode: "auto",
     cellAspect: "source",
@@ -641,27 +706,58 @@ export const imageGridNodeSchema = defineNode<ImageGridNodeConfig>({
         : undefined;
 
     const aspect = resolveAspect(config.cellAspect, refs[0]);
+    const baseOpts = {
+      ...(colsManual ? { cols: colsManual } : {}),
+      ...(rowsManual ? { rows: rowsManual } : {}),
+      ...(aspect !== undefined ? { cellAspect: aspect } : {}),
+      fit: config.fit ?? "cover",
+      anchor: config.anchor ?? "mc",
+      gap: config.gap ?? 0,
+      padding: config.padding ?? 0,
+      ...(config.background ? { background: config.background } : {}),
+      maxOutputEdge: config.maxOutputEdge ?? DEFAULT_MAX_OUTPUT_EDGE,
+    } as const;
 
-    const blob = await composeImageGrid(
-      refs.map((r) => r.url),
-      {
-        ...(colsManual ? { cols: colsManual } : {}),
-        ...(rowsManual ? { rows: rowsManual } : {}),
-        ...(aspect !== undefined ? { cellAspect: aspect } : {}),
-        fit: config.fit ?? "cover",
-        anchor: config.anchor ?? "mc",
-        gap: config.gap ?? 0,
-        padding: config.padding ?? 0,
-        ...(config.background ? { background: config.background } : {}),
-        maxOutputEdge: config.maxOutputEdge ?? DEFAULT_MAX_OUTPUT_EDGE,
-      },
-    );
-    const file = new File([blob], "grid.png", { type: "image/png" });
-    const uploaded = await uploadImageAsset(file);
-    const ref: ImageRef = { url: uploaded.url, mime: "image/png" };
+    // Pagination: when BOTH columns and rows are pinned the grid has a
+    // fixed per-page capacity (cols × rows). Rather than DROP the
+    // overflow (composeImageGrid's literal-pair behaviour), we lay the
+    // images across as many uniform pages as needed — 50 images in a
+    // 3×3 → 6 grid images. Every page uses the SAME cols/rows so cell
+    // geometry is identical across pages (the last page just has empty
+    // trailing cells). Auto / manual-cols-only stay a single grid that
+    // grows to fit everything.
+    const capacity =
+      colsManual && rowsManual ? colsManual * rowsManual : undefined;
+    const pages =
+      capacity && refs.length > capacity ? chunk(refs, capacity) : [refs];
+
+    // Compose pages sequentially — each page decodes its own bitmaps and
+    // frees them before the next, bounding peak memory for large sets
+    // (frames cap at 256). Parallel would hold every bitmap at once.
+    const uploadedRefs: ImageRef[] = [];
+    for (let p = 0; p < pages.length; p++) {
+      const blob = await composeImageGrid(
+        pages[p]!.map((r) => r.url),
+        baseOpts,
+      );
+      const file = new File([blob], `grid-${p + 1}.png`, {
+        type: "image/png",
+      });
+      const uploaded = await uploadImageAsset(file);
+      uploadedRefs.push({ url: uploaded.url, mime: "image/png" });
+    }
+
+    if (uploadedRefs.length === 1) {
+      return {
+        output: { type: "image", value: uploadedRefs[0]! },
+        usage: { model: "canvas grid" },
+      };
+    }
     return {
-      output: { type: "image", value: ref },
-      usage: { model: "canvas grid" },
+      output: uploadedRefs.map(
+        (ref) => ({ type: "image", value: ref }) satisfies StandardizedOutput,
+      ),
+      usage: { model: `canvas grid · ${uploadedRefs.length} pages` },
     };
   },
   Body: ImageGridBody,
