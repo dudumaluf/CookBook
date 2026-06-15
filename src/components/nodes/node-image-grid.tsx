@@ -1,8 +1,9 @@
 "use client";
 
 import { Grid3x3, Loader2 } from "lucide-react";
-import { useEffect, useId, useMemo } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
+import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
 import { defineNode } from "@/lib/engine/define-node";
 import {
   extractInputArrayByType,
@@ -179,6 +180,7 @@ function ImageGridBody({
     output && !Array.isArray(output) && output.type === "image"
       ? output.value.url
       : null;
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const maxConnected = useWorkflowStore((s) => {
     let m = -1;
@@ -247,13 +249,33 @@ function ImageGridBody({
           <span>Composing grid…</span>
         </div>
       ) : url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt="Grid"
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black/20"
-        />
+        <>
+          <button
+            type="button"
+            aria-label="Preview grid"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setPreviewOpen(true)}
+            className="group relative block w-full overflow-hidden rounded-md bg-black/20"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt="Grid"
+              className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
+            />
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
+              Click to preview
+            </span>
+          </button>
+          {previewOpen ? (
+            <ImagePreviewModal
+              url={url}
+              alt="Image grid"
+              downloadName="image-grid"
+              onClose={() => setPreviewOpen(false)}
+            />
+          ) : null}
+        </>
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Grid3x3 className="h-3 w-3" />

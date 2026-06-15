@@ -1,11 +1,13 @@
 "use client";
 
-import { Check, Save } from "lucide-react";
+import { Check, Loader2, Save, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputArrayByType } from "@/lib/engine/extract-input";
 import { uploadImageFromUrl } from "@/lib/library/upload-asset";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps } from "@/types/node";
 
 /**
@@ -44,13 +46,47 @@ export interface ExportNodeConfig {
 
 const DEFAULT_NAME_PREFIX = "Generated";
 
-function ExportNodeBody({}: NodeBodyProps<ExportNodeConfig>) {
-  return (
-    <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+function ExportNodeBody({ nodeId }: NodeBodyProps<ExportNodeConfig>) {
+  const record = useExecutionStore((s) => s.records.get(nodeId));
+  const status = record?.status;
+
+  let content: React.ReactNode;
+  if (status === "error" && record?.error) {
+    content = (
+      <div
+        role="alert"
+        className="flex items-start gap-2 rounded-md bg-destructive/10 px-2 py-2 text-[11px] leading-snug text-destructive"
+      >
+        <TriangleAlert className="mt-px h-3 w-3 shrink-0" />
+        <span>{record.error}</span>
+      </div>
+    );
+  } else if (status === "running" || status === "pending") {
+    content = (
+      <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+        <span>Saving to your Library…</span>
+      </div>
+    );
+  } else if (status === "done" || status === "cached") {
+    content = (
+      <div className="flex items-center gap-2 rounded-md bg-emerald-500/10 px-2 py-2 text-[11px] text-emerald-300">
+        <Check className="h-3.5 w-3.5 shrink-0" />
+        <span>Saved to your Library — open the Library to find them.</span>
+      </div>
+    );
+  } else {
+    content = (
       <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
         <Save className="h-3 w-3 text-accent" />
         <span>Saves the wired images into the Library on Run.</span>
       </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full min-w-[220px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+      {content}
     </div>
   );
 }
@@ -119,6 +155,15 @@ export const exportNodeSchema = defineNode<ExportNodeConfig>({
           `Saved ${savedCount} of ${refs.length} before failing: ${message}`,
         );
       }
+    }
+
+    // Discoverability: Export saves to the *Library* (not the Gallery),
+    // which is easy to miss. A success toast with the count tells the
+    // user it worked AND where to look — the #1 confusion this node hits.
+    if (savedCount > 0) {
+      toast.success(
+        `Saved ${savedCount} image${savedCount === 1 ? "" : "s"} to your Library`,
+      );
     }
 
     // Output is "none" but we still must return *something* the engine

@@ -3,6 +3,8 @@ import { render, screen } from "@testing-library/react";
 
 import { exportNodeSchema } from "@/components/nodes/node-export";
 import { useAssetStore } from "@/lib/stores/asset-store";
+import { useExecutionStore } from "@/lib/stores/execution-store";
+import type { ExecutionRecord } from "@/types/node";
 
 vi.mock("@/lib/library/upload-asset", () => ({
   uploadImageAsset: vi.fn(),
@@ -15,6 +17,7 @@ const uploadFromUrlMock = vi.mocked(upload.uploadImageFromUrl);
 
 beforeEach(() => {
   useAssetStore.getState().clear();
+  useExecutionStore.setState({ records: new Map() });
   localStorage.clear();
   uploadFromUrlMock.mockReset();
   uploadFromUrlMock.mockImplementation(async (url) => ({
@@ -28,7 +31,18 @@ beforeEach(() => {
 
 afterEach(() => {
   useAssetStore.getState().clear();
+  useExecutionStore.setState({ records: new Map() });
 });
+
+function renderBodyWithRecord(record?: ExecutionRecord) {
+  if (record) {
+    useExecutionStore.setState({ records: new Map([["n1", record]]) });
+  }
+  const Body = exportNodeSchema.Body;
+  render(
+    <Body nodeId="n1" config={{}} updateConfig={() => undefined} selected={false} />,
+  );
+}
 
 describe("exportNodeSchema", () => {
   it("declares the expected schema shape", () => {
@@ -45,16 +59,29 @@ describe("exportNodeSchema", () => {
   });
 
   it("renders the body hint", () => {
-    const Body = exportNodeSchema.Body;
-    render(
-      <Body
-        nodeId="n1"
-        config={{}}
-        updateConfig={() => undefined}
-        selected={false}
-      />,
-    );
+    renderBodyWithRecord();
     expect(screen.getByText(/saves the wired images/i)).toBeTruthy();
+  });
+
+  describe("body status feedback", () => {
+    it("shows a saving spinner while running", () => {
+      renderBodyWithRecord({ status: "running" });
+      expect(screen.getByText(/saving to your library/i)).toBeTruthy();
+    });
+
+    it("confirms the save (and where to find it) when done", () => {
+      renderBodyWithRecord({ status: "done", output: [] });
+      expect(screen.getByText(/saved to your library/i)).toBeTruthy();
+    });
+
+    it("surfaces the error message when the export fails", () => {
+      renderBodyWithRecord({
+        status: "error",
+        error: "Saved 0 of 3 before failing: HTTP 403",
+      });
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toMatch(/before failing/i);
+    });
   });
 
   describe("execute()", () => {
