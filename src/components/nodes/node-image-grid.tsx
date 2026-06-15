@@ -626,6 +626,10 @@ export const imageGridNodeSchema = defineNode<ImageGridNodeConfig>({
   description:
     "Lay N images into a uniform-cell grid. Wire images one-by-one into the numbered sockets, or feed an array (Frames Extract, Image Iterator, List) into the images[] socket. Auto-flow by default (square-ish), with manual columns/rows override. Pinning BOTH columns and rows caps each grid (e.g. 3×3) and spills overflow onto multiple grid pages you can page through — great for turning 50 images into a stack of 3×3 contact sheets. Pick cell aspect (source / 1:1 / 16:9 / …), fit (cover / contain / stretch), and a 9-position anchor for cropping.",
   icon: Grid3x3,
+  // Slice 7.11: multi-page output is a behaviour change that no config
+  // edit reflects. Bump so grids cached as a single image before the
+  // update recompose into pages instead of replaying the stale result.
+  cacheVersion: 2,
   inputs: imageInputs(MIN_PORTS),
   getInputs: (config) => imageInputs(config.portCount),
   outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],

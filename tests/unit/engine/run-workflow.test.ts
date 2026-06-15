@@ -148,6 +148,25 @@ describe("computeNodeHash", () => {
     expect(computeNodeHash(n, m1)).toBe(computeNodeHash(n, m2));
   });
 
+  it("is unchanged when no cacheVersion is passed (back-compat)", () => {
+    const n = node("a", "text", { text: "hello" });
+    const empty = new Map<string, string[]>();
+    // Passing undefined must equal the 2-arg form byte-for-byte.
+    expect(computeNodeHash(n, empty, undefined)).toBe(
+      computeNodeHash(n, empty),
+    );
+  });
+
+  it("changes when cacheVersion is bumped, stable within a version", () => {
+    const n = node("a", "text", { text: "hello" });
+    const empty = new Map<string, string[]>();
+    expect(computeNodeHash(n, empty, 2)).not.toBe(computeNodeHash(n, empty));
+    expect(computeNodeHash(n, empty, 2)).not.toBe(
+      computeNodeHash(n, empty, 3),
+    );
+    expect(computeNodeHash(n, empty, 2)).toBe(computeNodeHash(n, empty, 2));
+  });
+
   it("is sensitive to which handle the upstream feeds", () => {
     const n = node("a", "p", { tag: "" });
     const m1 = new Map<string, string[]>([["system", ["aaaa"]]]);

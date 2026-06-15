@@ -229,6 +229,19 @@ export interface NodeSchema<TConfig = unknown> {
    */
   isCacheBusting?: (config: TConfig) => boolean;
   /**
+   * Cache-invalidation salt for the node's *compositing/execute logic*
+   * (Slice 7.11). The engine's hash cache keys on `{ kind, config,
+   * upstream }` — deliberately code-version-agnostic so identical inputs
+   * replay instantly. The downside: shipping a behaviour change to a
+   * node's `execute()` (e.g. Image Grid gaining multi-page output) does
+   * NOT change any of those, so already-cached outputs replay the OLD
+   * result forever — pressing Run can't help because the hash is
+   * identical. Bumping `cacheVersion` mixes a new salt into the hash for
+   * every instance of this kind, retiring stale entries exactly once.
+   * Absent ⇒ no salt (today's behaviour, byte-for-byte).
+   */
+  cacheVersion?: string | number;
+  /**
    * Execution function. Optional in Slice 1 because Text/Image are reactive
    * and the run engine (Slice 3) is not built yet. Becomes required once the
    * engine ships.

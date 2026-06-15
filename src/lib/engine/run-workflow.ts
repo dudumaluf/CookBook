@@ -272,6 +272,7 @@ export function topologicalSort(
 export function computeNodeHash(
   node: NodeInstance,
   upstreamHashesByTargetHandle: Map<string, string[]>,
+  cacheVersion?: string | number,
 ): string {
   const deps: Array<{ handle: string; sourceHash: string }> = [];
   for (const [handle, hashes] of upstreamHashesByTargetHandle) {
@@ -286,7 +287,14 @@ export function computeNodeHash(
       : a.handle.localeCompare(b.handle),
   );
   return hashString(
-    stableStringify({ kind: node.kind, config: node.config, deps }),
+    stableStringify({
+      kind: node.kind,
+      config: node.config,
+      deps,
+      // Only mix the key in when a schema opts in, so every node that
+      // doesn't declare `cacheVersion` keeps its exact pre-7.11 hash.
+      ...(cacheVersion !== undefined ? { v: cacheVersion } : {}),
+    }),
   );
 }
 
@@ -502,7 +510,11 @@ export async function runWorkflow(
       upstreamHashesByTargetHandle.set(edge.targetHandle, hashBucket);
     }
 
-    const computedHash = computeNodeHash(node, upstreamHashesByTargetHandle);
+    const computedHash = computeNodeHash(
+      node,
+      upstreamHashesByTargetHandle,
+      schema.cacheVersion,
+    );
     // Seeded ancestors (only present in `startRunNode`) may carry an
     // explicit `hash` that overrides the config-derived `computedHash` for
     // *this* node. That's how the cursor's selection on an upstream
