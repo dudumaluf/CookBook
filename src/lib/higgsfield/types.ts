@@ -33,6 +33,20 @@ export const SOUL_ASPECT_RATIOS = [
 ] as const;
 export type SoulAspectRatio = (typeof SOUL_ASPECT_RATIOS)[number];
 
+/**
+ * Aspect ratios accepted by `higgsfield-ai/soul/cinema`. Superset of the
+ * Soul 2.0 standard list plus the ultra-wide `21:9` that only the cinema
+ * endpoint honours (the standard endpoint snaps it to 16:9). Kept separate
+ * so the standard Soul node's dropdown never offers `21:9`, while the
+ * shared request schema still validates a cinema request that sends it.
+ */
+export const SOUL_CINEMA_ASPECT_RATIOS = [
+  ...SOUL_ASPECT_RATIOS,
+  "21:9",
+] as const;
+export type SoulCinemaAspectRatio =
+  (typeof SOUL_CINEMA_ASPECT_RATIOS)[number];
+
 export const SOUL_RESOLUTIONS = ["720p", "1080p"] as const;
 export type SoulResolution = (typeof SOUL_RESOLUTIONS)[number];
 
@@ -95,8 +109,13 @@ export const higgsfieldImageRequestSchema = z
     referenceUrl: z.string().url().optional(),
     /** Soul Style preset UUID. Required when mode === "style". */
     styleId: z.string().uuid().optional(),
-    /** Aspect ratio. Defaults to 1:1 if omitted (server-side). */
-    aspectRatio: z.enum(SOUL_ASPECT_RATIOS).optional(),
+    /**
+     * Aspect ratio. Defaults to 1:1 if omitted (server-side). Validated
+     * against the cinema superset (`SOUL_CINEMA_ASPECT_RATIOS`) so a Soul
+     * Cinema request can send `21:9`; the standard Soul node's UI never
+     * offers it, so this stays a no-op for v2/character requests.
+     */
+    aspectRatio: z.enum(SOUL_CINEMA_ASPECT_RATIOS).optional(),
     /** Output resolution. Defaults to 720p server-side (lower cost). */
     resolution: z.enum(SOUL_RESOLUTIONS).optional(),
     /**

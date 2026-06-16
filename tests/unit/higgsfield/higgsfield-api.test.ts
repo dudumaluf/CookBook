@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  HiggsfieldImageRequest,
-  HiggsfieldSoulIdSummary,
+import {
+  higgsfieldImageRequestSchema,
+  type HiggsfieldImageRequest,
+  type HiggsfieldSoulIdSummary,
 } from "@/lib/higgsfield/types";
 
 /**
@@ -757,6 +758,45 @@ describe("generateSoulImage", () => {
         timeoutMs: 5_000,
       }),
     ).rejects.toMatchObject({ code: "upstream_error" });
+  });
+});
+
+/* --------------------- request schema (cinema 21:9) --------------------- */
+
+describe("higgsfieldImageRequestSchema — cinema aspect ratios", () => {
+  it("accepts a Soul Cinema request with the ultra-wide 21:9 ratio", () => {
+    const parsed = higgsfieldImageRequestSchema.safeParse({
+      prompt: "moody noir alley, anamorphic",
+      variant: "cinema",
+      mode: "none",
+      aspectRatio: "21:9",
+      resolution: "1080p",
+      batchSize: 1,
+      enhancePrompt: true,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("still accepts the standard Soul ratios", () => {
+    for (const ar of ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"]) {
+      const parsed = higgsfieldImageRequestSchema.safeParse({
+        prompt: "x",
+        variant: "none",
+        mode: "none",
+        aspectRatio: ar,
+      });
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown aspect ratio", () => {
+    const parsed = higgsfieldImageRequestSchema.safeParse({
+      prompt: "x",
+      variant: "cinema",
+      mode: "none",
+      aspectRatio: "32:9",
+    });
+    expect(parsed.success).toBe(false);
   });
 });
 

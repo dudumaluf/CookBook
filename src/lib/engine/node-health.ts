@@ -148,6 +148,11 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Router is a fan-out organizer, NOT a conditional switch. All output handles ("out 1", "out 2", ...) carry the SAME value — every wired exit gets the same upstream payload. Use it when one upstream feeds many downstreams and you want clean labeled wiring instead of N edges leaving one socket. There's no per-output filter / condition / index — if you need that, use Array + List + cursor instead.`,
     `Output sockets auto-grow as you wire (\`out-N\` index goes up). Don't write \`config.portCount\` directly — it's recomputed from the live edge map.`,
   ],
+  "soul-cinema": [
+    `Always dispatches to \`higgsfield-ai/soul/cinema\` regardless of the wired Soul ID's variant. The cinema endpoint only locks a face for a *cinema-trained* Soul ID — a v1/v2 Soul ID is silently ignored (renders generically, no error). For v2 faces use the standard \`higgsfield-image-gen\` node instead.`,
+    `No style presets — the cinema endpoint rejects any \`styleId\` ("Provided Soul style not found"). There's no \`styleId\` config field; wire a reference image for Soul Reference mode instead.`,
+    `Supports ultra-wide \`21:9\` on top of the standard Soul ratios (1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3). \`batchSize\` is 1 or 4 only.`,
+  ],
 };
 
 /**

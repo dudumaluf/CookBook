@@ -15,6 +15,7 @@ import { seedanceVideoNodeSchema } from "@/components/nodes/node-fal-seedance";
 import { frameExtractNodeSchema } from "@/components/nodes/node-frame-extract";
 import { framesExtractNodeSchema } from "@/components/nodes/node-frames-extract";
 import { higgsfieldImageGenNodeSchema } from "@/components/nodes/node-higgsfield-image-gen";
+import { soulCinemaNodeSchema } from "@/components/nodes/node-soul-cinema";
 import { imageConcatNodeSchema } from "@/components/nodes/node-image-concat";
 import { imageCropNodeSchema } from "@/components/nodes/node-image-crop";
 import { imageGridNodeSchema } from "@/components/nodes/node-image-grid";
@@ -63,6 +64,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(llmTextNodeSchema);
   nodeRegistry.register(soulIdNodeSchema);
   nodeRegistry.register(higgsfieldImageGenNodeSchema);
+  nodeRegistry.register(soulCinemaNodeSchema);
   nodeRegistry.register(falImageNodeSchema);
   nodeRegistry.register(falAudioIsolationNodeSchema);
   nodeRegistry.register(hunyuan3dNodeSchema);
