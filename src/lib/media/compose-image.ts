@@ -141,3 +141,108 @@ export async function cropImage(
     bmp.close?.();
   }
 }
+
+/** How a (non-base) layer maps onto the composite canvas. */
+export type LayerFit = "stretch" | "contain" | "cover";
+
+export interface ComposeLayersOptions {
+  /**
+   * How each layer is scaled onto the canvas. Default "stretch" — draws at
+   * the exact canvas size, which is pixel-perfect when a layer shares the
+   * base's dimensions (the common "cut a subject out of an image, lay it
+   * back over an edited version of that same image" case). "contain" fits
+   * inside (letterbox), "cover" fills (crops overflow); both center.
+   */
+  fit?: LayerFit;
+  /** Background fill (CSS color). Omit/empty = transparent. */
+  background?: string;
+  /**
+   * Per-layer opacity in [0,1], indexed to match `urls`. Missing / invalid
+   * entries default to 1 (fully opaque). Lets the top cutout be faded
+   * without touching the base.
+   */
+  opacities?: Array<number | undefined>;
+}
+
+export interface LayerRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Where a (srcW × srcH) layer lands on a (canvasW × canvasH) canvas under
+ * `fit`, always centered. "stretch" fills the canvas exactly; "contain"
+ * scales to fit inside; "cover" scales to fill and overflows. Pure math so
+ * it's unit-testable without a real canvas.
+ */
+export function layerDrawRect(
+  srcW: number,
+  srcH: number,
+  canvasW: number,
+  canvasH: number,
+  fit: LayerFit,
+): LayerRect {
+  if (fit === "stretch" || srcW <= 0 || srcH <= 0) {
+    return { x: 0, y: 0, w: canvasW, h: canvasH };
+  }
+  const scale =
+    fit === "cover"
+      ? Math.max(canvasW / srcW, canvasH / srcH)
+      : Math.min(canvasW / srcW, canvasH / srcH);
+  const w = srcW * scale;
+  const h = srcH * scale;
+  return { x: (canvasW - w) / 2, y: (canvasH - h) / 2, w, h };
+}
+
+function drawLayer(
+  ctx: OffscreenCanvasRenderingContext2D,
+  bmp: ImageBitmap,
+  canvasW: number,
+  canvasH: number,
+  fit: LayerFit,
+): void {
+  const r = layerDrawRect(bmp.width, bmp.height, canvasW, canvasH, fit);
+  ctx.drawImage(bmp, r.x, r.y, r.w, r.h);
+}
+
+/**
+ * Stack images into one composite, preserving each layer's alpha. The FIRST
+ * url is the bottom (base) layer and DEFINES the canvas dimensions; every
+ * subsequent url is drawn on top in order. Alpha is preserved so transparent
+ * PNG cutouts (e.g. a SAM 3 subject) composite cleanly over a background.
+ *
+ * Returns a PNG Blob (alpha-capable).
+ */
+export async function composeLayers(
+  urls: string[],
+  opts: ComposeLayersOptions = {},
+): Promise<Blob> {
+  if (urls.length === 0) throw new Error("No layers to compose.");
+  const fit = opts.fit ?? "stretch";
+  const bitmaps = await Promise.all(urls.map(loadBitmap));
+  try {
+    const base = bitmaps[0]!;
+    const width = Math.max(1, base.width);
+    const height = Math.max(1, base.height);
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not acquire a 2D canvas context.");
+    if (opts.background) {
+      ctx.fillStyle = opts.background;
+      ctx.fillRect(0, 0, width, height);
+    }
+    for (let i = 0; i < bitmaps.length; i++) {
+      const raw = opts.opacities?.[i];
+      const alpha =
+        typeof raw === "number" && raw >= 0 && raw <= 1 ? raw : 1;
+      ctx.globalAlpha = alpha;
+      drawLayer(ctx, bitmaps[i]!, width, height, fit);
+    }
+    ctx.globalAlpha = 1;
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
+    for (const b of bitmaps) b.close?.();
+  }
+}

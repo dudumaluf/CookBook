@@ -376,6 +376,39 @@ export type AudioIsolationStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & AudioIsolationSuccessResponse);
 
+/* ───────────────────── SAM 3 image segmentation ───────────────────── */
+
+/** Fal `fal-ai/sam-3/image` — promptable segmentation / cutout. */
+export const SAM3_ENDPOINT = "fal-ai/sam-3/image";
+
+export const SAM3_OUTPUT_FORMATS = ["jpeg", "png", "webp"] as const;
+export type Sam3OutputFormat = (typeof SAM3_OUTPUT_FORMATS)[number];
+
+export const sam3RequestSchema = z
+  .object({
+    imageUrl: z.string().url(),
+    /** Text prompt for what to segment (e.g. "person", "wheel"). */
+    prompt: z.string().optional(),
+    applyMask: z.boolean().optional(),
+    returnMultipleMasks: z.boolean().optional(),
+    maxMasks: z.number().int().min(1).max(32).optional(),
+    outputFormat: z.enum(SAM3_OUTPUT_FORMATS).optional(),
+    includeScores: z.boolean().optional(),
+    includeBoxes: z.boolean().optional(),
+  })
+  .strict();
+
+export type Sam3Request = z.infer<typeof sam3RequestSchema>;
+
+export interface Sam3SuccessResponse {
+  /** Primary cutout / masked preview (`output.image` when apply_mask). */
+  primaryUrl?: string;
+  /** Raw mask image URLs (`output.masks`). */
+  maskUrls: string[];
+  scores?: number[];
+  model: string;
+}
+
 /* ───────────────────── Hunyuan 3D Pro image-to-3d ───────────────────── */
 
 /** Fal `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` — generate a GLB mesh from images. */

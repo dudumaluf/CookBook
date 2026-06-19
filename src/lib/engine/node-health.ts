@@ -153,6 +153,17 @@ const kindPitfallsMap: Record<string, string[]> = {
     `No style presets — the cinema endpoint rejects any \`styleId\` ("Provided Soul style not found"). There's no \`styleId\` config field; wire a reference image for Soul Reference mode instead.`,
     `Supports ultra-wide \`21:9\` on top of the standard Soul ratios (1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3). \`batchSize\` is 1 or 4 only.`,
   ],
+  "sam-3": [
+    `\`prompt\` names what to KEEP, not what to remove ("person", "dog", "car"). A wired \`prompt\` text input overrides the settings field; default is "person".`,
+    `\`out\` is a transparent-PNG cutout (subject only). To recompose it over a different scene, feed \`out\` as a NON-base layer into an Image Stack node — put the background in Image Stack's layer 1.`,
+    `Non-reactive and bills per call (~$0.005) — it needs a Run, it won't auto-update like Text/Image source nodes.`,
+  ],
+  "image-stack": [
+    `Layer 1 (\`layer-0\`) is the BOTTOM/base and defines the output canvas size; each higher layer draws on top. Order matters — put the full background in layer 1 and the cutout above it.`,
+    `\`fit: "stretch"\` (default) draws each layer at the exact canvas size — pixel-perfect when a SAM 3 cutout shares the base image's dimensions. Use "contain"/"cover" only when layer sizes differ.`,
+    `Transparency is preserved, so PNG cutouts composite cleanly. A layer with no alpha (a JPEG) paints an opaque rectangle and hides everything below it — keep cutouts as PNG.`,
+    `Sockets auto-grow as you wire — don't write \`config.portCount\` directly.`,
+  ],
 };
 
 /**
