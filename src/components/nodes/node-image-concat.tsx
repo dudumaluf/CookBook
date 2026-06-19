@@ -3,6 +3,7 @@
 import { Images, Loader2 } from "lucide-react";
 import { useEffect, useId } from "react";
 
+import { PreviewImage } from "@/components/nodes/preview-image";
 import { defineNode } from "@/lib/engine/define-node";
 import {
   extractInputArrayByType,
@@ -109,12 +110,11 @@ function ImageConcatBody({
           <span>Joining images…</span>
         </div>
       ) : url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt="Concatenated"
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black/20"
+        <PreviewImage
+          url={url}
+          alt="Concatenated image"
+          downloadName="concat"
+          checkerboard
         />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">

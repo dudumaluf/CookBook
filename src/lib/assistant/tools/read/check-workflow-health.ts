@@ -58,6 +58,7 @@ const REQUIRED_INPUTS: Record<string, readonly string[]> = {
   "higgsfield-image-gen": ["prompt"],
   "soul-cinema": ["prompt"],
   "sam-3": ["image"],
+  "image-transform": ["image"],
 };
 
 function getDynamicInputs(node: NodeInstance): NodeIO[] | null {

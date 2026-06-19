@@ -1,8 +1,23 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+
+/**
+ * Checkerboard backdrop so a transparent PNG (SAM 3 cutout, Image Stack
+ * composite, Transform output) reads as *transparent* instead of
+ * invisible-on-black. Shared single source of truth — the node bodies,
+ * `PreviewImage`, and the full-screen `ImagePreviewModal` all reference
+ * this so "transparency" looks identical everywhere.
+ */
+export const CHECKERBOARD_STYLE: CSSProperties = {
+  backgroundColor: "#3a3a3a",
+  backgroundImage:
+    "linear-gradient(45deg, #4a4a4a 25%, transparent 25%), linear-gradient(-45deg, #4a4a4a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4a4a4a 75%), linear-gradient(-45deg, transparent 75%, #4a4a4a 75%)",
+  backgroundSize: "16px 16px",
+  backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
+};
 
 /**
  * Shared media-preview primitives — "the silhouette is sacred" pattern
@@ -57,6 +72,12 @@ interface MediaPreviewImageProps {
   fit?: "contain" | "cover";
   /** Click-through behavior. Default: opens the URL in a new tab. */
   href?: string | null;
+  /**
+   * Paint a checkerboard behind the image so transparent PNGs (cutouts,
+   * composites) read as transparent rather than invisible. Default false
+   * (opaque generator output doesn't need it).
+   */
+  checkerboard?: boolean;
   /** Extra classes appended to the wrapper. */
   className?: string;
   /** `data-testid` on the wrapper, for component tests. */
@@ -69,13 +90,17 @@ export function MediaPreviewImage({
   aspectRatio,
   fit = "contain",
   href,
+  checkerboard = false,
   className,
   testId,
 }: MediaPreviewImageProps) {
   const fitClass = fit === "contain" ? "object-contain" : "object-cover";
   const computedHref = href === null ? null : (href ?? url);
   const wrapperClass = cn(PREVIEW_BASE, className);
-  const style = { aspectRatio: aspectRatio ?? "1 / 1" } as const;
+  const style: CSSProperties = {
+    aspectRatio: aspectRatio ?? "1 / 1",
+    ...(checkerboard ? CHECKERBOARD_STYLE : {}),
+  };
   const inner = (
     // eslint-disable-next-line @next/next/no-img-element
     <img

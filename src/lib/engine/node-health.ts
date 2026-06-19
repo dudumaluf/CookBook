@@ -164,6 +164,11 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Transparency is preserved, so PNG cutouts composite cleanly. A layer with no alpha (a JPEG) paints an opaque rectangle and hides everything below it — keep cutouts as PNG.`,
     `Sockets auto-grow as you wire — don't write \`config.portCount\` directly.`,
   ],
+  "image-transform": [
+    `Positions a single image: \`translateX\`/\`translateY\` are a PERCENT of the canvas (not pixels; +x = right, +y = down), \`rotation\` is degrees clockwise, \`scale\` is a percent (100 = original).`,
+    `The output KEEPS the source's pixel dimensions (transform is around the center; overflow clips, vacated areas stay transparent). That's what lets a SAM 3 cutout stay aligned with a same-size background — the canonical chain is SAM 3 → Transform → Image Stack (\`fit: "stretch"\`).`,
+    `Non-reactive — it re-encodes on Run. An identity transform (0/0/0°/100%) passes the source through untouched, so a freshly-added node with default config is a no-op until you change a value.`,
+  ],
 };
 
 /**

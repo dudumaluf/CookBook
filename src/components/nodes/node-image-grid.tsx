@@ -3,6 +3,7 @@
 import { Grid3x3, Loader2 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 
+import { ImageContextMenu } from "@/components/nodes/image-context-menu";
 import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { defineNode } from "@/lib/engine/define-node";
@@ -288,27 +289,34 @@ function ImageGridBody({
       ) : currentUrl ? (
         <>
           <div className="relative">
-            <button
-              type="button"
-              aria-label={
-                pageCount > 1
-                  ? `Preview grid page ${safePage + 1} of ${pageCount}`
-                  : "Preview grid"
+            <ImageContextMenu
+              url={currentUrl}
+              downloadName={
+                pageCount > 1 ? `image-grid-${safePage + 1}` : "image-grid"
               }
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setPreviewOpen(true)}
-              className="group relative block w-full overflow-hidden rounded-md bg-black/20"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={currentUrl}
-                alt={pageCount > 1 ? `Grid page ${safePage + 1}` : "Grid"}
-                className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
-              />
-              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
-                Click to preview
-              </span>
-            </button>
+              <button
+                type="button"
+                aria-label={
+                  pageCount > 1
+                    ? `Preview grid page ${safePage + 1} of ${pageCount}`
+                    : "Preview grid"
+                }
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => setPreviewOpen(true)}
+                className="group relative block w-full overflow-hidden rounded-md bg-black/20"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={currentUrl}
+                  alt={pageCount > 1 ? `Grid page ${safePage + 1}` : "Grid"}
+                  className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
+                />
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
+                  Click to preview
+                </span>
+              </button>
+            </ImageContextMenu>
             {pageCount > 1 ? (
               <div
                 className="absolute inset-x-1 bottom-1 flex justify-center"
@@ -331,6 +339,7 @@ function ImageGridBody({
               downloadName={
                 pageCount > 1 ? `image-grid-${safePage + 1}` : "image-grid"
               }
+              checkerboard
               onClose={() => setPreviewOpen(false)}
             />
           ) : null}

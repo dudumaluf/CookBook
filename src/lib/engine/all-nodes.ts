@@ -20,6 +20,7 @@ import { imageConcatNodeSchema } from "@/components/nodes/node-image-concat";
 import { imageCropNodeSchema } from "@/components/nodes/node-image-crop";
 import { imageGridNodeSchema } from "@/components/nodes/node-image-grid";
 import { imageStackNodeSchema } from "@/components/nodes/node-image-stack";
+import { imageTransformNodeSchema } from "@/components/nodes/node-image-transform";
 import { imageIteratorNodeSchema } from "@/components/nodes/node-image-iterator";
 import { imageNodeSchema } from "@/components/nodes/node-image";
 import { listNodeSchema } from "@/components/nodes/node-list";
@@ -85,6 +86,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(videoPadNodeSchema);
   nodeRegistry.register(imageConcatNodeSchema);
   nodeRegistry.register(imageStackNodeSchema);
+  nodeRegistry.register(imageTransformNodeSchema);
   nodeRegistry.register(imageGridNodeSchema);
   nodeRegistry.register(textConcatNodeSchema);
   nodeRegistry.register(imageCropNodeSchema);

@@ -3,6 +3,7 @@
 import { Layers, Loader2 } from "lucide-react";
 import { useEffect, useId } from "react";
 
+import { PreviewImage } from "@/components/nodes/preview-image";
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
@@ -55,15 +56,6 @@ function portIndex(handle: string | undefined): number {
   return Number.isFinite(idx) ? idx : -1;
 }
 
-/** Checkerboard so transparent regions read as transparent, not black. */
-const CHECKERBOARD = {
-  backgroundColor: "#3a3a3a",
-  backgroundImage:
-    "linear-gradient(45deg, #4a4a4a 25%, transparent 25%), linear-gradient(-45deg, #4a4a4a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4a4a4a 75%), linear-gradient(-45deg, transparent 75%, #4a4a4a 75%)",
-  backgroundSize: "16px 16px",
-  backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
-} as const;
-
 function ImageStackBody({
   nodeId,
   config,
@@ -113,16 +105,13 @@ function ImageStackBody({
           <span>Stacking layers…</span>
         </div>
       ) : url ? (
-        <div className="overflow-hidden rounded-md" style={CHECKERBOARD}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            data-testid="image-stack-result"
-            src={url}
-            alt="Stacked"
-            onPointerDown={(e) => e.stopPropagation()}
-            className="block w-full"
-          />
-        </div>
+        <PreviewImage
+          url={url}
+          alt="Stacked composite"
+          downloadName="stack"
+          checkerboard
+          testId="image-stack-result"
+        />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Layers className="h-3 w-3" />

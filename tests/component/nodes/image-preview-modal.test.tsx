@@ -59,4 +59,25 @@ describe("ImagePreviewModal", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("paints a transparency checkerboard behind the image when enabled", () => {
+    render(
+      <ImagePreviewModal
+        url="https://x/cut.png"
+        alt="cutout"
+        checkerboard
+        onClose={vi.fn()}
+      />,
+    );
+    const wrapper = screen.getByAltText("cutout").parentElement as HTMLElement;
+    expect(wrapper.style.backgroundImage).toContain("linear-gradient");
+  });
+
+  it("omits the checkerboard by default (opaque images don't need it)", () => {
+    render(
+      <ImagePreviewModal url="https://x/op.png" alt="opaque" onClose={vi.fn()} />,
+    );
+    const wrapper = screen.getByAltText("opaque").parentElement as HTMLElement;
+    expect(wrapper.style.backgroundImage).toBe("");
+  });
 });

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
+import { CHECKERBOARD_STYLE } from "@/components/nodes/media-preview";
 import { downloadFromUrl, safeFilename } from "@/lib/library/download";
 
 /**
@@ -36,6 +37,12 @@ interface ImagePreviewModalProps {
   alt?: string;
   /** Filename (sans extension) for the download button. Defaults to `alt`. */
   downloadName?: string;
+  /**
+   * Paint a checkerboard directly behind the picture so a transparent PNG
+   * (SAM 3 cutout, Image Stack / Transform output) is legible instead of
+   * vanishing into the dark backdrop. Default false.
+   */
+  checkerboard?: boolean;
   onClose: () => void;
 }
 
@@ -43,6 +50,7 @@ export function ImagePreviewModal({
   url,
   alt,
   downloadName,
+  checkerboard = false,
   onClose,
 }: ImagePreviewModalProps) {
   const [busy, setBusy] = useState(false);
@@ -111,14 +119,19 @@ export function ImagePreviewModal({
         </button>
       </div>
 
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={alt ?? ""}
+      <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] max-w-[90vw] object-contain"
-        draggable={false}
-      />
+        className="flex max-h-[90vh] max-w-[90vw] overflow-hidden rounded-md shadow-2xl"
+        style={checkerboard ? CHECKERBOARD_STYLE : undefined}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={alt ?? ""}
+          className="max-h-[90vh] max-w-[90vw] object-contain"
+          draggable={false}
+        />
+      </div>
     </div>,
     document.body,
   );

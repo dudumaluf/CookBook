@@ -246,3 +246,88 @@ export async function composeLayers(
     for (const b of bitmaps) b.close?.();
   }
 }
+
+export interface TransformImageOptions {
+  /** Horizontal offset as a percent of width (+ = right). Default 0. */
+  translateXPct?: number;
+  /** Vertical offset as a percent of height (+ = down). Default 0. */
+  translateYPct?: number;
+  /** Clockwise rotation in degrees. Default 0. */
+  rotationDeg?: number;
+  /** Uniform scale as a percent (100 = original size). Default 100. */
+  scalePct?: number;
+}
+
+export interface ResolvedTransform {
+  /** Pixel x-offset of the image center from the canvas center. */
+  tx: number;
+  /** Pixel y-offset of the image center from the canvas center. */
+  ty: number;
+  /** Rotation in radians. */
+  rad: number;
+  /** Scale multiplier (clamped to a sane positive range). */
+  scale: number;
+}
+
+/**
+ * Resolve human transform params (percent of canvas / degrees) into
+ * canvas-space pixels + radians for a `width × height` frame. Pure math, so
+ * it's unit-testable without a real canvas. Scale is clamped to a positive
+ * range so a 0 / negative entry can never collapse or flip the layer.
+ */
+export function resolveTransform(
+  width: number,
+  height: number,
+  opts: TransformImageOptions,
+): ResolvedTransform {
+  const tx = ((opts.translateXPct ?? 0) / 100) * width;
+  const ty = ((opts.translateYPct ?? 0) / 100) * height;
+  const rad = ((opts.rotationDeg ?? 0) * Math.PI) / 180;
+  const scale = Math.max(0.01, Math.min(20, (opts.scalePct ?? 100) / 100));
+  return { tx, ty, rad, scale };
+}
+
+/**
+ * True when a transform is a no-op (centered, unrotated, 100%). Lets callers
+ * pass the source through untouched instead of re-encoding — preserves the
+ * original bytes/quality.
+ */
+export function isIdentityTransform(opts: TransformImageOptions): boolean {
+  return (
+    (opts.translateXPct ?? 0) === 0 &&
+    (opts.translateYPct ?? 0) === 0 &&
+    (opts.rotationDeg ?? 0) === 0 &&
+    (opts.scalePct ?? 100) === 100
+  );
+}
+
+/**
+ * Translate / rotate / scale an image around its center while preserving
+ * alpha AND the source dimensions — so the result stays pixel-aligned with a
+ * same-size background when fed into Image Stack ("cut a subject out, nudge /
+ * rotate / resize it, drop it back over the edited frame"). Overflow is
+ * clipped to the frame; vacated areas stay transparent. Returns a PNG Blob.
+ */
+export async function transformImage(
+  url: string,
+  opts: TransformImageOptions = {},
+): Promise<Blob> {
+  const bmp = await loadBitmap(url);
+  try {
+    const width = Math.max(1, bmp.width);
+    const height = Math.max(1, bmp.height);
+    const { tx, ty, rad, scale } = resolveTransform(width, height, opts);
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not acquire a 2D canvas context.");
+    // Order matters: move the origin to the image center (+ user offset),
+    // then rotate, then scale, then draw the bitmap centered on the origin.
+    ctx.translate(width / 2 + tx, height / 2 + ty);
+    ctx.rotate(rad);
+    ctx.scale(scale, scale);
+    ctx.drawImage(bmp, -width / 2, -height / 2, width, height);
+    return await canvas.convertToBlob({ type: "image/png" });
+  } finally {
+    bmp.close?.();
+  }
+}

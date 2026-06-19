@@ -3178,4 +3178,37 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **NLP-level claim parsing.** F22 uses regex. A future iteration could parse the assistant's claim into a structured "I changed N5 to value X" assertion and verify it against the receipt's `before/after`. Current cost/value tradeoff favors the conservative regex.
   - **Per-turn run budget.** ADR-0066 mentioned this as future work; F23 makes it more visible (you can see exactly how much each run cost) but doesn't enforce a budget yet.
 
+---
+
+## ADR-0074: Standardized image-preview surface (click→modal + right-click download + checkerboard) and a dimension-preserving Transform node
+
+- **Status**: Accepted (2026-06-19)
+
+- **Context**: The SAM 3 (cutout) + Image Stack (composite) nodes shipped with dead `<img>` previews. The user couldn't get the transparent PNG out: the **Export** node saves to the Library (a re-hosted Supabase asset), NOT to the user's disk, and clicking a node preview did nothing. Three problems, one root cause — there was no standard "view this result big / save it to disk / grab it fast" affordance for a node body image. Each node either hand-rolled a preview or relied on `MediaPreviewImage`'s open-in-new-tab click, and the only download path (the Library-coupled Gallery lightbox + the dependency-free `ImagePreviewModal` from Slice 7.10) was wired into exactly one node (Image Grid). On top of that, transparent cutouts rendered invisible against the modal's dark backdrop, so even when you opened one you couldn't see what you had. Separately, positioning a cutout over an edited background required nudging/rotating/scaling it, with nothing to do that.
+
+- **Decision**: Build the preview affordance ONCE and apply it everywhere a node shows a single result image; add a Transform node that preserves source dimensions so it slots between SAM 3 and Image Stack.
+  - **[`PreviewImage`](src/components/nodes/preview-image.tsx)** — the standard. Click → full-screen `ImagePreviewModal` (Download button); right-click → `ImageContextMenu`; opt-in `checkerboard`. Built on `MediaPreviewImage` so it inherits the aspect-ratio contract (ADR-0040-era "silhouette is sacred").
+  - **[`ImageContextMenu`](src/components/nodes/image-context-menu.tsx)** — a `display: contents` Base UI context-menu wrapper (mirrors the library `AssetContextMenu`) exposing Download PNG + Open in new tab. Wrappable around ANY preview surface, so the "right-click to download" promise generalizes (grid tiles, future thumbnails) without bespoke wiring.
+  - **Download = fetch+blob.** Both the modal and the context menu route through the existing [`downloadFromUrl`](src/lib/library/download.ts) (Slice 6.5 hotfix) so cross-origin Supabase/CDN URLs actually save the bytes at full quality (alpha intact) instead of navigating to a new tab. Export stays Library-only — it's a different verb.
+  - **Checkerboard is a single source of truth.** `CHECKERBOARD_STYLE` exported from [`media-preview.tsx`](src/components/nodes/media-preview.tsx); a `checkerboard` prop on `MediaPreviewImage`; the same constant painted directly behind the modal's picture (natural-size, so the checker hugs the image, not the letterbox). Deleted the two ad-hoc copies that lived in `node-sam3` / `node-image-stack`.
+  - **Applied to:** SAM 3, Image Stack, Image Concat, Transform (all four via `PreviewImage`; the alpha-capable ones with `checkerboard`), Image Grid (right-click menu + checkerboard modal), and `MultiImageView` (single-result + single-mode → `PreviewImage`; every grid tile → `ImageContextMenu`), which covers Fal Image, Higgsfield Image Gen, and Soul Cinema in one edit.
+  - **[Transform node](src/components/nodes/node-image-transform.tsx)** (`image-transform`). Translate / rotate / scale a single image around its center. Translate & scale are a **percent of the canvas** (resolution-independent), rotation is degrees. The output **keeps the source's pixel dimensions** — overflow clips, vacated areas stay transparent. That invariant is the whole point: a cutout transformed this way stays pixel-aligned with a same-size background under Image Stack's default `fit: "stretch"`. Identity (0/0/0°/100%) passes the source through untouched. Pure helpers `resolveTransform` + `isIdentityTransform` (unit-tested) sit beside the canvas `transformImage` in `compose-image.ts`.
+
+- **Why this is the right shape**:
+  - **One component, not fourteen.** Every "standardize all the previews" / "right-click download everywhere" request collapses to "use `PreviewImage`" or "wrap in `ImageContextMenu`". The marginal cost of adding the standard to a node is ~3 lines.
+  - **Export ≠ download is now explicit.** The user's confusion ("export doesn't export") was a verb collision. Keeping Export as Library-save and giving the preview a real disk-download separates the two intents instead of overloading one node.
+  - **Checkerboard belongs to the preview layer.** Painting it once (constant + prop) means a new transparent-output node gets correct transparency rendering for free; no node re-implements a gradient.
+  - **Dimension-preserving transform is composable.** Because the frame doesn't change, SAM 3 → Transform → Image Stack is a clean pipe — no per-stage re-alignment, no canvas-size negotiation between nodes.
+
+- **Consequences**:
+  - **`MediaPreviewImage` click semantics changed where wrapped.** A single generated image used to open in a new tab on click; through `PreviewImage` it opens the modal (new-tab moved to the right-click menu). This is the intended standard, not a regression.
+  - **`PreviewImage` puts `testId` on the inner aspect wrapper**, not the button — so callers asserting `style.aspectRatio` on the testid element (Higgsfield's single-result test) keep working. Clicks/right-clicks still bubble from the wrapper to the button/trigger.
+  - **Identity Transform returns a bare `StandardizedOutput`** (the input ref), matching Image Stack's single-layer pass-through; no upload, no usage line.
+  - **Not yet standardized:** Input / Compare / Image Iterator / List thumbnails still render raw `<img>`. They're cheap follow-ups (`ImageContextMenu` wrap or `PreviewImage` swap) but weren't in the user's stated workflow.
+
+- **What's parked for later**:
+  - **Draggable on-canvas transform** (direct manipulation handles) vs. the slider/number controls, if "position as I wish" wants more than numeric entry.
+  - **Non-uniform scale (scaleX/scaleY) + flip** on Transform — deferred until a use case asks.
+  - **Auto-generated `docs/NODES.md`** would list `image-transform` alongside the rest; still planned, not built.
+
 

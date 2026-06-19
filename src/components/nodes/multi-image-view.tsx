@@ -2,8 +2,10 @@
 
 import { LayoutGrid } from "lucide-react";
 
+import { ImageContextMenu } from "@/components/nodes/image-context-menu";
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { MediaPreviewImage } from "@/components/nodes/media-preview";
+import { PreviewImage } from "@/components/nodes/preview-image";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,8 +20,8 @@ import { cn } from "@/lib/utils";
  *   "single" — one large image at `previewIndex`, with a
  *              bottom-overlay strip containing a back-to-grid button
  *              and an `IteratorCursor` (‹ 2 / 4 ›) to walk the batch.
- *              The single image keeps its native click-to-open-tab
- *              behaviour so users can still pop it out full-size.
+ *              Clicking the image opens the full-screen preview modal
+ *              (with Download); right-click downloads it directly.
  *
  * The 1-image and 0-image edges intentionally bypass both views: a
  * single result renders as a plain `MediaPreviewImage` (no toggle,
@@ -81,12 +83,13 @@ export function MultiImageView({
 
   // Single-image batches don't need either affordance — render the
   // plain preview so the node's silhouette doesn't gain an unused
-  // overlay bar.
+  // overlay bar. Still clickable → modal + right-click → download.
   if (imageUrls.length === 1) {
     return (
-      <MediaPreviewImage
+      <PreviewImage
         url={imageUrls[0]!}
         alt="Generated"
+        downloadName="generated"
         aspectRatio={aspectRatio}
         fit="contain"
         testId={testIdPrefix ? `${testIdPrefix}-single` : undefined}
@@ -108,9 +111,10 @@ export function MultiImageView({
         className="relative"
         data-testid={testIdPrefix ? `${testIdPrefix}-single` : undefined}
       >
-        <MediaPreviewImage
+        <PreviewImage
           url={url}
           alt={`Generated ${safeIndex + 1} of ${imageUrls.length}`}
+          downloadName={`generated-${safeIndex + 1}`}
           aspectRatio={aspectRatio}
           fit="contain"
         />
@@ -148,43 +152,44 @@ export function MultiImageView({
     );
   }
 
-  // Grid mode — every tile is a button that flips the node to
-  // single mode focused on that index. We deliberately do NOT pass
-  // `href` to MediaPreviewImage in grid mode; opening every tile in
-  // a new tab is a foot-gun when the user is just trying to pick
-  // one to inspect closer. Single mode keeps the open-in-new-tab
-  // affordance for "I want to see this full size".
+  // Grid mode — every tile is a button that flips the node to single mode
+  // focused on that index (left-click). We deliberately do NOT pass `href`
+  // to MediaPreviewImage; the click is owned by the wrapping <button>.
+  // Right-click → ImageContextMenu (Download PNG / Open in new tab) so you
+  // can grab any tile without leaving the grid.
   return (
     <div
       className="grid grid-cols-2 gap-1.5"
       data-testid={testIdPrefix ? `${testIdPrefix}-grid` : undefined}
     >
       {imageUrls.map((url, i) => (
-        <button
+        <ImageContextMenu
           key={`${url}-${i}`}
-          type="button"
-          onClick={() => {
-            onPreviewIndexChange(i);
-            onViewModeChange("single");
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          aria-label={`Preview image ${i + 1} of ${imageUrls.length}`}
-          className="group relative overflow-hidden rounded-md ring-0 ring-foreground/0 transition-all hover:ring-2 hover:ring-foreground/20"
-          data-testid={
-            testIdPrefix ? `${testIdPrefix}-tile-${i}` : undefined
-          }
+          url={url}
+          downloadName={`generated-${i + 1}`}
         >
-          <MediaPreviewImage
-            url={url}
-            alt={`Generated ${i + 1}`}
-            aspectRatio={tileAspect}
-            fit="contain"
-            // Suppress the new-tab anchor — the click is owned by
-            // the wrapping <button> so the click lands on
-            // onPreviewIndexChange / onViewModeChange.
-            href={null}
-          />
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              onPreviewIndexChange(i);
+              onViewModeChange("single");
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={`Preview image ${i + 1} of ${imageUrls.length}`}
+            className="group relative overflow-hidden rounded-md ring-0 ring-foreground/0 transition-all hover:ring-2 hover:ring-foreground/20"
+            data-testid={
+              testIdPrefix ? `${testIdPrefix}-tile-${i}` : undefined
+            }
+          >
+            <MediaPreviewImage
+              url={url}
+              alt={`Generated ${i + 1}`}
+              aspectRatio={tileAspect}
+              fit="contain"
+              href={null}
+            />
+          </button>
+        </ImageContextMenu>
       ))}
     </div>
   );

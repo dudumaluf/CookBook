@@ -1,8 +1,9 @@
 "use client";
 
 import { Loader2, Scissors } from "lucide-react";
-import { type CSSProperties, useId } from "react";
+import { useId } from "react";
 
+import { PreviewImage } from "@/components/nodes/preview-image";
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { callSam3 } from "@/lib/fal/call-sam3";
@@ -50,15 +51,6 @@ function cutoutUrlFromOutput(
   }
   return output.type === "image" ? output.value.url : null;
 }
-
-/** Checkerboard so a transparent cutout reads as transparent, not invisible. */
-const CHECKERBOARD: CSSProperties = {
-  backgroundColor: "#3a3a3a",
-  backgroundImage:
-    "linear-gradient(45deg, #4a4a4a 25%, transparent 25%), linear-gradient(-45deg, #4a4a4a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4a4a4a 75%), linear-gradient(-45deg, transparent 75%, #4a4a4a 75%)",
-  backgroundSize: "16px 16px",
-  backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
-};
 
 function Sam3Body({ nodeId, config }: NodeBodyProps<Sam3NodeConfig>) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
@@ -108,16 +100,13 @@ function Sam3Body({ nodeId, config }: NodeBodyProps<Sam3NodeConfig>) {
             <span>Segmenting…</span>
           </div>
         ) : url ? (
-          <div className="overflow-hidden rounded-md" style={CHECKERBOARD}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              data-testid="sam3-result"
-              src={url}
-              alt="Segmented cutout"
-              onPointerDown={(e) => e.stopPropagation()}
-              className="block w-full"
-            />
-          </div>
+          <PreviewImage
+            url={url}
+            alt="Segmented cutout"
+            downloadName="sam3-cutout"
+            checkerboard
+            testId="sam3-result"
+          />
         ) : (
           <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
             <Scissors className="h-3 w-3" />
