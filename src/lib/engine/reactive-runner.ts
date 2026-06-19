@@ -145,7 +145,20 @@ export function startReactiveRunner(
           // an existing non-reactive record (LLM result, Higgsfield image)
           // with a `running`/`pending` from the background loop.
           const records = new Map(useExecutionStore.getState().records);
-          records.set(nodeId, record);
+          // Keep the last output visible during a reactive re-run: a bare
+          // "running" emit carries no output and would blank a node body for
+          // a frame (a spinner flash). Carrying the prior output forward keeps
+          // live previews — Image Transform / Image Stack (ADR-0075) — smooth.
+          const prev = records.get(nodeId);
+          if (
+            record.status === "running" &&
+            record.output === undefined &&
+            prev?.output !== undefined
+          ) {
+            records.set(nodeId, { ...record, output: prev.output });
+          } else {
+            records.set(nodeId, record);
+          }
           useExecutionStore.setState({ records });
         },
       });

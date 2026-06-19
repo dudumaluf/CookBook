@@ -416,6 +416,16 @@ export interface ExecContext<TConfig = unknown> {
   >;
   signal: AbortSignal;
   /**
+   * True when this execution is part of a background reactive run
+   * (`mode: "reactive-only"`), i.e. a live preview the user did NOT trigger
+   * with an explicit Run (ADR-0075). Client-side canvas nodes (Image
+   * Transform, Image Stack) use it to render a cheap local `blob:` preview
+   * instead of re-encoding + uploading to Supabase on every workflow tick —
+   * the durable upload only happens on a real Run (`preview` falsy). Nodes
+   * that don't render media ignore it.
+   */
+  preview?: boolean;
+  /**
    * Optional progress reporter (Slice D — multimodal media arc). The engine
    * wires this so a long-running, multi-step node (the Continuity Builder
    * looping Seedance per chunk) can emit intermediate progress + partial

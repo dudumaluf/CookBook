@@ -3206,9 +3206,42 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Identity Transform returns a bare `StandardizedOutput`** (the input ref), matching Image Stack's single-layer pass-through; no upload, no usage line.
   - **Not yet standardized:** Input / Compare / Image Iterator / List thumbnails still render raw `<img>`. They're cheap follow-ups (`ImageContextMenu` wrap or `PreviewImage` swap) but weren't in the user's stated workflow.
 
-- **What's parked for later**:
+  - **What's parked for later**:
   - **Draggable on-canvas transform** (direct manipulation handles) vs. the slider/number controls, if "position as I wish" wants more than numeric entry.
   - **Non-uniform scale (scaleX/scaleY) + flip** on Transform — deferred until a use case asks.
   - **Auto-generated `docs/NODES.md`** would list `image-transform` alongside the rest; still planned, not built.
+
+
+## ADR-0075: Reactive client-side canvas nodes — live `blob:` preview, durable-on-Run upload, non-distorting Stack fit
+
+- **Status**: Accepted (2026-06-19)
+
+- **Context**: ADR-0074 shipped Transform + Image Stack as **non-reactive** nodes (re-encode + upload on Run). Positioning a cutout that way is miserable: "the preview when I transform an image used as input to Image Stack has to be immediate, without having to Run — reactive, so I can position and see the result as I go." The user also wanted the **Stack composite** to update live as an upstream Transform changes. Two structural obstacles: (1) the reactive runner ([`reactive-runner.ts`](src/lib/engine/reactive-runner.ts)) uses a **fresh per-flush cache** and re-executes every reactive node on every workflow tick — so a naively-reactive canvas node would re-encode AND **re-upload to Supabase on every keystroke anywhere**, spamming storage with orphans and adding CDN latency to each frame; (2) a `blob:` preview URL is dead on reload and must never leak into a persisted project. Separately, Image Stack defaulted to `fit: "stretch"`, which **distorts** a non-base layer whose aspect differs from the base ("the second image can't be stretched … distorting is bad").
+
+- **Decision**: Make Transform + Image Stack `reactive: true`, but split the render by run mode.
+  - **`preview` flag on `ExecContext`** ([`node.ts`](src/types/node.ts)) — `true` exactly when the engine runs `mode: "reactive-only"`. Threaded at both `execute` call sites in [`run-workflow.ts`](src/lib/engine/run-workflow.ts).
+  - **Preview render = local blob; Run = durable upload.** In preview, the node renders the canvas to a `URL.createObjectURL` blob — instant, no network, no orphan. On an explicit Run (`preview` falsy) it uploads to Supabase as before. Downstream **non-reactive** consumers (Export) only ever execute in full runs, so they always receive a durable URL.
+  - **[`preview-cache.ts`](src/lib/media/preview-cache.ts)** memo bridges the fresh-per-flush reactive cache: `renderPreview(nodeId, key, makeBlob)` returns a **stable** blob URL for a content key (`config + input urls`), re-encoding ONLY when the key changes — so an unrelated tick is an instant memo hit. `commitDurableRender(nodeId, key, url)` lets a Run's durable URL satisfy later preview ticks for the same state, so the record doesn't flip durable→blob. One entry per node; the prior blob is revoked on change (deferred ~4s so the UI has swapped first).
+  - **Reactive runner carries prior output through a "running" tick.** A bare `running` emit (no output) would blank a node body for a frame and flash a spinner; the runner now keeps the previous `output` so live previews stay smooth. This is general (helps every reactive node) and replaced a component-level latch that fell foul of the React-Compiler lint rules (no ref-read-in-render, no setState-in-effect).
+  - **Persistence skips `blob:` URLs.** [`serializeExecutionState`](src/lib/project/document.ts) treats a settled `blob:` output as not-durable and falls back to the last durable history entry (belt-and-suspenders: never writes a `blob:` URL). The reactive runner re-derives the preview on load.
+  - **Image Stack default `fit` → `"contain"`.** Contain scales each non-base layer to fit **without distortion**. Crucially, a layer that already matches the base's size is unchanged (contain ≡ stretch at scale 1), so the SAM 3 aligned-cutout case stays pixel-perfect — but a differently-shaped layer letterboxes instead of stretching. Layer 1 (base) still defines the canvas size AND aspect; the dropdown is reordered (contain recommended, then cover, then stretch with a "only if sizes match" caveat).
+
+- **Why this is the right shape**:
+  - **Re-encode is cheap; upload is not.** A canvas re-encode is ~tens of ms with HTTP-cached source bytes; a Supabase round-trip is hundreds of ms + a permanent orphan object. Splitting preview (blob) from commit (upload) buys live feedback without the cost, and the memo means only *actual* state changes encode.
+  - **Durable-on-Run keeps the rest of the system honest.** Persistence, the Gallery, and non-reactive downstream nodes only ever see real URLs. `blob:` URLs are confined to in-session preview and self-heal on reload.
+  - **contain ≡ stretch for aligned cutouts** → changing the default fixes the distortion complaint with **zero regression** to the headline SAM 3 → Stack workflow.
+  - **Fix the flash at the data layer, not per component.** Carrying output through `running` is one small change in the runner that benefits all reactive nodes and sidesteps the lint-hostile "remember previous value" component patterns.
+
+- **Consequences**:
+  - **`blob:` URLs are never persisted.** A project saved mid-preview (never Run) won't carry that node's output; the reactive runner regenerates it on load from the (durable) upstream. A `.cookbook` export of an un-Run preview likewise omits it — Run to bake a portable result.
+  - **After a Run, preview ticks reuse the durable URL** (via `commitDurableRender`) until the user changes something, so the record stays durable and persistence captures it.
+  - **Existing saved Stacks keep their persisted `fit`** (e.g. legacy `stretch`); only newly-added nodes default to `contain`. `hasImageStackOverrides` now treats `contain` as the no-override baseline.
+  - **Object-URL fallback.** Environments without `URL.createObjectURL` (some test runners) fall back to a data URL so the contract (a usable image `src`) holds.
+
+- **What's parked for later**:
+  - **Per-layer fit** in Image Stack (each non-base layer picks contain/cover/stretch) — global fit + contain default covers the reported pain; per-layer is the next increment if a mixed-aspect composite needs it.
+  - **Explicit canvas-aspect override** (force 16:9 etc. independent of layer 1) — today the answer to "which image sets the aspect?" is "layer 1; reorder to change it".
+  - **Extending the reactive-preview pattern** to the other client-side canvas nodes (Image Concat / Crop / Grid) once a workflow asks for it.
+  - **Draggable on-canvas handles** for Transform (direct manipulation) over numeric sliders.
 
 

@@ -159,15 +159,15 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Non-reactive and bills per call (~$0.005) — it needs a Run, it won't auto-update like Text/Image source nodes.`,
   ],
   "image-stack": [
-    `Layer 1 (\`layer-0\`) is the BOTTOM/base and defines the output canvas size; each higher layer draws on top. Order matters — put the full background in layer 1 and the cutout above it.`,
-    `\`fit: "stretch"\` (default) draws each layer at the exact canvas size — pixel-perfect when a SAM 3 cutout shares the base image's dimensions. Use "contain"/"cover" only when layer sizes differ.`,
+    `Layer 1 (\`layer-0\`) is the BOTTOM/base and defines the output canvas size AND aspect ratio; each higher layer draws on top. Order matters — put the full background in layer 1 and the cutout above it. To change the output aspect, put the image you want to drive it in layer 1.`,
+    `\`fit: "contain"\` (default) scales each non-base layer to fit WITHOUT distortion — and a layer that already matches the base's size is unchanged, so aligned SAM 3 cutouts stay pixel-perfect. \`"stretch"\` force-fills the canvas (can distort — only safe when sizes match); \`"cover"\` fills + crops. Prefer "contain" unless you specifically need force-fill.`,
     `Transparency is preserved, so PNG cutouts composite cleanly. A layer with no alpha (a JPEG) paints an opaque rectangle and hides everything below it — keep cutouts as PNG.`,
-    `Sockets auto-grow as you wire — don't write \`config.portCount\` directly.`,
+    `Reactive — the composite previews live (local blob, no upload) as layers/transforms change; a real Run bakes a durable copy. Sockets auto-grow as you wire — don't write \`config.portCount\` directly.`,
   ],
   "image-transform": [
     `Positions a single image: \`translateX\`/\`translateY\` are a PERCENT of the canvas (not pixels; +x = right, +y = down), \`rotation\` is degrees clockwise, \`scale\` is a percent (100 = original).`,
-    `The output KEEPS the source's pixel dimensions (transform is around the center; overflow clips, vacated areas stay transparent). That's what lets a SAM 3 cutout stay aligned with a same-size background — the canonical chain is SAM 3 → Transform → Image Stack (\`fit: "stretch"\`).`,
-    `Non-reactive — it re-encodes on Run. An identity transform (0/0/0°/100%) passes the source through untouched, so a freshly-added node with default config is a no-op until you change a value.`,
+    `The output KEEPS the source's pixel dimensions (transform is around the center; overflow clips, vacated areas stay transparent). That's what lets a SAM 3 cutout stay aligned with a same-size background — the canonical chain is SAM 3 → Transform → Image Stack.`,
+    `Reactive — the preview updates live as values change (local blob, no upload), so you can position by eye; a real Run bakes a durable copy. An identity transform (0/0/0°/100%) passes the source through untouched, so a freshly-added node with default config is a no-op until you change a value.`,
   ],
 };
 

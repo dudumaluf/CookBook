@@ -16,6 +16,7 @@ import {
   hasImageTransformOverrides,
   imageTransformNodeSchema,
 } from "@/components/nodes/node-image-transform";
+import { _resetPreviewRenderCache } from "@/lib/media/preview-cache";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 const img = (url: string): StandardizedOutput => ({
@@ -26,20 +27,29 @@ const img = (url: string): StandardizedOutput => ({
 function ctx(
   inputs: Record<string, StandardizedOutput | StandardizedOutput[] | undefined>,
   config: Record<string, unknown> = {},
+  preview = false,
 ): ExecContext {
   return {
     nodeId: "n1",
     config,
     inputs,
+    preview,
     signal: new AbortController().signal,
   } as ExecContext;
 }
+
+const urlAny = URL as unknown as Record<string, unknown>;
+let blobCounter = 0;
 
 beforeEach(() => {
   transformImage.mockReset();
   uploadImageAsset.mockReset();
   transformImage.mockResolvedValue(new Blob(["x"], { type: "image/png" }));
   uploadImageAsset.mockResolvedValue({ url: "https://cdn/transform.png" });
+  blobCounter = 0;
+  urlAny.createObjectURL = () => `blob:t-${++blobCounter}`;
+  urlAny.revokeObjectURL = () => {};
+  _resetPreviewRenderCache();
 });
 
 describe("image-transform node execute", () => {
@@ -76,6 +86,35 @@ describe("image-transform node execute", () => {
     if (out.type === "image") {
       expect(out.value.url).toBe("https://cdn/transform.png");
     }
+  });
+
+  it("preview mode renders a local blob — no upload", async () => {
+    const out = (await imageTransformNodeSchema.execute!(
+      ctx(
+        { image: img("https://x/me.png") },
+        { translateX: 10 },
+        /* preview */ true,
+      ) as never,
+    )) as StandardizedOutput;
+
+    expect(transformImage).toHaveBeenCalledTimes(1);
+    expect(uploadImageAsset).not.toHaveBeenCalled(); // no Supabase round-trip
+    expect(out.type).toBe("image");
+    if (out.type === "image") {
+      expect(out.value.url).toMatch(/^blob:/);
+    }
+  });
+
+  it("preview reuses the render across ticks with unchanged values", async () => {
+    const cfg = { rotation: 15 };
+    await imageTransformNodeSchema.execute!(
+      ctx({ image: img("https://x/me.png") }, cfg, true) as never,
+    );
+    await imageTransformNodeSchema.execute!(
+      ctx({ image: img("https://x/me.png") }, cfg, true) as never,
+    );
+    // Memo hit on the second tick — only one re-encode for the same state.
+    expect(transformImage).toHaveBeenCalledTimes(1);
   });
 });
 

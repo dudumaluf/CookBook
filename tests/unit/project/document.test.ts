@@ -121,6 +121,66 @@ describe("serializeExecutionState", () => {
     expect(state.gen!.history).toHaveLength(1);
   });
 
+  it("skips a transient blob: preview URL (reactive canvas node, ADR-0075)", () => {
+    useExecutionStore.setState({
+      records: new Map<string, ExecutionRecord>([
+        // Reactive preview left a blob: URL in the settled record, with no
+        // durable history → must NOT be persisted (dead on reload).
+        ["preview-only", { status: "done", output: img("blob:abc-123") }],
+      ]),
+    });
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "preview-only",
+          kind: "image-stack",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+
+    expect(Object.keys(serializeExecutionState())).toEqual([]);
+  });
+
+  it("persists the last DURABLE result when the live record is a blob: preview", () => {
+    useExecutionStore.setState({
+      records: new Map<string, ExecutionRecord>([
+        // Ran once (durable in history), then a reactive tick overwrote the
+        // settled output with a blob: preview. Persist the durable one.
+        [
+          "stack",
+          {
+            status: "done",
+            output: img("blob:live-preview"),
+            history: [
+              { output: img("https://cdn/stack.png"), runId: 1, timestamp: 1 },
+            ],
+          },
+        ],
+      ]),
+    });
+    useWorkflowStore.setState({
+      nodes: [
+        {
+          id: "stack",
+          kind: "image-stack",
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+      ],
+      edges: [],
+      selectedNodeIds: [],
+      selectedEdgeIds: [],
+    });
+
+    const state = serializeExecutionState();
+    expect(state.stack!.output).toEqual(img("https://cdn/stack.png"));
+  });
+
   it("prunes orphan records left by deleted nodes (bounds growth)", () => {
     useExecutionStore.setState({
       records: new Map<string, ExecutionRecord>([

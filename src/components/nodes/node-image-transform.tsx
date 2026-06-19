@@ -8,6 +8,10 @@ import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
 import { isIdentityTransform, transformImage } from "@/lib/media/compose-image";
+import {
+  commitDurableRender,
+  renderPreview,
+} from "@/lib/media/preview-cache";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type {
   ImageRef,
@@ -28,8 +32,10 @@ import type {
  * Translate is a percent of the canvas (resolution-independent: "move 10%
  * right"), rotation is in degrees, scale is a percent (100 = original).
  * Transform happens around the image center; overflow clips, vacated areas
- * stay transparent. Non-reactive (re-encode + upload on Run); an identity
- * transform passes the source through untouched.
+ * stay transparent. Reactive (ADR-0075): the preview re-renders live as you
+ * drag — locally, no upload — so you can position by eye; an explicit Run
+ * bakes a durable copy for downstream. An identity transform passes the
+ * source through untouched.
  */
 export interface ImageTransformNodeConfig {
   /** Horizontal offset, percent of width (+ right). Default 0. */
@@ -60,6 +66,11 @@ function ImageTransformBody({
       ? output.value.url
       : null;
 
+  // The reactive runner carries the prior output through a "running" tick
+  // (ADR-0075), so `url` stays populated during live edits — show it with a
+  // small "updating" badge instead of flashing a spinner.
+  const updating = status === "running" && url != null;
+
   const tx = config.translateX ?? 0;
   const ty = config.translateY ?? 0;
   const rot = config.rotation ?? 0;
@@ -84,23 +95,33 @@ function ImageTransformBody({
         >
           {record.error}
         </p>
+      ) : url ? (
+        <div className="relative">
+          <PreviewImage
+            url={url}
+            alt="Transformed image"
+            downloadName="transform"
+            checkerboard
+            testId="image-transform-result"
+          />
+          {updating ? (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-background/70 p-1 backdrop-blur-sm"
+            >
+              <Loader2 className="h-3 w-3 animate-spin text-accent" />
+            </span>
+          ) : null}
+        </div>
       ) : status === "running" ? (
         <div className="flex items-center gap-2 rounded-md bg-foreground/[0.04] px-2 py-2 text-[11px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>Transforming…</span>
         </div>
-      ) : url ? (
-        <PreviewImage
-          url={url}
-          alt="Transformed image"
-          downloadName="transform"
-          checkerboard
-          testId="image-transform-result"
-        />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Move3d className="h-3 w-3" />
-          <span>Wire an image, set values, then Run</span>
+          <span>Wire an image — the preview follows live</span>
         </div>
       )}
     </div>
@@ -215,8 +236,9 @@ function ImageTransformSettings({
       </button>
       <p className="text-[10.5px] text-muted-foreground/80">
         Translate &amp; scale are percent of the image; rotation is around the
-        center. The output keeps the source size, so it stays aligned with a
-        same-size background in Image Stack.
+        center. The preview follows your edits live — Run bakes a durable copy.
+        The output keeps the source size, so it stays aligned with a same-size
+        background in Image Stack.
       </p>
     </div>
   );
@@ -238,7 +260,7 @@ export const imageTransformNodeSchema = defineNode<ImageTransformNodeConfig>({
   category: "transform",
   title: "Transform",
   description:
-    "Translate, rotate, and scale a single image around its center, preserving alpha and the source dimensions. The companion to SAM 3 + Image Stack: cut a subject out, nudge/rotate/resize it here, then stack it back over an edited background — the output keeps the source size so it stays pixel-aligned. Translate & scale are percent; rotation is degrees. Non-reactive (re-encodes on Run); an identity transform passes through untouched.",
+    "Translate, rotate, and scale a single image around its center, preserving alpha and the source dimensions. The companion to SAM 3 + Image Stack: cut a subject out, nudge/rotate/resize it here, then stack it back over an edited background — the output keeps the source size so it stays pixel-aligned. Translate & scale are percent; rotation is degrees. Reactive: the preview updates live as you adjust values (no upload); an explicit Run bakes a durable copy. An identity transform passes through untouched.",
   icon: Move3d,
   inputs: [{ id: "image", label: "image", dataType: "image" }],
   outputs: [{ id: "out", label: "out", dataType: "image" }],
@@ -249,8 +271,8 @@ export const imageTransformNodeSchema = defineNode<ImageTransformNodeConfig>({
     rotation: { control: "number", label: "rotation (°)" },
     scale: { control: "number", label: "scale (%)" },
   },
-  reactive: false,
-  execute: async ({ config, inputs }) => {
+  reactive: true,
+  execute: async ({ nodeId, config, inputs, preview }) => {
     const image = extractInputByType(inputs, "image", "image");
     if (!image?.url) {
       throw new Error("Wire an image into the `image` handle.");
@@ -269,9 +291,26 @@ export const imageTransformNodeSchema = defineNode<ImageTransformNodeConfig>({
       return { type: "image", value: image } satisfies StandardizedOutput;
     }
 
+    const key = `${image.url}|${opts.translateXPct}|${opts.translateYPct}|${opts.rotationDeg}|${opts.scalePct}`;
+
+    // Reactive preview (ADR-0075): render to a local blob — instant, no
+    // upload, no storage orphans — so positioning is live. The memo reuses
+    // the render across unrelated workflow ticks and reuses a durable URL
+    // once a real Run has committed one for this exact state.
+    if (preview) {
+      const url = await renderPreview(nodeId, key, () =>
+        transformImage(image.url, opts),
+      );
+      return {
+        type: "image",
+        value: { url, mime: "image/png" },
+      } satisfies StandardizedOutput;
+    }
+
     const blob = await transformImage(image.url, opts);
     const file = new File([blob], "transform.png", { type: "image/png" });
     const uploaded = await uploadImageAsset(file);
+    commitDurableRender(nodeId, key, uploaded.url);
     const ref: ImageRef = { url: uploaded.url, mime: "image/png" };
     return {
       output: { type: "image", value: ref },

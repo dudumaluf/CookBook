@@ -698,6 +698,7 @@ export async function runWorkflow(
               config: node.config,
               inputs: perItemInputs,
               signal,
+              preview: isReactiveOnly,
             });
             const { output: perItemOutput } =
               normalizeExecuteResult(rawResult);
@@ -786,6 +787,7 @@ export async function runWorkflow(
         config: node.config,
         inputs,
         signal,
+        preview: isReactiveOnly,
         // Slice D — long-running nodes (Continuity Builder) emit per-chunk
         // progress + partial output through this. Forwarded as a `running`
         // record so the UI previews chunks as they land.

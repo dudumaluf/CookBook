@@ -11,6 +11,7 @@ import {
   hasImageStackOverrides,
   imageStackNodeSchema,
 } from "@/components/nodes/node-image-stack";
+import { _resetPreviewRenderCache } from "@/lib/media/preview-cache";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 const img = (url: string): StandardizedOutput => ({
@@ -21,20 +22,29 @@ const img = (url: string): StandardizedOutput => ({
 function ctx(
   inputs: Record<string, StandardizedOutput | StandardizedOutput[] | undefined>,
   config: Record<string, unknown> = {},
+  preview = false,
 ): ExecContext {
   return {
     nodeId: "n1",
     config,
     inputs,
+    preview,
     signal: new AbortController().signal,
   } as ExecContext;
 }
+
+const urlAny = URL as unknown as Record<string, unknown>;
+let blobCounter = 0;
 
 beforeEach(() => {
   composeLayers.mockReset();
   uploadImageAsset.mockReset();
   composeLayers.mockResolvedValue(new Blob(["x"], { type: "image/png" }));
   uploadImageAsset.mockResolvedValue({ url: "https://cdn/stack.png" });
+  blobCounter = 0;
+  urlAny.createObjectURL = () => `blob:s-${++blobCounter}`;
+  urlAny.revokeObjectURL = () => {};
+  _resetPreviewRenderCache();
 });
 
 describe("image-stack node execute", () => {
@@ -89,6 +99,39 @@ describe("image-stack node execute", () => {
     );
   });
 
+  it("defaults fit to contain (no distortion) when none is set", async () => {
+    await imageStackNodeSchema.execute!(
+      ctx({
+        "layer-0": img("https://x/a.png"),
+        "layer-1": img("https://x/b.png"),
+      }) as never,
+    );
+    expect(composeLayers).toHaveBeenCalledWith(
+      ["https://x/a.png", "https://x/b.png"],
+      expect.objectContaining({ fit: "contain" }),
+    );
+  });
+
+  it("preview mode composites to a local blob — no upload", async () => {
+    const out = (await imageStackNodeSchema.execute!(
+      ctx(
+        {
+          "layer-0": img("https://x/a.png"),
+          "layer-1": img("https://x/b.png"),
+        },
+        { portCount: 2 },
+        /* preview */ true,
+      ) as never,
+    )) as StandardizedOutput;
+
+    expect(composeLayers).toHaveBeenCalledTimes(1);
+    expect(uploadImageAsset).not.toHaveBeenCalled();
+    expect(out.type).toBe("image");
+    if (out.type === "image") {
+      expect(out.value.url).toMatch(/^blob:/);
+    }
+  });
+
   it("grows the socket list with portCount and labels the base", () => {
     const base = imageStackNodeSchema.getInputs!({});
     expect(base.map((h) => h.id)).toEqual(["layer-0", "layer-1"]);
@@ -100,9 +143,10 @@ describe("image-stack node execute", () => {
 });
 
 describe("hasImageStackOverrides", () => {
-  it("is false at defaults and true once fit/background change", () => {
+  it("is false at defaults (contain) and true once fit/background change", () => {
     expect(hasImageStackOverrides({})).toBe(false);
-    expect(hasImageStackOverrides({ fit: "stretch" })).toBe(false);
+    expect(hasImageStackOverrides({ fit: "contain" })).toBe(false); // new default
+    expect(hasImageStackOverrides({ fit: "stretch" })).toBe(true);
     expect(hasImageStackOverrides({ fit: "cover" })).toBe(true);
     expect(hasImageStackOverrides({ background: "#fff" })).toBe(true);
     expect(hasImageStackOverrides({ background: "  " })).toBe(false);

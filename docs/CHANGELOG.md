@@ -2,6 +2,24 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-19 — Live reactive preview for Transform + Image Stack, non-distorting Stack fit (ADR-0075)
+
+Right after the Transform node shipped, the user pushed back: "the preview when I transform an image used as input to Image Stack has to be **immediate, without Running** — reactive, so I can position and see the result as I go; having to click Run doesn't make sense. And in Image Stack we need control over how a layer is represented — which image sets the aspect (the first one?), and the second image **can't be stretched** … distorting is bad."
+
+**Transform + Image Stack are now `reactive: true` with a live local preview.** The trick is splitting the render by run mode (a new `preview` flag on `ExecContext`, set when the engine runs `mode: "reactive-only"` and threaded through both `execute` call sites in [`run-workflow.ts`](src/lib/engine/run-workflow.ts)): in a reactive **preview** tick the node renders the canvas to a `URL.createObjectURL` **blob** — instant, no upload, no storage orphan — so dragging a Transform slider or rewiring a layer updates the composite live; an explicit **Run** uploads a durable Supabase copy for downstream + persistence. Because the reactive runner re-executes every reactive node on every workflow tick against a *fresh* cache, naïvely uploading each time would spam storage; new [`preview-cache.ts`](src/lib/media/preview-cache.ts) memoizes the render by a content key (config + input URLs) so unrelated ticks are instant no-ops, re-encoding only when the state actually changes, revoking the prior blob on change (deferred), and **reusing a Run's durable URL** for later preview ticks so the record never flips durable→blob.
+
+**No spinner flash on live edits.** The reactive runner ([`reactive-runner.ts`](src/lib/engine/reactive-runner.ts)) now carries the prior `output` through a bare `running` tick, so a node body keeps showing the last image (with a small "updating" badge) instead of blanking for a frame. General fix — every reactive node benefits — and it sidesteps the React-Compiler lint rules that forbid the component-level "remember previous value" patterns.
+
+**Transient previews never hit persistence.** [`serializeExecutionState`](src/lib/project/document.ts) skips `blob:` URLs (falling back to the last durable history entry), since object URLs are dead on reload; the reactive runner re-derives the preview on load.
+
+**Image Stack fit defaults to `contain` (no distortion).** Contain scales a non-base layer to fit *without* stretching — and a layer that already matches the base's size is unchanged (contain ≡ stretch at scale 1), so aligned SAM 3 cutouts stay pixel-perfect while a differently-shaped layer letterboxes instead of distorting. Layer 1 (base) still defines the output size **and aspect ratio** — reorder to change it. The fit dropdown is reordered (contain recommended → cover → stretch "only if sizes match"); settings + body copy and the assistant pitfalls in [`node-health.ts`](src/lib/engine/node-health.ts) updated to match. Existing saved Stacks keep their persisted fit; only new nodes default to contain.
+
+**Tests added (+14, 2,292 → 2,306).** `tests/unit/media/preview-cache.test.ts` (memo reuse, key-change re-encode, deferred revoke, per-node isolation, durable reuse + revoke, `isBlobUrl`), `node-image-transform.test.ts` / `node-image-stack.test.ts` (+ preview-mode renders a blob with no upload, memo reuse, contain default), `document.test.ts` (+ skips a `blob:` preview, persists the durable history fallback).
+
+**Verification:** `npm test` → 2,306 passing · `npx tsc --noEmit` clean · `npm run lint` 0 errors (pre-existing warnings only). **ADR-0075** in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
+**Forward path.** Per-layer fit (each non-base layer picks its own contain/cover/stretch) and an explicit canvas-aspect override are the next increments if a mixed-aspect composite needs them. The reactive-preview pattern (blob preview / durable-on-Run) generalizes to Image Concat / Crop / Grid once a workflow asks. Draggable on-canvas Transform handles remain the natural step beyond numeric sliders.
+
 ## 2026-06-19 — Standardized image preview (click→modal + right-click download) + Transform node (ADR-0074)
 
 After the SAM 3 + Image Stack nodes shipped, the user hit a wall: "I need to download the PNG with transparency in good quality… using export or clicking the SAM 3 preview doesn't let me view it to download." Export saves to the **Library** (not the disk), and the node previews were dead `<img>` tags. Two more asks rode along: a Transform node (translate / rotate / scale) to position a cutout before stacking it, and "standardize all these nodes with preview — click opens a modal that previews + downloads, and any image preview should offer download on right-click."

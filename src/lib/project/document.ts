@@ -102,6 +102,36 @@ export function emptyProjectDocument(
 
 /* ──────────────────── execution-state (de)serialize ──────────────────── */
 
+/** A reference-bearing output URL, when the variant has one. */
+function outputRefUrl(o: StandardizedOutput): string | undefined {
+  switch (o.type) {
+    case "image":
+    case "video":
+    case "audio":
+    case "mesh":
+      return o.value.url;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * True when any URL in the output is a transient `blob:` object URL. Those
+ * come from a reactive client-side canvas preview (Image Transform / Image
+ * Stack, ADR-0075) and are dead on reload — never persist them. The reactive
+ * runner re-derives the preview on load, and a real Run replaces it with a
+ * durable Supabase URL that DOES persist.
+ */
+function outputHasBlobUrl(
+  output: StandardizedOutput | StandardizedOutput[],
+): boolean {
+  const arr = Array.isArray(output) ? output : [output];
+  return arr.some((o) => {
+    const u = outputRefUrl(o);
+    return typeof u === "string" && u.startsWith("blob:");
+  });
+}
+
 /**
  * Snapshot the execution-store records that carry a result. We keep only
  * `done` / `cached` records with an `output`; transient fields (status,
@@ -132,7 +162,10 @@ export function serializeExecutionState(): SerializedExecutionState {
     let elapsedMs = rec.elapsedMs;
     if (
       (rec.status === "done" || rec.status === "cached") &&
-      rec.output !== undefined
+      rec.output !== undefined &&
+      // A `blob:` URL is a transient reactive preview (ADR-0075) — skip it
+      // and fall back to the last durable result so we persist the real one.
+      !outputHasBlobUrl(rec.output)
     ) {
       output = rec.output;
     } else if (history) {
@@ -142,6 +175,9 @@ export function serializeExecutionState(): SerializedExecutionState {
       elapsedMs = last.elapsedMs;
     }
     if (output === undefined) continue;
+    // Belt-and-suspenders: never persist a transient preview URL even if it
+    // somehow reached the history fallback.
+    if (outputHasBlobUrl(output)) continue;
 
     const entry: SerializedNodeExecution = { output };
     if (usage) entry.usage = usage;
