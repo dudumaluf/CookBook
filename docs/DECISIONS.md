@@ -3245,3 +3245,29 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Draggable on-canvas handles** for Transform (direct manipulation) over numeric sliders.
 
 
+## ADR-0076: Audio → black-screen-video node + ByteDance singer-performance method
+
+- **Status**: Accepted (2026-06-19)
+
+- **Context**: ByteDance/Seedance's recommended way to make a character sing a song is NOT to feed character image + motion video + audio into one Seedance call — the three references fight (the motion video drags identity/scene along with it, the raw audio competes with the visual references). Their trick is to **decompose into stages** and deliver the SONG through the VIDEO channel as a **solid-black MP4** that carries only the audio track. Wired into Seedance's `@Video1` slot it acts as an audio-only reference (drives lip-sync / rhythm / timing) without polluting the visuals, which come from keyframes. Everything else the method needs already existed in Cookbook (audio/video slicers, Frames Extract `span`, Seedance reference mode with numbered sockets, List pickers, Video Concat). The single missing primitive was "audio → black-screen video".
+
+- **Decision**: Ship the missing primitive as a media op + node, plus the prompts and a seeded recipe that demonstrate the full method.
+  - **[`audioToSilentVideo`](src/lib/media/audio-to-video.ts)** — probes the audio duration, renders a solid-color (default black) MP4 covering it (a hair longer so the audio is never truncated) via a `CanvasSource` (h264/avc) at low fps (2) + modest resolution (720p tall, width from aspect ratio), then muxes the original audio on with the existing `replaceVideoAudio`. Mirrors `pad-video.ts` (canvas render) + `replace-audio.ts` (mux). The dimension math (`silentVideoDimensions`: aspectRatio + height → even `{width,height}`) is a pure exported helper so it's unit-testable in happy-dom while the WebCodecs encode is mocked at the node-test layer — exactly the `splitPadDuration` pattern.
+  - **[`audio-to-video` node](src/components/nodes/node-audio-to-video.tsx)** (`Audio → Silent Video`, category `transform`, non-reactive). Input `audio` → output `video`. Only `aspectRatio` (16:9 / 9:16 / 1:1) is exposed; fps/height/color stay sensible internal defaults. Registered in `all-nodes.ts`; the assistant learns it via the auto-derived node catalog plus a `kindPitfalls` entry (its `out` is a *video*, not audio; it's for the `@Video1` audio-only trick) and `REQUIRED_INPUTS["audio-to-video"] = ["audio"]`.
+  - **[Prompt constants](src/lib/assistant/knowledge/performance-prompts.ts)** — `CHARACTER_SWAP_PROMPT` (stage 1) and `KEYFRAME_ANCHORED_SINGING_PROMPT` (stage 3) as the canonical TS source of truth, mirrored by the seeded recipe's Text nodes (a unit test pins the SQL text to the constants so they can't drift).
+  - **[Seeded recipe](supabase/migrations/20260619_singer_performance_bytedance_recipe.sql)** `Singer Performance (ByteDance)` — a self-contained, inspectable 16-node / 21-edge graph: Stage 1 character-swap Seedance → Stage 2 Frames Extract (span, 7) + Audio → Silent Video → Stage 3 seven List pickers (cursor 0..6) into Seedance `image-0..image-6` + the black-screen song into `video-0`. `is_node = true`, `exposedOutputs` → the final Seedance `out`, mirroring `Singer Performance (modular)`.
+  - Vocabulary knowledge gains entries for the node + the method so the assistant can pitch it.
+
+- **Why this is the right shape**:
+  - **One missing primitive, reused machinery.** `audioToSilentVideo` is the only new media capability; it's built by composing `CanvasSource` + `replaceVideoAudio` rather than introducing a new encode path. The method itself is wired entirely from existing nodes.
+  - **Black-screen audio is the whole point.** Routing the song as `@Video1` (an audio-bearing black video) instead of `@Audio1` is what lets the keyframes own the visuals while the audio drives lip-sync. The node makes that one-click instead of an ffmpeg round-trip.
+  - **Pure helper, mockable encode.** Splitting `silentVideoDimensions` out keeps the dimension contract unit-tested without WebCodecs, matching the established media-op convention.
+  - **Recipe is correctness-first.** A simpler-but-correct single-chunk graph (documented simplifications in the header) beats an ambitious auto-keyframe pipeline that would mean guessing fal-image handles.
+
+- **Consequences**:
+  - **The recipe is a single chunk.** Seedance caps a call (~15s); for a full song you slice first or chain `Singer Performance (modular)` + a Video Concat. Documented in the migration header.
+  - **Stage 1 does not auto-generate the first/last keyframes.** `CHARACTER_SWAP_PROMPT` references `@Image2` / `@Image3` (first/last frames); the swap Seedance leaves free image sockets so the user can optionally wire them, but by default only `@Image1` (character) + `@Video1` (perf video) are wired. Auto first/last-frame generation (a fal-image stage) is deferred.
+  - **`audioToSilentVideo` returns a `video/mp4` Blob**; the node uploads it under `videos/`. Downstream treats it as a normal video — the only unusual thing is its picture is black.
+  - **Two copies of the stage prompts** (TS constant + SQL literal) are kept in sync by a test rather than a shared import, since SQL can't import TS.
+
+

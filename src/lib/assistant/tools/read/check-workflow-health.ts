@@ -59,6 +59,7 @@ const REQUIRED_INPUTS: Record<string, readonly string[]> = {
   "soul-cinema": ["prompt"],
   "sam-3": ["image"],
   "image-transform": ["image"],
+  "audio-to-video": ["audio"],
 };
 
 function getDynamicInputs(node: NodeInstance): NodeIO[] | null {

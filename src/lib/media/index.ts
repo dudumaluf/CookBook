@@ -24,6 +24,8 @@
  *     chunk array into one continuous video.
  *   - `replaceVideoAudio(video, audio)` => MP4 Blob — mux video frames with a
  *     replacement audio track (remux when possible, transcode fallback).
+ *   - `audioToSilentVideo(audio)` => MP4 Blob — render a song as a solid-black
+ *     video carrying the audio track (ByteDance audio-as-@Video1 reference).
  *
  * Still deferred (only when a real pipeline needs it):
  *   - `normalizeMedia(src, target)` — Conversion API transcode/resize to fit
@@ -63,6 +65,13 @@ export { sliceVideo } from "./slice-video";
 export { concatVideos } from "./concat";
 
 export { replaceVideoAudio } from "./replace-audio";
+
+export {
+  audioToSilentVideo,
+  silentVideoDimensions,
+  type AudioToSilentVideoOptions,
+  type SilentVideoAspectRatio,
+} from "./audio-to-video";
 
 export {
   padVideoToMinDuration,

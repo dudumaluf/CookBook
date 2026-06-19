@@ -1,6 +1,7 @@
 import { arrayNodeSchema } from "@/components/nodes/node-array";
 import { audioNodeSchema } from "@/components/nodes/node-audio";
 import { audioSlicerNodeSchema } from "@/components/nodes/node-audio-slicer";
+import { audioToVideoNodeSchema } from "@/components/nodes/node-audio-to-video";
 import { compareNodeSchema } from "@/components/nodes/node-compare";
 import { compositeNodeSchema } from "@/components/nodes/node-composite";
 import { continuityBuilderNodeSchema } from "@/components/nodes/node-continuity-builder";
@@ -84,6 +85,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(videoConcatNodeSchema);
   nodeRegistry.register(videoAudioMergeNodeSchema);
   nodeRegistry.register(videoPadNodeSchema);
+  nodeRegistry.register(audioToVideoNodeSchema);
   nodeRegistry.register(imageConcatNodeSchema);
   nodeRegistry.register(imageStackNodeSchema);
   nodeRegistry.register(imageTransformNodeSchema);

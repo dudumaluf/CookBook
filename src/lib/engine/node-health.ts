@@ -169,6 +169,10 @@ const kindPitfallsMap: Record<string, string[]> = {
     `The output KEEPS the source's pixel dimensions (transform is around the center; overflow clips, vacated areas stay transparent). That's what lets a SAM 3 cutout stay aligned with a same-size background — the canonical chain is SAM 3 → Transform → Image Stack.`,
     `Reactive — the preview updates live as values change (local blob, no upload), so you can position by eye; a real Run bakes a durable copy. An identity transform (0/0/0°/100%) passes the source through untouched, so a freshly-added node with default config is a no-op until you change a value.`,
   ],
+  "audio-to-video": [
+    `Renders the wired audio as a SOLID-BLACK MP4 that carries the audio track — its \`out\` is a \`video\`, not audio. The point is the ByteDance singer-performance method: feed a song into Seedance's video slot (\`@Video1\`) as an AUDIO-ONLY reference. The black picture keeps the song from polluting the visuals (those come from the keyframes) while the audio drives lip-sync / rhythm / timing. Don't treat it as a normal motion video.`,
+    `Settings expose only \`aspectRatio\` (16:9 / 9:16 / 1:1) — match it to the keyframes you'll feed Seedance. fps / height / color are fixed sensible defaults (2 fps, 720p tall, black). Non-reactive — it needs a Run.`,
+  ],
 };
 
 /**
