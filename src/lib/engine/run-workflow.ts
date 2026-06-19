@@ -269,6 +269,48 @@ export function topologicalSort(
  * order. The handle is included so that swapping which input a value feeds
  * (e.g. moving an edge from `system` to `user`) busts the cache.
  */
+/**
+ * Which item of an ARRAY output should feed a *single* input: the image the
+ * user is previewing on the source node (`config.previewIndex`), not blindly
+ * the first. Multi-image generators (Fal Image, Higgsfield, Soul Cinema)
+ * persist the focused index there + render it via the `‹ 8 / 10 ›` cursor;
+ * the engine had been silently delivering item 0 downstream regardless of
+ * what the user picked. Nodes without `previewIndex` (or non-array outputs)
+ * return 0, preserving legacy behavior. Always clamped to the array range so
+ * a stale index after a smaller re-run never reads out of bounds.
+ */
+function selectedOutputIndex(
+  node: NodeInstance | undefined,
+  output: StandardizedOutput | StandardizedOutput[] | undefined,
+): number {
+  if (!node || !Array.isArray(output) || output.length <= 1) return 0;
+  const raw = (node.config as { previewIndex?: unknown } | null | undefined)
+    ?.previewIndex;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  return Math.min(Math.max(0, Math.trunc(raw)), output.length - 1);
+}
+
+/**
+ * Config keys that are pure VIEW state (which image you're previewing,
+ * grid-vs-single) — never execution-affecting. Stripped before hashing so
+ * browsing a multi-image batch can't invalidate the node's cache (no
+ * surprise re-bill) or alias a downstream cache key. The image the user
+ * SELECTED still propagates downstream — but via the per-edge dep-hash salt
+ * in the runner (see `selectedOutputIndex`), not via the source's own hash.
+ */
+const VIEW_ONLY_CONFIG_KEYS = new Set(["previewIndex", "viewMode"]);
+
+function stripViewOnlyConfig(config: unknown): unknown {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    return config;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config as Record<string, unknown>)) {
+    if (!VIEW_ONLY_CONFIG_KEYS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
 export function computeNodeHash(
   node: NodeInstance,
   upstreamHashesByTargetHandle: Map<string, string[]>,
@@ -289,7 +331,7 @@ export function computeNodeHash(
   return hashString(
     stableStringify({
       kind: node.kind,
-      config: node.config,
+      config: stripViewOnlyConfig(node.config),
       deps,
       // Only mix the key in when a schema opts in, so every node that
       // doesn't declare `cacheVersion` keeps its exact pre-7.11 hash.
@@ -468,6 +510,11 @@ export async function runWorkflow(
       const isMulti =
         effectiveInputs.find((i) => i.id === edge.targetHandle)?.multiple ??
         false;
+      // Salt for THIS edge's dep hash. Bumped below when a single input
+      // pulls a non-first item out of an array source, so a downstream
+      // re-run after the user changes the selection can't replay the old
+      // pick (the source's own hash is selection-agnostic by design).
+      let depHash = upstreamHash;
       if (isMulti) {
         const arr = Array.isArray(handleInputs)
           ? handleInputs
@@ -483,9 +530,8 @@ export async function runWorkflow(
         // across handles — only the first such handle wins (we never need
         // a 2D fan-out in the Soul Image Burst recipe; future slices can
         // generalise).
-        const upstreamSchema = registry.get(
-          nodes.find((n) => n.id === edge.source)?.kind ?? "",
-        );
+        const sourceNode = nodes.find((n) => n.id === edge.source);
+        const upstreamSchema = registry.get(sourceNode?.kind ?? "");
         const isIteratorSource =
           upstreamSchema?.iterator === true && Array.isArray(upstreamOutput);
         if (isIteratorSource && fanOut === undefined) {
@@ -495,18 +541,21 @@ export async function runWorkflow(
           };
           // The per-iteration input for this handle is overridden in the
           // fan-out branch; for now leave inputs[handle] undefined.
+        } else if (Array.isArray(upstreamOutput)) {
+          // Non-iterator array feeding a single input: deliver the item the
+          // user is PREVIEWING on the source (the `‹ 8 / 10 ›` cursor), not
+          // blindly item 0. This is the "generate N, pick the good one, keep
+          // building on it" flow (e.g. Fal Image batch → SAM 3).
+          const sel = selectedOutputIndex(sourceNode, upstreamOutput);
+          inputs[edge.targetHandle] = upstreamOutput[sel] ?? upstreamOutput[0];
+          if (sel > 0) depHash = `${upstreamHash}#${sel}`;
         } else {
-          // Legacy: single input picks the first item if the upstream is
-          // an array (the workflow-store rejects 2nd edges into single
-          // inputs, so this only happens for accidental array shape).
-          inputs[edge.targetHandle] = Array.isArray(upstreamOutput)
-            ? upstreamOutput[0]
-            : upstreamOutput;
+          inputs[edge.targetHandle] = upstreamOutput;
         }
       }
       const hashBucket =
         upstreamHashesByTargetHandle.get(edge.targetHandle) ?? [];
-      hashBucket.push(upstreamHash);
+      hashBucket.push(depHash);
       upstreamHashesByTargetHandle.set(edge.targetHandle, hashBucket);
     }
 
