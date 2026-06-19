@@ -2,6 +2,24 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-19 — Subtitles node (VEED via Fal) — burn styled subtitles into a video
+
+A new `ai-video` node wrapping Fal's `veed/subtitles` (video → video): wire a clip, pick a style preset, Run → the same clip back with auto-transcribed, on-screen subtitles. Structurally a clone of the HeyGen Lipsync node (video-in / video-out, multi-minute async render), so it reuses the **exact** same Fal transport, server-only `FAL_KEY` handling, and submit→poll queue resilience (ADR-0057) — no new architecture, hence no new ADR.
+
+**Schema + Fal layer** ([`types.ts`](src/lib/fal/types.ts)). `veedSubtitlesRequestSchema` (Zod, `.strict()`) built from exported `as const` enums: `VEED_DYNAMIC_PRESETS` (9, **2x** tier) + `VEED_BASIC_PRESETS` (21, **1x** tier) → `VEED_SUBTITLE_PRESETS` (30), plus the full `VEED_SUBTITLE_LANGUAGES` (165, source-audio) and the larger `VEED_TRANSLATION_LANGUAGES` (214) lists taken verbatim from the Fal OpenAPI schema. `video_url` + `preset` required; `language` / `translationLanguage` optional. `isVeedDynamicPreset()` + `VEED_SUBTITLE_DEFAULT_PRESET = "simple"` (a BASIC preset, so the node never silently 2x-bills). Server wrapper [`veed-subtitles-api.ts`](src/lib/fal/veed-subtitles-api.ts) (`submit` / `getResult`, FAL_KEY server-side, camelCase → snake_case input mapping), client wrapper [`call-veed-subtitles.ts`](src/lib/fal/call-veed-subtitles.ts) (submit→poll, 20-min deadline, 5 transient-error tolerance), and the submit + status routes under [`/api/fal/veed-subtitles`](src/app/api/fal/veed-subtitles/route.ts) — all mirrored 1:1 from heygen-lipsync.
+
+**Node** ([`node-fal-veed-subtitles.tsx`](src/components/nodes/node-fal-veed-subtitles.tsx), kind `fal-veed-subtitles`, title "Subtitles", `Captions` icon). Single `video` in → `video` out, non-reactive. Settings: preset `<select>` grouped **Basic (1x)** / **Dynamic (2x ·** labeled**)** defaulting to "simple", optional source-language select (auto-detect default), optional translation-language select, plus a live cost note (`≈ $/min` with the dynamic / translation multipliers spelled out, "2x more above 1080p", "min 1 min"). Body mirrors heygen: spinner ("Adding subtitles — up to several minutes"), `<video>` result, history cursor. Registered in [`all-nodes.ts`](src/lib/engine/all-nodes.ts).
+
+**Cost story (Fal pricing).** $0.10/min base · 2x for resolutions >1080p · 2x for dynamic presets · +$0.20/min when a translation language is set · min charge 1 min. Surfaced in the node description, the settings cost note, and the assistant pitfalls.
+
+**Assistant awareness.** The auto-derived node catalog picks it up via the registry; `kindPitfalls["fal-veed-subtitles"]` in [`node-health.ts`](src/lib/engine/node-health.ts) (needs a video; source-language ≠ output-language; dynamic + translation cost more; deferred fields), `REQUIRED_INPUTS["fal-veed-subtitles"] = ["video"]` in [`check-workflow-health.ts`](src/lib/assistant/tools/read/check-workflow-health.ts), and a [`vocabulary.ts`](src/lib/assistant/knowledge/vocabulary.ts) entry.
+
+**v1 scope.** `srt_file_url` / `srt_content` (import existing subtitles), `vocabulary` (brand-name spelling hints), and `customization` (per-tier font / weight / colour, position, shadow) are documented as future work and intentionally left out — a code comment in both the schema and the node marks them.
+
+**Tests added (+14, 2,317 → 2,331).** `tests/unit/fal/veed-subtitles-route.test.ts` (8: submit 400s on non-JSON / missing video / missing + invalid preset, valid submit returns the requestId, `missing_key`→500; status pending + done), `tests/unit/nodes/node-fal-veed-subtitles.test.ts` (6: throws without a video, emits a video, defaults to a basic 1x preset, passes preset / language / translation through, omits unset optionals, schema sanity).
+
+**Verification:** `npm test` → 2,331 passing · `npx tsc --noEmit` clean · `npm run lint` 0 errors (pre-existing warnings only) · `npm run docs:check` OK. GLOSSARY entry added for the node + the preset cost tiers.
+
 ## 2026-06-19 — Audio → Silent Video node + ByteDance singer-performance method (ADR-0076)
 
 ByteDance/Seedance's recommended "singer performance replacement" method decomposes the task into stages and — the key trick — delivers the SONG through the VIDEO channel as a **solid-black MP4** so it acts as an audio-only reference (`@Video1`) without polluting the visuals (those come from keyframes). Cookbook already had every primitive except "audio → black-screen video". This ships that primitive + the prompts + a seeded recipe that wires the whole method from existing nodes.

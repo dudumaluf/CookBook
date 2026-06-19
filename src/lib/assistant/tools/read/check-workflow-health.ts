@@ -60,6 +60,7 @@ const REQUIRED_INPUTS: Record<string, readonly string[]> = {
   "sam-3": ["image"],
   "image-transform": ["image"],
   "audio-to-video": ["audio"],
+  "fal-veed-subtitles": ["video"],
 };
 
 function getDynamicInputs(node: NodeInstance): NodeIO[] | null {

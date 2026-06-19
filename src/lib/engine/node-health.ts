@@ -173,6 +173,12 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Renders the wired audio as a SOLID-BLACK MP4 that carries the audio track — its \`out\` is a \`video\`, not audio. The point is the ByteDance singer-performance method: feed a song into Seedance's video slot (\`@Video1\`) as an AUDIO-ONLY reference. The black picture keeps the song from polluting the visuals (those come from the keyframes) while the audio drives lip-sync / rhythm / timing. Don't treat it as a normal motion video.`,
     `Settings expose only \`aspectRatio\` (16:9 / 9:16 / 1:1) — match it to the keyframes you'll feed Seedance. fps / height / color are fixed sensible defaults (2 fps, 720p tall, black). Non-reactive — it needs a Run.`,
   ],
+  "fal-veed-subtitles": [
+    `Needs a \`video\` input wired (the source clip) — it transcribes that clip's audio and burns styled subtitles back onto it. Output is a \`video\`. Non-reactive + bills per minute, so it needs a Run.`,
+    `\`config.preset\` is REQUIRED (defaults to "simple"). Presets come in two pricing tiers: BASIC (1x) — simple, plain, beans, corpo, boo, shadeplay, casper, capri, lowkey, vinta, diego, ali, slay, kitty, hustle, karl, sprout, flex, mint, rizz, vegas — and DYNAMIC (2x) — glass, whisper, glide2, fusion, glide, terminal, handwritten, backdrop, backdrop2. Picking a dynamic preset DOUBLES the price; prefer a basic one unless the richer look is wanted.`,
+    `\`config.language\` is the SOURCE audio language (improves transcription; omit to auto-detect), NOT the subtitle output language. To subtitle in a different language set \`config.translationLanguage\` instead — that adds +$0.20/min. Cost: $0.10/min base · 2x above 1080p · 2x for dynamic presets · +$0.20/min translation · min charge 1 min.`,
+    `\`srt_file_url\` / \`srt_content\` (import existing subtitles), \`vocabulary\` (brand-name spelling hints), and \`customization\` (per-tier font/weight/colour, position, shadow) are NOT wired in this node yet — don't try to set them via config.`,
+  ],
 };
 
 /**

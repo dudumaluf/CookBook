@@ -693,3 +693,159 @@ export type ScribeV2StatusRequest = z.infer<typeof scribeV2StatusRequestSchema>;
 export type ScribeV2StatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & ScribeV2SuccessResponse);
+
+/* ─────────────────── VEED Subtitles (video → subtitled video) ─────────────────── */
+
+/** Fal `veed/subtitles` — burn auto-transcribed, styled subtitles into a video. */
+export const VEED_SUBTITLES_ENDPOINT = "veed/subtitles";
+
+/**
+ * Subtitle style presets, split by pricing tier (Fal docs, confirmed
+ * 2026-06-19):
+ *   - DYNAMIC (2x multiplier): richer, context-aware rendering that adapts
+ *     to the input.
+ *   - BASIC (1x multiplier): fixed, lightweight styling with predictable
+ *     output.
+ * Kept as two tier arrays so the node can group / 2x-label the dynamic ones
+ * and the cost note can detect a dynamic pick without a separate map. The
+ * Zod enum + dropdown source ({@link VEED_SUBTITLE_PRESETS}) is built from
+ * both.
+ */
+export const VEED_DYNAMIC_PRESETS = [
+  "glass", "whisper", "glide2", "fusion", "glide", "terminal",
+  "handwritten", "backdrop", "backdrop2",
+] as const;
+
+export const VEED_BASIC_PRESETS = [
+  "simple", "plain", "beans", "corpo", "boo", "shadeplay", "casper",
+  "capri", "lowkey", "vinta", "diego", "ali", "slay", "kitty", "hustle",
+  "karl", "sprout", "flex", "mint", "rizz", "vegas",
+] as const;
+
+/** Every preset (dynamic first, then basic) — source for the Zod enum. */
+export const VEED_SUBTITLE_PRESETS = [
+  ...VEED_DYNAMIC_PRESETS,
+  ...VEED_BASIC_PRESETS,
+] as const;
+
+export type VeedSubtitlePreset = (typeof VEED_SUBTITLE_PRESETS)[number];
+
+/** Default to a BASIC (1x) preset so the node never silently 2x-bills. */
+export const VEED_SUBTITLE_DEFAULT_PRESET: VeedSubtitlePreset = "simple";
+
+/** True when `preset` is a dynamic (2x-multiplier) one. Dependency-free so
+ *  both the node UI and the cost note can call it. */
+export function isVeedDynamicPreset(preset: string): boolean {
+  return (VEED_DYNAMIC_PRESETS as readonly string[]).includes(preset);
+}
+
+/**
+ * SOURCE audio language — improves transcription accuracy. Should match the
+ * spoken audio, NOT the output subtitle language. Optional (omit to
+ * auto-detect). Full list from the Fal `veed/subtitles` schema.
+ */
+export const VEED_SUBTITLE_LANGUAGES = [
+  "af-ZA", "am-ET", "ar-AE", "ar-BH", "ar-DZ", "ar-EG", "ar-IL", "ar-IQ",
+  "ar-JO", "ar-KW", "ar-LB", "ar-MA", "ar-OM", "ar-PS", "ar-QA", "ar-SA",
+  "ar-TN", "ast-ES", "az-AZ", "ba", "bas", "be-BY", "bg-BG", "br", "bs-BA",
+  "ca-ES", "ceb-PH", "ckb-IQ", "cs-CZ", "cy-GB", "da-DK", "de-DE", "dyu",
+  "el-GR", "en-AU", "en-GB", "en-IN", "en-NZ", "en-US", "eo", "es-AR",
+  "es-BO", "es-CL", "es-CO", "es-CR", "es-DO", "es-EC", "es-ES", "es-GT",
+  "es-HN", "es-MX", "es-NI", "es-PA", "es-PE", "es-PR", "es-PY", "es-SV",
+  "es-US", "es-UY", "es-VE", "et-EE", "eu-ES", "fa-IR", "ff", "fi-FI",
+  "fil-PH", "fo", "fr-CA", "fr-FR", "fy", "ga", "gd", "gl-ES", "ha-NG",
+  "haw", "he-IL", "hr-HR", "hsb", "ht", "hu-HU", "hy-AM", "id-ID", "ig",
+  "is-IS", "it-IT", "ja-JP", "ja-Latn-JP", "jv-ID", "ka-GE", "kab",
+  "kam-KE", "kea-CV", "kk-KZ", "ko-KR", "ku", "ky-KG", "la", "lb-LU", "lg",
+  "lij", "ln-CD", "lo-LA", "lt-LT", "luo-KE", "lv-LV", "mg", "mi-NZ",
+  "mk-MK", "mn-MN", "ms-MY", "mt-MT", "nb-NO", "nl-NL", "nn", "nso-ZA",
+  "ny-MW", "oc-FR", "pl-PL", "ps-AF", "pt-BR", "pt-PT", "ro-RO", "roh",
+  "ru-RU", "rw-RW", "sah", "sk-SK", "sl-SI", "sm", "sn-ZW", "so-SO",
+  "sq-AL", "sr-Latn-RS", "sr-RS", "srd", "ss", "su-ID", "sv-SE", "sw-KE",
+  "sw-TZ", "tg-TJ", "th-TH", "tk", "tn", "tok", "ton", "tr-TR", "ts-ZA",
+  "tt", "uk-UA", "umb-AO", "ur-IN", "ur-PK", "uz-UZ", "vi-VN", "vro",
+  "wo-SN", "xh-ZA", "yi", "yo-NG", "yue-Hant-HK", "zh", "zh-HK", "zh-TW",
+  "zu-ZA",
+] as const;
+
+export type VeedSubtitleLanguage = (typeof VEED_SUBTITLE_LANGUAGES)[number];
+
+/**
+ * Translation target language — translate the subtitles INTO this language
+ * (+$0.20/min). Omit to keep the original spoken language. A larger list
+ * than {@link VEED_SUBTITLE_LANGUAGES}. Full list from the Fal schema.
+ */
+export const VEED_TRANSLATION_LANGUAGES = [
+  "ab", "ace", "ach", "af-ZA", "ak", "alz", "am-ET", "ar-AE", "ar-BH",
+  "ar-DZ", "ar-EG", "ar-IL", "ar-IQ", "ar-JO", "ar-KW", "ar-LB", "ar-MA",
+  "ar-OM", "ar-PS", "ar-QA", "ar-SA", "ar-TN", "awa", "ay", "az-AZ", "ban",
+  "bbc", "be-BY", "bem", "bew", "bg-BG", "bho", "bik", "bm", "bs-BA", "bts",
+  "btx", "bua", "ca-ES", "ceb-PH", "cgg", "chm", "ckb-IQ", "cnh", "co",
+  "crh", "crs", "cs-CZ", "cv", "cy-GB", "da-DK", "de-DE", "din", "doi",
+  "dov", "dv", "dz", "ee", "el-GR", "en-AU", "en-GB", "en-IN", "en-NZ",
+  "en-US", "eo", "es-AR", "es-BO", "es-CL", "es-CO", "es-CR", "es-DO",
+  "es-EC", "es-ES", "es-GT", "es-HN", "es-MX", "es-NI", "es-PA", "es-PE",
+  "es-PR", "es-PY", "es-SV", "es-US", "es-UY", "es-VE", "et-EE", "eu-ES",
+  "fa-IR", "ff", "fi-FI", "fil-PH", "fj", "fr-CA", "fr-FR", "fy", "ga",
+  "gaa", "gd", "gl-ES", "gn", "gom", "ha-NG", "haw", "he-IL", "hil", "hmn",
+  "hr-HR", "hrx", "ht", "hu-HU", "hy-AM", "id-ID", "ig", "ilo", "is-IS",
+  "it-IT", "ja-JP", "ja-Latn-JP", "jv-ID", "ka-GE", "kk-KZ", "ko-KR",
+  "kri", "ktu", "ku", "ky-KG", "la", "lb-LU", "lg", "li", "lij", "lmo",
+  "ln-CD", "lo-LA", "lt-LT", "ltg", "luo-KE", "lus", "lv-LV", "mai", "mak",
+  "mg", "mi-NZ", "min", "mk-MK", "mn-MN", "mni-Mtei", "ms-Arab", "ms-MY",
+  "mt-MT", "nb-NO", "new", "nl-NL", "nr", "nso-ZA", "nus", "ny-MW", "oc-FR",
+  "om", "pag", "pam", "pap", "pl-PL", "ps-AF", "pt-BR", "pt-PT", "qu", "rn",
+  "ro-RO", "rom", "ru-RU", "rw-RW", "scn", "sg", "shn", "sk-SK", "sl-SI",
+  "sm", "sn-ZW", "so-SO", "sq-AL", "sr-Latn-RS", "sr-RS", "ss", "st",
+  "su-ID", "sv-SE", "sw-KE", "sw-TZ", "szl", "tet", "tg-TJ", "th-TH", "ti",
+  "tk", "tn", "tr-TR", "ts-ZA", "tt", "ug", "uk-UA", "ur-IN", "ur-PK",
+  "uz-UZ", "vi-VN", "xh-ZA", "yi", "yo-NG", "yua", "yue-Hant-HK", "zh",
+  "zh-HK", "zh-TW", "zu-ZA",
+] as const;
+
+export type VeedTranslationLanguage =
+  (typeof VEED_TRANSLATION_LANGUAGES)[number];
+
+export const veedSubtitlesRequestSchema = z
+  .object({
+    videoUrl: z.string().url(),
+    preset: z.enum(VEED_SUBTITLE_PRESETS),
+    /** SOURCE audio language (improves transcription). Omit to auto-detect. */
+    language: z.enum(VEED_SUBTITLE_LANGUAGES).optional(),
+    /** Translate subtitles into this language (+$0.20/min). Omit to keep source. */
+    translationLanguage: z.enum(VEED_TRANSLATION_LANGUAGES).optional(),
+    // DEFERRED (v1 leaves these out — future work): `srt_file_url` /
+    // `srt_content` (import subtitles instead of transcribing), `vocabulary`
+    // (brand-name / jargon spelling hints), `customization` (per-tier font /
+    // weight / colour + position + shadow overrides). Add when a workflow
+    // actually asks for them.
+  })
+  .strict();
+
+export type VeedSubtitlesRequest = z.infer<typeof veedSubtitlesRequestSchema>;
+
+export interface VeedSubtitlesSuccessResponse {
+  videoUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface VeedSubtitlesSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const veedSubtitlesStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type VeedSubtitlesStatusRequest = z.infer<
+  typeof veedSubtitlesStatusRequestSchema
+>;
+
+export type VeedSubtitlesStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & VeedSubtitlesSuccessResponse);
