@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -59,8 +60,10 @@ interface MediaPreviewImageProps {
   alt?: string;
   /**
    * CSS aspect-ratio string like `"16 / 9"`, `"3 / 4"`, `"1 / 1"`.
-   * Falls back to `"1 / 1"` if null/undefined — never collapses the
-   * container to zero height.
+   * When null/undefined the box adopts the image's INTRINSIC ratio
+   * (measured on load) so a 9:16 cutout reads as 9:16 instead of being
+   * letterboxed into a square; `"1 / 1"` is only the pre-load placeholder
+   * so the container never collapses to zero height.
    */
   aspectRatio?: string | null;
   /**
@@ -94,11 +97,24 @@ export function MediaPreviewImage({
   className,
   testId,
 }: MediaPreviewImageProps) {
+  // Intrinsic-ratio fallback: when no explicit `aspectRatio` is given, the
+  // box should hug the image's own proportions (a 9:16 cutout must read as
+  // 9:16, not letterboxed into a square). The dimensions aren't known until
+  // the image loads, so we measure on `onLoad`. Keyed by `url` so a new
+  // source ignores the previous measurement instead of flashing a stale
+  // ratio. An explicit `aspectRatio` always wins — generators pass their
+  // config ratio so the running placeholder + result stay matched.
+  const [measured, setMeasured] = useState<{
+    url: string;
+    aspect: string;
+  } | null>(null);
+  const intrinsicAspect = measured?.url === url ? measured.aspect : null;
+
   const fitClass = fit === "contain" ? "object-contain" : "object-cover";
   const computedHref = href === null ? null : (href ?? url);
   const wrapperClass = cn(PREVIEW_BASE, className);
   const style: CSSProperties = {
-    aspectRatio: aspectRatio ?? "1 / 1",
+    aspectRatio: aspectRatio ?? intrinsicAspect ?? "1 / 1",
     ...(checkerboard ? CHECKERBOARD_STYLE : {}),
   };
   const inner = (
@@ -107,6 +123,18 @@ export function MediaPreviewImage({
       src={url}
       alt={alt ?? ""}
       className={cn("h-full w-full", fitClass)}
+      // Measure the natural ratio once loaded, but only when the caller
+      // didn't pin an explicit aspect (then the box hugs the content).
+      onLoad={(e) => {
+        if (aspectRatio != null) return;
+        const img = e.currentTarget;
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          setMeasured({
+            url,
+            aspect: `${img.naturalWidth} / ${img.naturalHeight}`,
+          });
+        }
+      }}
       // Bad URLs shouldn't blow out the layout — collapse the broken
       // image to invisible while keeping the container's footprint.
       onError={(e) => {
