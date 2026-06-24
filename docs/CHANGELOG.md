@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — Video Slicer can keep the source audio
+
+The Video Slicer hard-discarded audio (built purely as a silent *motion* reference for Seedance). It now keeps the soundtrack by default, with a toggle to drop it — so the cuts double as standalone clips with sound.
+
+**`sliceVideo` gains `keepAudio`** ([`slice-video.ts`](src/lib/media/slice-video.ts)). The hardcoded `audio: { discard: true }` is now conditional: `keepAudio` omits the discard so mediabunny carries the source track into each slice. Function-level default stays `false` (discard) — backward-compatible, so the Continuity Builder's inline slicing is untouched.
+
+**Video Slicer node** ([`node-video-slicer.tsx`](src/components/nodes/node-video-slicer.tsx)). New `keepAudio` config, **default ON**, surfaced as a "Keep audio" checkbox in the settings popover (+ a `toggle` configParam so the recipe-save dialog / assistant see it). `execute` passes `config.keepAudio ?? true` through. Existing/seeded video-slicer nodes (incl. the multi-chunk recipe's `vslice`) inherit default-on — the swap-stage motion ref now carries audio (harmless, just larger).
+
+**Tests (+3).** [`node-video-slicer.test.ts`](tests/unit/nodes/node-video-slicer.test.ts): audio kept by default, dropped when toggled off, and a schema pin (default-on + the toggle configParam); the two downscale assertions updated for the new options shape.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR (additive option on an existing node). GLOSSARY's Video Pad note corrected (it no longer "matches `video-slicer`" on audio).
+
 ## 2026-06-23 — Multi-chunk singer recipe: Seedance `@Image[]` socket, Silent Video accepts video, Add Recipe button split
 
 Closing the loop on ByteDance's singer-performance method: the single-chunk recipe needed nine List nodes just to unzip a keyframe array into Seedance, and the audio-as-black-video primitive only took audio. This makes the whole method MULTI-CHUNK and inspectable, driven by one Number index — plus two adjacent quality-of-life changes.

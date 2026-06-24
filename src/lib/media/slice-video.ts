@@ -20,9 +20,11 @@ import type { MediaWindow } from "./windows";
  * the `@Video1` motion reference for its Seedance chunk, so the generated
  * character mirrors the original performance across the whole video.
  *
- * Audio is discarded: the slice is a *motion* reference; the song audio is
- * supplied separately (`@Audio1`) for lip-sync. Dropping audio also keeps
- * each chunk well under Seedance's per-reference size budget. Browser-only
+ * Audio is discarded by default: the slice is a *motion* reference; the song
+ * audio is supplied separately (`@Audio1`) for lip-sync, and dropping audio
+ * keeps each chunk well under Seedance's per-reference size budget. Pass
+ * `keepAudio` to retain the source soundtrack in every slice (larger files,
+ * but the cuts double as standalone clips with sound). Browser-only
  * (WebCodecs via mediabunny). One Input per window keeps trims independent
  * + cancel-safe (mirrors `sliceAudio`).
  */
@@ -40,6 +42,12 @@ export interface SliceVideoOptions {
    * for a smaller/cheaper reference). Omit to keep the source resolution.
    */
   maxHeight?: number;
+  /**
+   * Keep the source soundtrack in each slice. Defaults to `false` — the
+   * performance pipeline wants silent motion references. The Video Slicer
+   * node opts in by default; the Continuity Builder leaves it off.
+   */
+  keepAudio?: boolean;
 }
 
 export async function sliceVideo(
@@ -59,8 +67,9 @@ export async function sliceVideo(
         input,
         output,
         trim: { start: window.startMs / 1000, end: window.endMs / 1000 },
-        // Motion reference only — the song audio is fed separately.
-        audio: { discard: true },
+        // Keep the soundtrack when asked; otherwise discard it (motion
+        // reference only — the song audio is fed separately).
+        ...(opts.keepAudio ? {} : { audio: { discard: true } }),
         // Downscale to fit Seedance's reference cap (~720p). Setting only
         // height preserves the source aspect ratio (width auto-scales).
         ...(opts.maxHeight ? { video: { height: opts.maxHeight } } : {}),

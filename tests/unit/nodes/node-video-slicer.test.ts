@@ -66,7 +66,7 @@ describe("video-slicer node execute", () => {
     await videoSlicerNodeSchema.execute!(
       ctx({ video: { type: "video", value: { url: "https://x/perf.mp4" } } }) as Cfg,
     );
-    expect(sliceVideo.mock.calls[0]![2]).toEqual({ maxHeight: 720 });
+    expect(sliceVideo.mock.calls[0]![2]).toEqual({ keepAudio: true, maxHeight: 720 });
   });
 
   it("keeps source resolution when downscale is 'source'", async () => {
@@ -76,6 +76,33 @@ describe("video-slicer node execute", () => {
         { maxHeight: "source" },
       ) as Cfg,
     );
-    expect(sliceVideo.mock.calls[0]![2]).toEqual({});
+    expect(sliceVideo.mock.calls[0]![2]).toEqual({ keepAudio: true });
+  });
+
+  it("keeps audio by default", async () => {
+    await videoSlicerNodeSchema.execute!(
+      ctx({ video: { type: "video", value: { url: "https://x/perf.mp4" } } }) as Cfg,
+    );
+    expect(sliceVideo.mock.calls[0]![2]).toMatchObject({ keepAudio: true });
+  });
+
+  it("drops audio when keepAudio is turned off", async () => {
+    await videoSlicerNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/perf.mp4" } } },
+        { keepAudio: false },
+      ) as Cfg,
+    );
+    expect(sliceVideo.mock.calls[0]![2]).toEqual({ keepAudio: false, maxHeight: 720 });
+  });
+});
+
+describe("video-slicer schema", () => {
+  it("defaults keepAudio on and exposes a keep-audio toggle", () => {
+    expect(videoSlicerNodeSchema.defaultConfig?.keepAudio).toBe(true);
+    expect(videoSlicerNodeSchema.configParams?.keepAudio).toEqual({
+      control: "toggle",
+      label: "keep audio",
+    });
   });
 });

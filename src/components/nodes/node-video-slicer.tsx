@@ -18,8 +18,9 @@ import { IteratorCursor } from "./iterator-cursor";
  *
  * The modular counterpart of the Continuity Builder's inline video slicing:
  * cut a reference performance into the SAME windows as the song, so each
- * slice drives one chunk's motion (@Video1). Audio is discarded (motion
- * reference only). Downscales to fit Seedance's ~720p reference cap.
+ * slice drives one chunk's motion (@Video1). Keeps the source audio by
+ * default; toggle "Keep audio" off for a silent motion-only reference.
+ * Downscales to fit Seedance's ~720p reference cap.
  *
  * Input:  video (single)
  * Output: video[] (one per window)
@@ -33,6 +34,8 @@ export interface VideoSlicerNodeConfig {
   minTailSec?: number;
   /** Downscale cap for each slice (Seedance refs cap ~720p). */
   maxHeight?: "480p" | "720p" | "source";
+  /** Keep the source soundtrack in each slice. Defaults on. */
+  keepAudio?: boolean;
 }
 
 function resolveMaxHeight(v: VideoSlicerNodeConfig["maxHeight"]): number | undefined {
@@ -220,6 +223,19 @@ function VideoSlicerSettings({
           <option value="source">source (no downscale)</option>
         </select>
       </div>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={config.keepAudio ?? true}
+          onChange={(e) => updateConfig({ keepAudio: e.target.checked })}
+        />
+        <span className="text-foreground/90">
+          Keep audio
+          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+            (off = silent motion reference)
+          </span>
+        </span>
+      </label>
     </div>
   );
 }
@@ -229,7 +245,7 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
   category: "transform",
   title: "Video Slicer",
   description:
-    "Split a reference performance video into sequential windows (motion references). Emits an array of video chunks; audio is dropped. Downscales to fit Seedance's ~720p reference cap.",
+    "Split a video into sequential windows. Emits an array of video chunks; keeps the source audio by default (toggle off for a silent motion-only reference). Downscales to fit Seedance's ~720p reference cap.",
   icon: Scissors,
   inputs: [{ id: "video", label: "video", dataType: "video" }],
   outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
@@ -237,11 +253,13 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
     maxHeight: { control: "select", options: ["720p", "480p", "source"], label: "downscale" },
     windowSec: { control: "number", label: "window (s)" },
     minTailSec: { control: "number", label: "min tail (s)" },
+    keepAudio: { control: "toggle", label: "keep audio" },
   },
   defaultConfig: {
     windowSec: DEFAULT_WINDOW_SEC,
     minTailSec: DEFAULT_MIN_TAIL_SEC,
     maxHeight: "720p",
+    keepAudio: true,
   },
   reactive: false,
   execute: async ({ config, inputs, reportProgress }) => {
@@ -264,11 +282,10 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
     }
 
     reportProgress?.({ fanOut: { total: windows.length, done: 0 } });
-    const blobs = await sliceVideo(
-      video.url,
-      windows,
-      maxHeight ? { maxHeight } : {},
-    );
+    const blobs = await sliceVideo(video.url, windows, {
+      keepAudio: config.keepAudio ?? true,
+      ...(maxHeight ? { maxHeight } : {}),
+    });
     const chunks: StandardizedOutput[] = [];
     for (let i = 0; i < blobs.length; i++) {
       const file = new File([blobs[i]!], `chunk-${i + 1}.mp4`, {
