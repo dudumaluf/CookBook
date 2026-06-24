@@ -317,19 +317,19 @@ describe("seedance-video model tier (ADR-0078)", () => {
     expect(callSeedanceVideo.mock.calls[0]![0].model).toBe("fast");
   });
 
-  it("blocks mini + image-to-video with a clear error and never spends", async () => {
-    await expect(
-      seedanceVideoNodeSchema.execute!(
-        ctx(
-          {
-            prompt: { type: "text", value: "x" },
-            start: { type: "image", value: { url: "https://x/start.png" } },
-          },
-          { model: "mini", mode: "first-frame" },
-        ) as Cfg,
-      ),
-    ).rejects.toThrow(/Mini supports reference mode only/);
-    expect(callSeedanceVideo).not.toHaveBeenCalled();
+  it("runs mini + image-to-video (first frame) now that the endpoint ships", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "x" },
+          start: { type: "image", value: { url: "https://x/start.png" } },
+        },
+        { model: "mini", mode: "first-frame" },
+      ) as Cfg,
+    );
+    const sent = callSeedanceVideo.mock.calls[0]![0];
+    expect(sent.model).toBe("mini");
+    expect(sent.startImageUrl).toBe("https://x/start.png");
   });
 
   it("exposes a `model` select (standard/fast/mini) and drops the legacy fast toggle", () => {

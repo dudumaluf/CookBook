@@ -53,7 +53,7 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  *
  * Settings (BaseNode `⋯`): model tier (standard / fast / mini, ADR-0078),
  * mode, duration, aspect ratio, resolution, native audio toggle, seed.
- * Mini currently serves reference-to-video only (image-to-video later).
+ * All three tiers support reference AND image-to-video modes.
  *
  * Non-reactive (costs money). Runs on Run / Run-here only.
  */
@@ -432,14 +432,8 @@ function SeedanceVideoSettingsContent({
         >
           <option value="standard">standard — Seedance 2.0 (best quality)</option>
           <option value="fast">fast — lower latency + cost (≤720p)</option>
-          <option value="mini">mini — cheapest + quickest (≤720p, reference only)</option>
+          <option value="mini">mini — cheapest + quickest (≤720p)</option>
         </select>
-        {tier === "mini" && isImageMode ? (
-          <p className="text-[10px] leading-snug text-amber-500">
-            Mini supports reference mode only for now. Switch the mode to
-            reference, or pick Standard / Fast for image-to-video.
-          </p>
-        ) : null}
       </div>
 
       {/* Mode */}
@@ -592,7 +586,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Pick a model tier in settings: standard (best quality, up to 1080p), fast (lower latency + cost, ≤720p), or mini (cheapest + quickest, ≤720p, reference mode only for now). Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Pick a model tier in settings: standard (best quality, up to 1080p), fast (lower latency + cost, ≤720p), or mini (cheapest + quickest, ≤720p). All three tiers do reference + image-to-video. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal
@@ -641,15 +635,6 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     const prompt = (
       extractInputByType(inputs, "prompt", "text") ?? ""
     ).trim();
-
-    // Mini ships reference-to-video only for now (ADR-0078). Fail fast with a
-    // clear message instead of 422ing against the reference endpoint with an
-    // image-to-video body.
-    if (tier === "mini" && mode !== "reference") {
-      throw new Error(
-        "Seedance Mini supports reference mode only for now — switch the model to Standard/Fast for image-to-video (first/last frame), or set the mode to reference.",
-      );
-    }
 
     const common = {
       ...(config.duration !== undefined ? { duration: config.duration } : {}),

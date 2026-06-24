@@ -36,8 +36,8 @@ export const SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
  * at three speed / cost points:
  *   - "standard" — Seedance 2.0 (highest quality; up to 1080p)
  *   - "fast"     — `/fast/` tier (lower latency + cost; caps at 720p)
- *   - "mini"     — `/mini/` tier (cheapest + quickest; caps at 720p;
- *                  reference-to-video only for now — image-to-video later)
+ *   - "mini"     — `/mini/` tier (cheapest + quickest; caps at 720p)
+ * All three tiers expose reference-to-video AND image-to-video.
  */
 export const SEEDANCE_MODEL_TIERS = ["standard", "fast", "mini"] as const;
 export type SeedanceModelTier = (typeof SEEDANCE_MODEL_TIERS)[number];

@@ -87,15 +87,24 @@ describe("pickSeedanceEndpoint — fast tier", () => {
 });
 
 describe("pickSeedanceEndpoint — mini tier", () => {
-  it("always routes to mini/reference-to-video (image refs)", () => {
+  it("routes a start frame to mini/image-to-video", () => {
+    expect(
+      pickSeedanceEndpoint(
+        req({ model: "mini", startImageUrl: "https://x/start.png" }),
+      ),
+    ).toBe("bytedance/seedance-2.0/mini/image-to-video");
+  });
+
+  it("routes image refs through reference-to-video", () => {
     expect(
       pickSeedanceEndpoint(req({ model: "mini", imageUrls: ["https://x/1.png"] })),
     ).toBe("bytedance/seedance-2.0/mini/reference-to-video");
   });
 
   it("routes prompt-only (no refs) through reference-to-video too", () => {
-    // The reference endpoint serves prompt-only jobs (every ref array is
-    // optional), so a mini text job never hits a non-existent mini/text route.
+    // Mini has no text-to-video endpoint, but reference-to-video serves
+    // prompt-only jobs (every ref array is optional), so a mini text job
+    // never hits a non-existent mini/text route.
     expect(pickSeedanceEndpoint(req({ model: "mini" }))).toBe(
       "bytedance/seedance-2.0/mini/reference-to-video",
     );

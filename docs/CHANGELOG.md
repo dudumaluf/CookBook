@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — Seedance Mini + Fast gain image-to-video (first/last frame)
+
+Fal shipped `bytedance/seedance-2.0/{mini,fast}/image-to-video` (start frame + optional `end_image_url`), completing the tier × mode matrix from the morning's tiers work. The earlier same-day "Mini = reference-only" guard is now lifted — **all three tiers do reference AND image-to-video**.
+
+**Uniform endpoint dispatch** ([`seedance-endpoint.ts`](src/lib/fal/seedance-endpoint.ts)). `pickSeedanceEndpoint` no longer special-cases Mini: every tier prefixes the family (`standard` = none, `fast` = `/fast/`, `mini` = `/mini/`) onto the resolved mode (`image-to-video` when a start frame is wired → `reference-to-video` for image/video refs → `text-to-video`). Mini's text-only jobs still fold into `reference-to-video` (no `mini/text-to-video` exists). The `1080p → 720p` clamp (fast/mini/image-to-video) is unchanged and already covers the new routes.
+
+**Guard removed** ([`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)). Deleted the `mini + image-mode` throw, the amber "reference only" settings hint, and the dropdown's "(reference only)" label; the node now sends `model` + `startImageUrl`/`endImageUrl` straight through for any tier. Description + docstring updated. (`bitrate_mode`, a Fast-only `standard|high` knob, stays at the implicit `standard` default — surface later if wanted.)
+
+**Tests.** [`seedance-endpoint.test.ts`](tests/unit/fal/seedance-endpoint.test.ts): Mini block now asserts `start frame → mini/image-to-video` (alongside the existing image/video/text → reference routes). [`node-fal-seedance.test.ts`](tests/unit/nodes/node-fal-seedance.test.ts): the old "blocks mini + image-to-video" test becomes "runs mini + image-to-video (first frame)" — asserts `model: mini` + `startImageUrl` flow through with no throw.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. **ADR-0078** updated (2026-06-24 follow-up); GLOSSARY + assistant vocabulary updated.
+
 ## 2026-06-24 — Seedance model tiers: standard / fast / mini in one dropdown
 
 Fal shipped **Seedance 2.0 Fast** and **Mini** alongside the standard model — same family, cheaper/quicker, both capped at 720p. The node's boolean "Fast tier" toggle becomes a three-way **Model** dropdown. (Reference-video modes only for now; image-to-video for Mini/Fast lands when Fal ships those endpoints.)

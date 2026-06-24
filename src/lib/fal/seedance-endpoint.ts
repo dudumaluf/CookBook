@@ -26,30 +26,28 @@ export function resolveSeedanceTier(req: SeedanceVideoRequest): SeedanceModelTie
  *   - else any video/image  -> reference-to-video (up to 9 img + 3 vid + 3 aud)
  *   - else                  -> text-to-video
  * Tier prefixes the family: standard = none, fast = `/fast/`, mini = `/mini/`.
+ * All three tiers expose image-to-video AND reference-to-video.
  *
- * Mini ships reference-to-video ONLY for now (image-to-video / first-last comes
- * later). Since that endpoint also serves prompt-only + image/video/audio
- * jobs (every ref array is optional), every NON image-to-video mini job is
- * routed through it. Mini + image-to-video is rejected upstream (the node
- * guards it with a clear message) so we never send an `image_url` body to the
- * reference endpoint.
+ * Mini has NO text-to-video endpoint, but its reference-to-video serves
+ * prompt-only jobs too (every ref array is optional), so a prompt-only mini
+ * job is routed through reference-to-video rather than a non-existent
+ * `mini/text-to-video`. (fast/standard keep their dedicated text-to-video.)
  */
 export function pickSeedanceEndpoint(req: SeedanceVideoRequest): string {
   const tier = resolveSeedanceTier(req);
-  if (tier === "mini") {
-    return "bytedance/seedance-2.0/mini/reference-to-video";
-  }
   const hasStartImage = Boolean(req.startImageUrl);
   const hasVideo = (req.videoUrls?.length ?? 0) > 0;
   const hasImage = (req.imageUrls?.length ?? 0) > 0;
-  const base = hasStartImage
-    ? "bytedance/seedance-2.0/image-to-video"
+  const mode = hasStartImage
+    ? "image-to-video"
     : hasVideo || hasImage
-      ? "bytedance/seedance-2.0/reference-to-video"
-      : "bytedance/seedance-2.0/text-to-video";
-  return tier === "fast"
-    ? base.replace("seedance-2.0/", "seedance-2.0/fast/")
-    : base;
+      ? "reference-to-video"
+      : tier === "mini"
+        ? "reference-to-video"
+        : "text-to-video";
+  return tier === "standard"
+    ? `bytedance/seedance-2.0/${mode}`
+    : `bytedance/seedance-2.0/${tier}/${mode}`;
 }
 
 /** Shape Fal's image/reference/text-to-video endpoints accept. */
