@@ -8,7 +8,9 @@ import { extractInputArrayByType, extractInputByType } from "@/lib/engine/extrac
 import { callSeedanceVideo } from "@/lib/fal/call-seedance";
 import {
   SEEDANCE_ASPECT_RATIOS,
+  SEEDANCE_MODEL_TIERS,
   SEEDANCE_RESOLUTIONS,
+  type SeedanceModelTier,
   type SeedanceVideoRequest,
   isRandomSeed,
   RANDOM_SEED,
@@ -49,8 +51,9 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  * Output:
  *   - out (video)          — the generated clip
  *
- * Settings (BaseNode `⋯`): duration, aspect ratio, resolution, native audio
- * toggle, seed, fast tier.
+ * Settings (BaseNode `⋯`): model tier (standard / fast / mini, ADR-0078),
+ * mode, duration, aspect ratio, resolution, native audio toggle, seed.
+ * Mini currently serves reference-to-video only (image-to-video later).
  *
  * Non-reactive (costs money). Runs on Run / Run-here only.
  */
@@ -74,6 +77,9 @@ export interface SeedanceVideoNodeConfig {
   resolution?: (typeof SEEDANCE_RESOLUTIONS)[number];
   generateAudio?: boolean;
   seed?: number;
+  /** Model tier (ADR-0078): "standard" | "fast" | "mini". */
+  model?: SeedanceModelTier;
+  /** @deprecated Legacy fast-tier boolean; read as a fallback for old nodes. */
   fast?: boolean;
   /** Reference mode: how many image/video/audio sockets to show. Auto-grow. */
   imagePorts?: number;
@@ -99,6 +105,15 @@ function sanitizeRefName(name: string): string {
 const DEFAULT_ASPECT = "auto" as const;
 const DEFAULT_RESOLUTION = "720p" as const;
 const DEFAULT_MODE: SeedanceMode = "reference";
+const DEFAULT_TIER: SeedanceModelTier = "standard";
+
+/**
+ * Effective model tier: explicit `model` wins; else fall back to the legacy
+ * `fast` boolean so older persisted nodes still resolve to the fast tier.
+ */
+function resolveTier(config: SeedanceVideoNodeConfig): SeedanceModelTier {
+  return config.model ?? (config.fast ? "fast" : "standard");
+}
 
 /** Fal reference-to-video per-type caps (mirrors seedanceVideoRequestSchema). */
 const REF_CAPS = { image: 9, video: 3, audio: 3 } as const;
@@ -173,7 +188,7 @@ function hasSeedanceOverrides(config: SeedanceVideoNodeConfig): boolean {
       config.resolution !== DEFAULT_RESOLUTION) ||
     config.generateAudio === false ||
     !isRandomSeed(config.seed) ||
-    config.fast === true
+    resolveTier(config) !== DEFAULT_TIER
   );
 }
 
@@ -303,10 +318,10 @@ function SeedanceVideoNodeBody({
             </span>
           </>
         ) : null}
-        {config.fast ? (
+        {resolveTier(config) !== "standard" ? (
           <>
             <span className="text-muted-foreground/60">·</span>
-            <span className="text-accent">fast</span>
+            <span className="text-accent">{resolveTier(config)}</span>
           </>
         ) : null}
       </div>
@@ -384,6 +399,7 @@ function SeedanceVideoSettingsContent({
   config,
   updateConfig,
 }: NodeBodyProps<SeedanceVideoNodeConfig>) {
+  const modelTierId = useId();
   const modeId = useId();
   const durationId = useId();
   const aspectId = useId();
@@ -392,9 +408,40 @@ function SeedanceVideoSettingsContent({
 
   const mode = config.mode ?? DEFAULT_MODE;
   const isImageMode = mode !== "reference";
+  const tier = resolveTier(config);
 
   return (
     <div className="flex flex-col gap-3 text-xs">
+      {/* Model tier */}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={modelTierId} className="font-medium text-foreground/90">
+          Model
+        </label>
+        <select
+          id={modelTierId}
+          value={tier}
+          onChange={(e) =>
+            // Set the new tier and drop the legacy `fast` flag so the two
+            // never disagree (resolveTier prefers `model`, but converge anyway).
+            updateConfig({
+              model: e.target.value as SeedanceModelTier,
+              fast: undefined,
+            })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="standard">standard — Seedance 2.0 (best quality)</option>
+          <option value="fast">fast — lower latency + cost (≤720p)</option>
+          <option value="mini">mini — cheapest + quickest (≤720p, reference only)</option>
+        </select>
+        {tier === "mini" && isImageMode ? (
+          <p className="text-[10px] leading-snug text-amber-500">
+            Mini supports reference mode only for now. Switch the mode to
+            reference, or pick Standard / Fast for image-to-video.
+          </p>
+        ) : null}
+      </div>
+
       {/* Mode */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={modeId} className="font-medium text-foreground/90">
@@ -509,16 +556,6 @@ function SeedanceVideoSettingsContent({
         </span>
       </label>
 
-      {/* Fast tier toggle */}
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={config.fast === true}
-          onChange={(e) => updateConfig({ fast: e.target.checked })}
-        />
-        <span className="text-foreground/90">Fast tier (cheaper, quicker)</span>
-      </label>
-
       {/* Seed */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={seedId} className="font-medium text-foreground/90">
@@ -555,7 +592,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Pick a model tier in settings: standard (best quality, up to 1080p), fast (lower latency + cost, ≤720p), or mini (cheapest + quickest, ≤720p, reference mode only for now). Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal
@@ -587,7 +624,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
     aspectRatio: { control: "select", options: SEEDANCE_ASPECT_RATIOS, label: "aspect ratio" },
     resolution: { control: "select", options: SEEDANCE_RESOLUTIONS, label: "resolution" },
     generateAudio: { control: "toggle", label: "native audio" },
-    fast: { control: "toggle", label: "fast tier" },
+    model: { control: "select", options: SEEDANCE_MODEL_TIERS, label: "model" },
     seed: { control: "number", label: "seed" },
   },
   defaultConfig: {
@@ -600,9 +637,19 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   isCacheBusting: (config) => isRandomSeed(config.seed),
   execute: async ({ config, inputs, signal }) => {
     const mode = config.mode ?? DEFAULT_MODE;
+    const tier = resolveTier(config);
     const prompt = (
       extractInputByType(inputs, "prompt", "text") ?? ""
     ).trim();
+
+    // Mini ships reference-to-video only for now (ADR-0078). Fail fast with a
+    // clear message instead of 422ing against the reference endpoint with an
+    // image-to-video body.
+    if (tier === "mini" && mode !== "reference") {
+      throw new Error(
+        "Seedance Mini supports reference mode only for now — switch the model to Standard/Fast for image-to-video (first/last frame), or set the mode to reference.",
+      );
+    }
 
     const common = {
       ...(config.duration !== undefined ? { duration: config.duration } : {}),
@@ -613,7 +660,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
         : {}),
       // Resolve -1 / unset to a concrete random seed each run.
       seed: resolveSeed(config.seed),
-      ...(config.fast ? { fast: true } : {}),
+      model: tier,
     } as const;
 
     let request: SeedanceVideoRequest;

@@ -3294,3 +3294,26 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **`viewOnly` is meaningful on inputs only.** It's ignored on outputs. Today only the `index` drives use it; any future "preview-only" input (e.g. a scrub-time) can reuse the flag.
 
 
+## ADR-0078: Seedance model tiers (standard / fast / mini) as a single node dropdown
+
+- **Status**: Accepted (2026-06-24)
+
+- **Context**: Fal shipped two new members of the `bytedance/seedance-2.0/*` family — **Fast** (`/fast/reference-to-video`, lower latency + cost, caps 720p) and **Mini** (`/mini/reference-to-video`, cheapest + quickest, caps 720p). The Seedance node already had a boolean **`fast`** toggle that the wrapper used to prefix `/fast/` onto whichever base endpoint (text/image/reference) the references implied. Adding a *third* tier (and more later) doesn't fit a boolean, and the user wanted "a dropdown to change between the current model, the fast and the mini". A wrinkle: Fal only documents `mini/reference-to-video` — there is no confirmed `mini/text-to-video` or `mini/image-to-video` yet ("later i'll give you the rest like image to video"). So Mini can't reuse the generic base-endpoint dispatch the way Fast does.
+
+- **Decision**: Replace the boolean with a **`model` tier enum (`"standard" | "fast" | "mini"`)** threaded from node config → request schema → endpoint dispatch, and isolate the dispatch in a pure, unit-tested module.
+  - **[`SEEDANCE_MODEL_TIERS`](src/lib/fal/types.ts)** — the tier enum + a new optional `model` field on `seedanceVideoRequestSchema`. The legacy `fast` boolean stays in the schema, marked `@deprecated`, purely for back-compat.
+  - **[`seedance-endpoint.ts`](src/lib/fal/seedance-endpoint.ts)** (NEW, pure, no `server-only`) — `resolveSeedanceTier` (explicit `model` wins; else legacy `fast`; else `standard`), `pickSeedanceEndpoint`, and `buildSeedanceInput`. Extracted out of the `server-only` `seedance-api.ts` so the full dispatch matrix is testable without the `@fal-ai/client` transport (the route test mocks the whole API module, so the logic was previously untested).
+  - **Mini routes through reference-to-video for everything non-image.** Because that endpoint also serves prompt-only + image/video/audio jobs (every ref array is optional), a Mini text job never hits a non-existent `mini/text-to-video`. **Mini + image-to-video (first/last frame) is rejected at the node** with a clear "reference mode only for now" error, *before spending* — so we never POST an `image_url` body to the reference endpoint.
+  - **720p clamp generalised.** `buildSeedanceInput` now clamps `1080p → 720p` for `tier !== "standard"` (fast AND mini) as well as image-to-video. Only the standard reference/text endpoints accept 1080p.
+  - **[`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)** — the `⋯` settings "Fast tier" checkbox becomes a **Model** `<select>`; picking a tier writes `model` and clears the legacy `fast`. The body chip shows the tier when non-standard; `execute` sends `model` (always); `configParams.fast` (toggle) becomes `configParams.model` (select).
+
+- **Why this is the right shape**:
+  - **One field, future-proof.** An enum scales to the next tier without another boolean; `resolveSeedanceTier` keeps old `fast: true` nodes working with zero migration.
+  - **Honest about Mini's surface.** Rather than silently mis-routing or 422ing, Mini + image-mode fails fast with an actionable message. The reference endpoint's prompt-only capability lets Mini cover text + reference jobs today.
+  - **Testable dispatch.** Moving the pure logic into its own module turned an untested branch (`fast` endpoint selection) into a full, asserted matrix (standard/fast/mini × text/image/video/start-frame).
+
+- **Consequences**:
+  - **Two fields transiently coexist.** `model` and the deprecated `fast` both live on the config + request for back-compat; `resolveSeedanceTier` is the single source of truth and the node converges old nodes to `model` the first time the dropdown is touched. A future cleanup can drop `fast` once no persisted node carries it.
+  - **Image-to-video for Mini/Fast is deferred.** Fast already works in every mode (pre-existing); Mini image-to-video lands when Fal ships `mini/image-to-video`. The node guard is the seam where that opens up.
+
+

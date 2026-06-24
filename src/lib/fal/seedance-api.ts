@@ -5,6 +5,10 @@ import { MissingCredentialsError } from "@/lib/byok/resolver";
 
 import { buildFalClient } from "./client-factory";
 import {
+  buildSeedanceInput,
+  pickSeedanceEndpoint,
+} from "./seedance-endpoint";
+import {
   describeFalError,
   type SeedanceStatusResponse,
   type SeedanceSubmitResponse,
@@ -15,20 +19,13 @@ import {
  * Server-only Seedance video wrapper — Slice B (multimodal media arc).
  *
  * Keeps FAL_KEY out of the browser bundle. Dispatches to the right
- * `bytedance/seedance-2.0/*` endpoint based on which references are present.
- * Uses the Fal QUEUE (submit + poll, ADR-0057) rather than the blocking
- * `subscribe`, so a minutes-long render is never tied to one fragile HTTP
- * connection (a network blip / tab backgrounding would drop it mid-render).
+ * `bytedance/seedance-2.0/*` endpoint based on the model tier + which
+ * references are present (see `pickSeedanceEndpoint` in `seedance-endpoint.ts`,
+ * ADR-0078). Uses the Fal QUEUE (submit + poll, ADR-0057) rather than the
+ * blocking `subscribe`, so a minutes-long render is never tied to one fragile
+ * HTTP connection (a network blip / tab backgrounding would drop it mid-render).
  *
- * Endpoint dispatch:
- *   - startImageUrl present        -> image-to-video (literal first frame +
- *     optional end frame; a DISTINCT model — no video/audio refs, caps 720p)
- *   - else any reference video     -> reference-to-video (most capable:
- *     up to 9 images + 3 videos + 3 audios; powers continuity + lipsync)
- *   - else any reference image     -> reference-to-video (image refs +
- *     optional audio; the agency reference-gen path)
- *   - else                         -> text-to-video
- *   The `/fast/` tier is selected per-call via `request.fast`.
+ * Model tier (`request.model`, ADR-0078): "standard" | "fast" | "mini".
  *
  * Errors are annotated with a stable `code` the route maps to an HTTP
  * status, mirroring the Higgsfield wrapper.
@@ -44,49 +41,6 @@ type FalErrorCode =
 function annotate(err: Error, code: FalErrorCode): Error {
   (err as Error & { code?: FalErrorCode }).code = code;
   return err;
-}
-
-function pickEndpoint(req: SeedanceVideoRequest): string {
-  const hasStartImage = Boolean(req.startImageUrl);
-  const hasVideo = (req.videoUrls?.length ?? 0) > 0;
-  const hasImage = (req.imageUrls?.length ?? 0) > 0;
-  const base = hasStartImage
-    ? "bytedance/seedance-2.0/image-to-video"
-    : hasVideo || hasImage
-      ? "bytedance/seedance-2.0/reference-to-video"
-      : "bytedance/seedance-2.0/text-to-video";
-  return req.fast ? base.replace("seedance-2.0/", "seedance-2.0/fast/") : base;
-}
-
-/** Shape Fal's image/reference/text-to-video endpoints accept. */
-function buildInput(req: SeedanceVideoRequest): Record<string, unknown> {
-  const input: Record<string, unknown> = { prompt: req.prompt };
-  const isImageToVideo = Boolean(req.startImageUrl);
-  if (isImageToVideo) {
-    // image-to-video: literal start (+ optional end) frame. It does NOT
-    // accept reference arrays — keep them out so a stray value can't 422.
-    input.image_url = req.startImageUrl;
-    if (req.endImageUrl) input.end_image_url = req.endImageUrl;
-  } else {
-    if (req.imageUrls?.length) input.image_urls = req.imageUrls;
-    if (req.videoUrls?.length) input.video_urls = req.videoUrls;
-    if (req.audioUrls?.length) input.audio_urls = req.audioUrls;
-  }
-  if (req.duration !== undefined) {
-    input.duration =
-      typeof req.duration === "number" ? String(req.duration) : req.duration;
-  }
-  if (req.aspectRatio !== undefined) input.aspect_ratio = req.aspectRatio;
-  if (req.resolution !== undefined) {
-    // The fast tier AND image-to-video both cap output at 720p (no 1080p) —
-    // clamp so a run never 422s mid-pipeline on an unsupported resolution.
-    const capsAt720 = req.fast || isImageToVideo;
-    input.resolution =
-      capsAt720 && req.resolution === "1080p" ? "720p" : req.resolution;
-  }
-  if (req.generateAudio !== undefined) input.generate_audio = req.generateAudio;
-  if (req.seed !== undefined) input.seed = req.seed;
-  return input;
 }
 
 interface SeedanceRawOutput {
@@ -121,8 +75,8 @@ export async function submitSeedanceVideo(
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
-  const endpoint = pickEndpoint(req);
-  const input = buildInput(req);
+  const endpoint = pickSeedanceEndpoint(req);
+  const input = buildSeedanceInput(req);
   try {
     const res = await fal.queue.submit(endpoint, { input });
     return { requestId: res.request_id, endpoint };

@@ -2,6 +2,20 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — Seedance model tiers: standard / fast / mini in one dropdown
+
+Fal shipped **Seedance 2.0 Fast** and **Mini** alongside the standard model — same family, cheaper/quicker, both capped at 720p. The node's boolean "Fast tier" toggle becomes a three-way **Model** dropdown. (Reference-video modes only for now; image-to-video for Mini/Fast lands when Fal ships those endpoints.)
+
+**`model` tier enum** ([`types.ts`](src/lib/fal/types.ts)). New `SEEDANCE_MODEL_TIERS = ["standard","fast","mini"]` + an optional `model` field on `seedanceVideoRequestSchema`. The old `fast` boolean stays (marked `@deprecated`) purely for back-compat — `resolveSeedanceTier` reads `model` first, then legacy `fast`, then defaults to `standard`, so old persisted nodes keep working with zero migration.
+
+**Pure dispatch module** ([`seedance-endpoint.ts`](src/lib/fal/seedance-endpoint.ts), NEW). `resolveSeedanceTier` / `pickSeedanceEndpoint` / `buildSeedanceInput` extracted out of the `server-only` [`seedance-api.ts`](src/lib/fal/seedance-api.ts) so the dispatch matrix is unit-testable without the `@fal-ai/client` transport (the route test mocks the whole API module, leaving the `fast` branch previously untested). Mini routes **everything non-image through `mini/reference-to-video`** (that endpoint also serves prompt-only jobs, so a Mini text job never hits a non-existent `mini/text-to-video`). The `1080p → 720p` clamp now covers fast AND mini (only standard takes 1080p).
+
+**Model dropdown + guard** ([`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)). The `⋯` settings "Fast tier" checkbox is now a **Model** `<select>` (standard / fast / mini with cost hints); picking a tier writes `model` and clears the legacy `fast`. The body chip shows the tier when non-standard; `configParams.fast` (toggle) → `configParams.model` (select). **Mini + image-to-video (first/last frame) is rejected at the node** with a clear "reference mode only for now" message — *before spending* — so we never POST an image-to-video body to the reference endpoint.
+
+**Tests (+27).** [`seedance-endpoint.test.ts`](tests/unit/fal/seedance-endpoint.test.ts) (NEW, +22 — the full tier × mode matrix, legacy-`fast` fallback, model-wins-over-fast, the 720p clamp per tier, ref-array vs image_url body shape) and [`node-fal-seedance.test.ts`](tests/unit/nodes/node-fal-seedance.test.ts) (+5 — default sends `model: standard`, configured tier flows through, legacy `fast` resolves to fast, the Mini+image-mode guard throws without spending, the `model` select replaces the `fast` toggle).
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. **ADR-0078** added; GLOSSARY + assistant vocabulary updated.
+
 ## 2026-06-24 — One Number scrubs any multi-item preview (`index` drive, cache-safe)
 
 Aligning the multi-chunk singer method means pointing several nodes at the *same* chunk. The List node already had a `cursor` input for this, but (a) "cursor" was cryptic and (b) the slicers / Frames Extract had no such input. Now any multi-item node takes a wired `Number` on an `index` input that drives its preview — and crucially it never busts the (expensive) cache.

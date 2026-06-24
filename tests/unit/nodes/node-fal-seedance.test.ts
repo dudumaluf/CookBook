@@ -285,3 +285,57 @@ describe("seedance-video node execute", () => {
     expect(seedanceVideoNodeSchema.outputs[0]?.dataType).toBe("video");
   });
 });
+
+describe("seedance-video model tier (ADR-0078)", () => {
+  it("sends model: standard by default", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx({ prompt: { type: "text", value: "an octopus" } }) as Cfg,
+    );
+    expect(callSeedanceVideo.mock.calls[0]![0].model).toBe("standard");
+  });
+
+  it("sends the configured model tier (mini)", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "perform" },
+          "image-0": { type: "image", value: { url: "https://x/face.png" } },
+        },
+        { model: "mini" },
+      ) as Cfg,
+    );
+    expect(callSeedanceVideo.mock.calls[0]![0].model).toBe("mini");
+  });
+
+  it("resolves the legacy `fast` boolean to the fast tier (back-compat)", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx(
+        { prompt: { type: "text", value: "go" } },
+        { fast: true },
+      ) as Cfg,
+    );
+    expect(callSeedanceVideo.mock.calls[0]![0].model).toBe("fast");
+  });
+
+  it("blocks mini + image-to-video with a clear error and never spends", async () => {
+    await expect(
+      seedanceVideoNodeSchema.execute!(
+        ctx(
+          {
+            prompt: { type: "text", value: "x" },
+            start: { type: "image", value: { url: "https://x/start.png" } },
+          },
+          { model: "mini", mode: "first-frame" },
+        ) as Cfg,
+      ),
+    ).rejects.toThrow(/Mini supports reference mode only/);
+    expect(callSeedanceVideo).not.toHaveBeenCalled();
+  });
+
+  it("exposes a `model` select (standard/fast/mini) and drops the legacy fast toggle", () => {
+    const params = seedanceVideoNodeSchema.configParams ?? {};
+    expect(params.model).toMatchObject({ control: "select" });
+    expect(params.model?.options).toEqual(["standard", "fast", "mini"]);
+    expect(params.fast).toBeUndefined();
+  });
+});

@@ -31,6 +31,17 @@ export const SEEDANCE_ASPECT_RATIOS = [
 
 export const SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
 
+/**
+ * Seedance model tiers (ADR-0078) — the same `bytedance/seedance-2.0/*` family
+ * at three speed / cost points:
+ *   - "standard" — Seedance 2.0 (highest quality; up to 1080p)
+ *   - "fast"     — `/fast/` tier (lower latency + cost; caps at 720p)
+ *   - "mini"     — `/mini/` tier (cheapest + quickest; caps at 720p;
+ *                  reference-to-video only for now — image-to-video later)
+ */
+export const SEEDANCE_MODEL_TIERS = ["standard", "fast", "mini"] as const;
+export type SeedanceModelTier = (typeof SEEDANCE_MODEL_TIERS)[number];
+
 export const seedanceVideoRequestSchema = z
   .object({
     /** Scene / continuation description. Required for text-to-video. */
@@ -59,7 +70,16 @@ export const seedanceVideoRequestSchema = z
     /** Native synchronized audio (default true on Fal; same cost on/off). */
     generateAudio: z.boolean().optional(),
     seed: z.number().int().optional(),
-    /** Use the fast tier (lower latency + cost). */
+    /**
+     * Model tier (ADR-0078): "standard" | "fast" | "mini". Drives which
+     * `bytedance/seedance-2.0/*` family endpoint the wrapper dispatches to.
+     */
+    model: z.enum(SEEDANCE_MODEL_TIERS).optional(),
+    /**
+     * @deprecated Legacy fast-tier boolean, superseded by `model`. Kept so
+     * older persisted nodes / in-flight payloads still resolve to the fast
+     * tier; the node sends `model` now.
+     */
     fast: z.boolean().optional(),
   })
   .strict();
