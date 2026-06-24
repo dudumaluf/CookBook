@@ -28,6 +28,16 @@ Fal shipped **Seedance 2.0 Fast** and **Mini** alongside the standard model — 
 
 **Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. **ADR-0078** added; GLOSSARY + assistant vocabulary updated.
 
+## 2026-06-24 — Text node: `content / names` toggle moves into the `⋯` settings popover
+
+The Text node's `content / names` chip-display toggle floated `absolute` in the editor's top-right corner and covered the first line of typed text. It now lives in the standardized `⋯` settings popover (ADR-0027) like every other node's secondary knobs, so nothing obscures the prompt.
+
+**Body cleanup** ([`node-text.tsx`](src/components/nodes/node-text.tsx)). Removed the floating tablist overlay (and the now-unused `variables` / `hasVariables` locals) from `TextNodeBody`; the editor surface is unobstructed. New `TextNodeSettings` popover content renders the same two-button segmented toggle, plus a hint that the control is inert until the text has an `@variable`. New `textHasOverrides` lights the trigger's accent dot only in the non-default `names` mode. The toggle is reachable on any Text node (schema-level settings slot) rather than only when a variable exists, matching how other settings-capable nodes always expose `⋯`.
+
+**Tests.** [`node-text.test.tsx`](tests/component/nodes/node-text.test.tsx): body regression (never renders the toggle now), a new `settings` describe block (slot exists, renders the toggle, click dispatches `previewMode`, `aria-selected` tracks mode, `hasOverrides` only true for `names`, inert-hint when no variables). Chip-rendering tests (which pass `previewMode` straight to the body) unchanged.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — applies the existing ADR-0027 settings-affordance pattern.
+
 ## 2026-06-24 — One Number scrubs any multi-item preview (`index` drive, cache-safe)
 
 Aligning the multi-chunk singer method means pointing several nodes at the *same* chunk. The List node already had a `cursor` input for this, but (a) "cursor" was cryptic and (b) the slicers / Frames Extract had no such input. Now any multi-item node takes a wired `Number` on an `index` input that drives its preview — and crucially it never busts the (expensive) cache.

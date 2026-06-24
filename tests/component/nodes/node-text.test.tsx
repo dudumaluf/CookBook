@@ -112,7 +112,7 @@ describe("textNodeSchema", () => {
 /* Body — inline contenteditable editor with variable chips             */
 /* ──────────────────────────────────────────────────────────────────── */
 
-describe("textNodeSchema body — inline editor with variable chips + toggle", () => {
+describe("textNodeSchema body — inline editor with variable chips", () => {
   beforeEach(() => {
     _resetExecutionForTests();
     useWorkflowStore.getState().clear();
@@ -141,16 +141,13 @@ describe("textNodeSchema body — inline editor with variable chips + toggle", (
     return editor.querySelector(`[data-var-name="${name}"]`);
   }
 
-  it("does NOT render the toggle when the body has no `@variables`", () => {
-    renderBody({ nodeId: "t1", text: "just plain text" });
+  it("never renders the content/names toggle in the body (it moved to the `⋯` settings popover)", () => {
+    // Regression: the toggle used to float `absolute` over the editor and
+    // cover the first line of text. It now lives in the settings popover,
+    // so the body must be clean of it even when variables are present.
+    renderBody({ nodeId: "t2", text: "@variable1 Morning" });
     expect(screen.queryByRole("tab", { name: "content" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "names" })).toBeNull();
-  });
-
-  it("renders the toggle when the body has at least one `@variable`", () => {
-    renderBody({ nodeId: "t2", text: "@variable1 Morning" });
-    expect(screen.getByRole("tab", { name: "content" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "names" })).toBeInTheDocument();
   });
 
   it("renders the variable as an inline non-editable chip in the editor", () => {
@@ -304,56 +301,6 @@ describe("textNodeSchema body — inline editor with variable chips + toggle", (
     expect(chip.style.fontStyle).toBe("italic");
   });
 
-  it("clicking the toggle dispatches updateConfig with the new previewMode", () => {
-    const updateConfig = vi.fn();
-    renderBody({
-      nodeId: "t8",
-      text: "@variable1 Morning",
-      previewMode: "content",
-      updateConfig,
-    });
-
-    fireEvent.click(screen.getByRole("tab", { name: "names" }));
-    expect(updateConfig).toHaveBeenCalledWith({ previewMode: "names" });
-
-    fireEvent.click(screen.getByRole("tab", { name: "content" }));
-    expect(updateConfig).toHaveBeenCalledWith({ previewMode: "content" });
-  });
-
-  it("aria-selected on the toggle reflects the active mode for accessibility", () => {
-    const { rerender } = renderBody({
-      nodeId: "t9",
-      text: "@variable1 Morning",
-      previewMode: "content",
-    });
-    expect(screen.getByRole("tab", { name: "content" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "names" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
-
-    const Body = textNodeSchema.Body;
-    rerender(
-      <Body
-        nodeId="t9"
-        config={{ text: "@variable1 Morning", previewMode: "names" }}
-        updateConfig={vi.fn()}
-        selected={false}
-      />,
-    );
-    expect(screen.getByRole("tab", { name: "content" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
-    expect(screen.getByRole("tab", { name: "names" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-  });
-
   it("renders multiple variables as separate chips, each independently wired", () => {
     act(() => {
       useWorkflowStore.setState({
@@ -397,5 +344,100 @@ describe("textNodeSchema body — inline editor with variable chips + toggle", (
     // dashed-italic placeholder style.
     expect(audience.textContent).toBe("audience");
     expect(audience.style.fontStyle).toBe("italic");
+  });
+});
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Settings popover — the content/names toggle (moved off the body)     */
+/* ──────────────────────────────────────────────────────────────────── */
+
+describe("textNodeSchema settings — content/names toggle in the `⋯` popover", () => {
+  function renderSettings(props: {
+    text: string;
+    previewMode?: "content" | "names";
+    updateConfig?: (
+      patch: Partial<{ text: string; previewMode: "content" | "names" }>,
+    ) => void;
+  }) {
+    const Content = textNodeSchema.settings!.Content;
+    return render(
+      <Content
+        nodeId="s1"
+        config={{ text: props.text, previewMode: props.previewMode }}
+        updateConfig={props.updateConfig ?? vi.fn()}
+        selected={false}
+      />,
+    );
+  }
+
+  it("the schema exposes a settings slot wired to the standardized `⋯` trigger", () => {
+    expect(textNodeSchema.settings?.Content).toBeTypeOf("function");
+    expect(textNodeSchema.settings?.hasOverrides).toBeTypeOf("function");
+  });
+
+  it("renders the content/names toggle", () => {
+    renderSettings({ text: "@variable1 Morning", previewMode: "content" });
+    expect(screen.getByRole("tab", { name: "content" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "names" })).toBeInTheDocument();
+  });
+
+  it("clicking the toggle dispatches updateConfig with the new previewMode", () => {
+    const updateConfig = vi.fn();
+    renderSettings({
+      text: "@variable1 Morning",
+      previewMode: "content",
+      updateConfig,
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: "names" }));
+    expect(updateConfig).toHaveBeenCalledWith({ previewMode: "names" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "content" }));
+    expect(updateConfig).toHaveBeenCalledWith({ previewMode: "content" });
+  });
+
+  it("aria-selected reflects the active mode for accessibility", () => {
+    const { rerender } = renderSettings({
+      text: "@variable1 Morning",
+      previewMode: "content",
+    });
+    expect(screen.getByRole("tab", { name: "content" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "names" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+
+    const Content = textNodeSchema.settings!.Content;
+    rerender(
+      <Content
+        nodeId="s1"
+        config={{ text: "@variable1 Morning", previewMode: "names" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "content" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(screen.getByRole("tab", { name: "names" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("hasOverrides lights the accent dot only in the non-default `names` mode", () => {
+    const hasOverrides = textNodeSchema.settings!.hasOverrides!;
+    expect(hasOverrides({ text: "@v1" })).toBe(false);
+    expect(hasOverrides({ text: "@v1", previewMode: "content" })).toBe(false);
+    expect(hasOverrides({ text: "@v1", previewMode: "names" })).toBe(true);
+  });
+
+  it("explains the toggle is inert until the text has an @variable", () => {
+    renderSettings({ text: "plain text, no variables" });
+    expect(screen.getByText(/add an @name variable/i)).toBeInTheDocument();
   });
 });

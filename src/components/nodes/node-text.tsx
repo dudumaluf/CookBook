@@ -22,9 +22,10 @@ import type { NodeBodyProps, NodeIO } from "@/types/node";
  * The body is a **single contenteditable editor** (not a textarea +
  * preview split). Variables render inline as **non-editable colored
  * chips**; the plain text between chips is fully editable, so you can
- * write your prompt naturally with the variables visible in place. A
- * tiny `content / names` toggle in the corner swaps what the chips
- * display:
+ * write your prompt naturally with the variables visible in place. The
+ * `⋯` settings popover (ADR-0027) has a `content / names` toggle that
+ * swaps what the chips display (it used to float over the body and
+ * cover the first line):
  *   • `content` (default) — chips show the wired upstream's text;
  *     unwired/empty variables fall back to the variable name in a
  *     dashed-italic placeholder.
@@ -408,8 +409,6 @@ function TextNodeBody({
   const text = config.text ?? "";
   const previewMode: "content" | "names" =
     config.previewMode === "names" ? "names" : "content";
-  const variables = parseVariables(text);
-  const hasVariables = variables.length > 0;
 
   const values = useVariableValues(nodeId);
 
@@ -528,42 +527,6 @@ function TextNodeBody({
 
   return (
     <div className="relative flex w-full min-h-0 flex-1 flex-col">
-      {hasVariables && (
-        <div
-          className="absolute right-2 top-1.5 z-10 inline-flex overflow-hidden rounded-md border border-border/50 bg-background/85 text-[10px] backdrop-blur-sm"
-          role="tablist"
-          aria-label="Variable display mode"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={previewMode === "content"}
-            onClick={() => updateConfig({ previewMode: "content" })}
-            className={
-              previewMode === "content"
-                ? "bg-foreground/10 px-2 py-0.5 text-foreground"
-                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
-            }
-          >
-            content
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={previewMode === "names"}
-            onClick={() => updateConfig({ previewMode: "names" })}
-            className={
-              previewMode === "names"
-                ? "bg-foreground/10 px-2 py-0.5 text-foreground"
-                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
-            }
-          >
-            names
-          </button>
-        </div>
-      )}
-
       {isEmpty && (
         <span
           aria-hidden
@@ -603,6 +566,74 @@ function TextNodeBody({
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
+/* Settings popover — the `content / names` chip-display toggle            */
+/* ────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Lives in the standardized `⋯` popover (ADR-0027) instead of floating over
+ * the editor — the toggle used to sit `absolute` in the body's top-right and
+ * cover the first line of text. Only meaningful once the text has at least
+ * one `@variable`; with none, the popover explains why it's inert rather
+ * than offering a no-op control.
+ */
+function TextNodeSettings({
+  config,
+  updateConfig,
+}: NodeBodyProps<TextNodeConfig>) {
+  const previewMode: "content" | "names" =
+    config.previewMode === "names" ? "names" : "content";
+  const hasVariables = parseVariables(config.text ?? "").length > 0;
+
+  return (
+    <div className="flex flex-col gap-1.5 text-xs">
+      <span className="font-medium text-foreground/90">Variable display</span>
+      <div
+        role="tablist"
+        aria-label="Variable display mode"
+        className="inline-flex overflow-hidden rounded-md border border-border/60"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={previewMode === "content"}
+          onClick={() => updateConfig({ previewMode: "content" })}
+          className={
+            previewMode === "content"
+              ? "flex-1 bg-foreground/10 px-2 py-1 text-foreground"
+              : "flex-1 px-2 py-1 text-muted-foreground hover:text-foreground"
+          }
+        >
+          content
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={previewMode === "names"}
+          onClick={() => updateConfig({ previewMode: "names" })}
+          className={
+            previewMode === "names"
+              ? "flex-1 bg-foreground/10 px-2 py-1 text-foreground"
+              : "flex-1 px-2 py-1 text-muted-foreground hover:text-foreground"
+          }
+        >
+          names
+        </button>
+      </div>
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        {hasVariables
+          ? "Chips show the wired upstream value (content) or the @name token (names)."
+          : "Add an @name variable to your text to use this."}
+      </p>
+    </div>
+  );
+}
+
+/** Drives the accent dot on the BaseNode settings trigger (ADR-0027). */
+function textHasOverrides(config: TextNodeConfig): boolean {
+  return config.previewMode === "names";
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
 /* Schema                                                                 */
 /* ────────────────────────────────────────────────────────────────────── */
 
@@ -634,6 +665,10 @@ export const textNodeSchema = defineNode<TextNodeConfig>({
     };
   },
   Body: TextNodeBody,
+  // The `content / names` chip-display toggle lives in the standardized `⋯`
+  // popover (ADR-0027) so it never covers the text. `hasOverrides` lights the
+  // accent dot when the non-default `names` mode is active.
+  settings: { Content: TextNodeSettings, hasOverrides: textHasOverrides },
   size: {
     defaultWidth: 240,
     minWidth: 200,
