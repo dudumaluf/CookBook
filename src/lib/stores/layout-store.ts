@@ -14,7 +14,8 @@ import { persist, createJSONStorage } from "zustand/middleware";
  * - commandPaletteOpen: Cmd+K palette. Ephemeral.
  * - logsPanelOpen: Cmd+Shift+L dev overlay. Ephemeral.
  * - galleryOpen: bottom-drawer overlay for browsing results. Ephemeral.
- * - addNodePopoverOpen: + add node popover (top-right, slides left to clear queue). Ephemeral.
+ * - addNodePopoverOpen: + add node popover (top-right). Single nodes only. Ephemeral.
+ * - addRecipePopoverOpen: + add recipe popover (top-right, sibling of add-node). Ephemeral.
  * - approvalGateOn: persistent user preference.
  */
 
@@ -37,6 +38,7 @@ interface LayoutState {
   /** Full-width Library drawer (revamp) — gallery-style management surface. */
   libraryDrawerOpen: boolean;
   addNodePopoverOpen: boolean;
+  addRecipePopoverOpen: boolean;
   approvalGateOn: boolean;
   /** Persisted UI prefs for how the Library renders assets. */
   libraryView: LibraryView;
@@ -62,6 +64,8 @@ interface LayoutState {
   setGalleryOpen: (open: boolean) => void;
   toggleAddNodePopover: () => void;
   setAddNodePopoverOpen: (open: boolean) => void;
+  toggleAddRecipePopover: () => void;
+  setAddRecipePopoverOpen: (open: boolean) => void;
   setApprovalGate: (on: boolean) => void;
   toggleCookbook: () => void;
   setCookbookOpen: (open: boolean) => void;
@@ -82,6 +86,7 @@ export const useLayoutStore = create<LayoutState>()(
       galleryOpen: false,
       libraryDrawerOpen: false,
       addNodePopoverOpen: false,
+      addRecipePopoverOpen: false,
       approvalGateOn: true,
       libraryView: "grid",
       libraryThumb: "m",
@@ -104,9 +109,22 @@ export const useLayoutStore = create<LayoutState>()(
       setLogsPanelOpen: (open) => set({ logsPanelOpen: open }),
       toggleGallery: () => set((s) => ({ galleryOpen: !s.galleryOpen })),
       setGalleryOpen: (open) => set({ galleryOpen: open }),
+      // The two add-popovers are siblings — opening one closes the other so
+      // they never overlap (they anchor to adjacent pills).
       toggleAddNodePopover: () =>
-        set((s) => ({ addNodePopoverOpen: !s.addNodePopoverOpen })),
-      setAddNodePopoverOpen: (open) => set({ addNodePopoverOpen: open }),
+        set((s) => ({
+          addNodePopoverOpen: !s.addNodePopoverOpen,
+          addRecipePopoverOpen: false,
+        })),
+      setAddNodePopoverOpen: (open) =>
+        set(open ? { addNodePopoverOpen: true, addRecipePopoverOpen: false } : { addNodePopoverOpen: false }),
+      toggleAddRecipePopover: () =>
+        set((s) => ({
+          addRecipePopoverOpen: !s.addRecipePopoverOpen,
+          addNodePopoverOpen: false,
+        })),
+      setAddRecipePopoverOpen: (open) =>
+        set(open ? { addRecipePopoverOpen: true, addNodePopoverOpen: false } : { addRecipePopoverOpen: false }),
       setApprovalGate: (on) => set({ approvalGateOn: on }),
       toggleCookbook: () => set((s) => ({ cookbookOpen: !s.cookbookOpen })),
       setCookbookOpen: (open) => set({ cookbookOpen: open }),
@@ -121,6 +139,7 @@ export const useLayoutStore = create<LayoutState>()(
           s.galleryOpen ||
           s.libraryDrawerOpen ||
           s.addNodePopoverOpen ||
+          s.addRecipePopoverOpen ||
           s.cookbookOpen;
         if (!anyOpen) return false;
         set({
@@ -130,6 +149,7 @@ export const useLayoutStore = create<LayoutState>()(
           galleryOpen: false,
           libraryDrawerOpen: false,
           addNodePopoverOpen: false,
+          addRecipePopoverOpen: false,
           cookbookOpen: false,
         });
         return true;

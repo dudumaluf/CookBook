@@ -111,7 +111,13 @@ describe("seedance-video node execute", () => {
 
   it("reference mode exposes auto-growing per-type sockets up to the Fal caps", () => {
     const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
-    expect(ref.map((h) => h.id)).toEqual(["prompt", "image-0", "video-0", "audio-0"]);
+    expect(ref.map((h) => h.id)).toEqual([
+      "prompt",
+      "image-0",
+      "image",
+      "video-0",
+      "audio-0",
+    ]);
     const grown = seedanceVideoNodeSchema.getInputs!({
       mode: "reference",
       imagePorts: 3,
@@ -123,16 +129,50 @@ describe("seedance-video node execute", () => {
       "image-0",
       "image-1",
       "image-2",
+      "image",
       "video-0",
       "video-1",
       "audio-0",
     ]);
-    // Caps clamp: asking for more than 9 images yields exactly 9.
+    // Caps clamp: asking for more than 9 images yields exactly 9 numbered
+    // sockets (the `image` array socket has no dash, so it's excluded here).
     const capped = seedanceVideoNodeSchema.getInputs!({
       mode: "reference",
       imagePorts: 99,
     });
     expect(capped.filter((h) => h.id.startsWith("image-")).length).toBe(9);
+  });
+
+  it("exposes a single multiple image-array socket (@Image[]) in reference mode", () => {
+    const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
+    const arraySockets = ref.filter((h) => h.id === "image");
+    expect(arraySockets.length).toBe(1);
+    expect(arraySockets[0]?.multiple).toBe(true);
+    expect(arraySockets[0]?.label).toBe("@Image[]");
+    expect(arraySockets[0]?.dataType).toBe("image");
+    // The array socket is image-only — no bare `video`/`audio` array sockets.
+    expect(ref.some((h) => h.id === "video")).toBe(false);
+    expect(ref.some((h) => h.id === "audio")).toBe(false);
+  });
+
+  it("fans an image array wired into @Image[] into @Image1..N, after numbered sockets", async () => {
+    await seedanceVideoNodeSchema.execute!(
+      ctx({
+        prompt: { type: "text", value: "transition through @Image1..@Image3" },
+        "image-0": { type: "image", value: { url: "https://x/face.png" } },
+        image: [
+          { type: "image", value: { url: "https://x/k1.png" } },
+          { type: "image", value: { url: "https://x/k2.png" } },
+        ],
+      }) as Cfg,
+    );
+    const arg = callSeedanceVideo.mock.calls[0]![0];
+    // Individually-wired socket first, then the array elements in order.
+    expect(arg.imageUrls).toEqual([
+      "https://x/face.png",
+      "https://x/k1.png",
+      "https://x/k2.png",
+    ]);
   });
 
   it("labels each reference socket with its Fal prompt token (@Image1, …)", () => {
@@ -186,7 +226,13 @@ describe("seedance-video node execute", () => {
 
   it("image-to-video mode exposes start/(end) frame sockets via getInputs", () => {
     const ref = seedanceVideoNodeSchema.getInputs!({ mode: "reference" });
-    expect(ref.map((h) => h.id)).toEqual(["prompt", "image-0", "video-0", "audio-0"]);
+    expect(ref.map((h) => h.id)).toEqual([
+      "prompt",
+      "image-0",
+      "image",
+      "video-0",
+      "audio-0",
+    ]);
     const ff = seedanceVideoNodeSchema.getInputs!({ mode: "first-frame" });
     expect(ff.map((h) => h.id)).toEqual(["prompt", "start"]);
     const fl = seedanceVideoNodeSchema.getInputs!({ mode: "first-last" });

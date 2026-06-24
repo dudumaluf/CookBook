@@ -39,6 +39,10 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  * Inputs:
  *   - prompt (text)        — scene / continuation description
  *   - image  (image, ×N)   — reference images (@Image1..) — identity, frames
+ *   - @Image[] (image[])   — ONE socket that fans a whole image array into the
+ *     @ImageN series in order (wire a Frames Extract straight in — its 9
+ *     keyframes become @Image1..@Image9 without nine separate wires). Appended
+ *     AFTER any individually-wired image sockets.
  *   - video  (video, ×N)   — reference videos (@Video1..) — motion/continuity
  *   - audio  (audio, ×N)   — reference audio (@Audio1..) — lip-sync to a song
  *
@@ -140,6 +144,20 @@ function referenceInputs(config: SeedanceVideoNodeConfig): NodeIO[] {
         id,
         label: name ? `@${name}` : refToken(base, i),
         dataType: REF_DATATYPE[base],
+      });
+    }
+    // One array socket for images: wire a whole image[] (e.g. a Frames Extract's
+    // keyframes) and `execute`'s gather() fans it into the @ImageN series in
+    // order, AFTER any individually-wired sockets. The id is the bare base
+    // (`image`) — exactly the legacy multi-handle the gather already reads, so
+    // no execute change is needed. Auto-grow keys off `image-N`, so this socket
+    // never inflates the port count.
+    if (base === "image") {
+      out.push({
+        id: "image",
+        label: "@Image[]",
+        dataType: "image",
+        multiple: true,
       });
     }
   }
@@ -537,7 +555,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal

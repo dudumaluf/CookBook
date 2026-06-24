@@ -30,6 +30,18 @@ export const CHARACTER_SWAP_PROMPT = `Strictly edit @Video1 and modify ONLY the 
 Preserve the original video's motion, timing, and camera movement as much as possible — change only the character's features to @Image1.
 Highest priority: match @Image2 as the first frame and @Image3 as the last frame. Do not introduce new subjects, objects, backgrounds, camera cuts, or unrelated style changes.`;
 
+/**
+ * Stage 1 (multi-chunk) — identity-only swap, NO first/last-frame anchoring.
+ *
+ * ByteDance's Problem-1 "Step1: generate a video that only replaces the
+ * character" in its purest form. The per-chunk multi-chunk recipe runs the
+ * swap on one sliced window at a time, so there are no @Image2 / @Image3
+ * first/last anchors to wire — anchoring is Problem 2's separate layer.
+ */
+export const CHARACTER_SWAP_IDENTITY_ONLY_PROMPT = `Strictly edit @Video1 and modify ONLY the character's identity to match @Image1 (face, hairstyle, body shape, clothing, overall appearance).
+Preserve the original video's motion, timing, framing, and camera movement exactly — change only the character's features to @Image1.
+Do not introduce new subjects, objects, backgrounds, camera cuts, or unrelated style changes.`;
+
 /** Stage 3 — sing through ordered keyframes, audio driven by the black-screen @Video1. */
 export const KEYFRAME_ANCHORED_SINGING_PROMPT = `Use the provided keyframes @Image1 … @ImageN as ordered visual anchors; @Image1 is the first frame and @ImageN is the last. They define the visual progression from start to end.
 Generate a singing-performance video that transitions naturally through the keyframes in order, matching each keyframe as closely as possible at its moment — character identity, face, body shape, clothing, scene, background, lighting, camera angle, framing, composition, and visual style.

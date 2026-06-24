@@ -10,6 +10,7 @@ import { LibraryPanel } from "./library-panel";
 import { QueuePanel } from "./queue-panel";
 import { PromptBar } from "./prompt-bar";
 import { AddNodeButton } from "./add-node-button";
+import { AddRecipeButton } from "./add-recipe-button";
 import { CookbookButton } from "./cookbook-button";
 import { GalleryButton } from "./gallery-button";
 import { RunButton } from "./run-button";
@@ -145,6 +146,7 @@ export function AppShell({ projectId }: { projectId: string }) {
         <CookbookButton />
         <GalleryButton />
         <RunButton />
+        <AddRecipeButton />
         <AddNodeButton />
       </div>
 

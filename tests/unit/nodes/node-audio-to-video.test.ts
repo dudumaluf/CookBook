@@ -38,13 +38,13 @@ beforeEach(() => {
 });
 
 describe("audio-to-video node execute", () => {
-  it("throws when no audio is wired", async () => {
+  it("throws when no source is wired", async () => {
     await expect(
       audioToVideoNodeSchema.execute!(ctx({}) as Cfg),
     ).rejects.toThrow(/Wire an audio/);
   });
 
-  it("renders the audio as a black-screen MP4 then uploads it as a video", async () => {
+  it("renders a single audio as a black-screen MP4 then uploads it as a video[1]", async () => {
     const result = await audioToVideoNodeSchema.execute!(
       ctx({
         audio: { type: "audio", value: { url: "https://x/song.mp3" } },
@@ -56,12 +56,69 @@ describe("audio-to-video node execute", () => {
     // Uploads land in the videos folder (the output is a video).
     expect(uploadMediaAsset).toHaveBeenCalledTimes(1);
     expect(uploadMediaAsset.mock.calls[0]![1]).toBe("videos");
-    const out = (result as { output: StandardizedOutput }).output;
-    expect(out.type).toBe("video");
-    if (out.type === "video") {
-      expect(out.value.url).toBe("https://cdn/silent-audio.mp4");
-      expect(out.value.mime).toBe("video/mp4");
+    // A single wired track still yields a one-element video array (the
+    // `out` socket is `multiple`), so downstream sees a uniform shape.
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toHaveLength(1);
+    const first = out[0]!;
+    expect(first.type).toBe("video");
+    if (first.type === "video") {
+      expect(first.value.url).toBe("https://cdn/silent-audio.mp4");
+      expect(first.value.mime).toBe("video/mp4");
     }
+  });
+
+  it("maps an array of audio chunks → one silent video per chunk", async () => {
+    const result = await audioToVideoNodeSchema.execute!(
+      ctx({
+        audio: [
+          { type: "audio", value: { url: "https://x/a1.wav" } },
+          { type: "audio", value: { url: "https://x/a2.wav" } },
+          { type: "audio", value: { url: "https://x/a3.wav" } },
+        ],
+      }) as Cfg,
+    );
+    expect(audioToSilentVideo).toHaveBeenCalledTimes(3);
+    expect(audioToSilentVideo).toHaveBeenNthCalledWith(1, "https://x/a1.wav", {
+      aspectRatio: "16:9",
+    });
+    expect(audioToSilentVideo).toHaveBeenNthCalledWith(3, "https://x/a3.wav", {
+      aspectRatio: "16:9",
+    });
+    expect(uploadMediaAsset).toHaveBeenCalledTimes(3);
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(out).toHaveLength(3);
+    expect(out.every((o) => o.type === "video")).toBe(true);
+  });
+
+  it("accepts a video source — keeps its soundtrack, blanks the picture", async () => {
+    const result = await audioToVideoNodeSchema.execute!(
+      ctx({
+        video: { type: "video", value: { url: "https://x/perf.mp4" } },
+      }) as Cfg,
+    );
+    // The same op handles a video URL (it reads the soundtrack via
+    // replaceVideoAudio's getPrimaryAudioTrack).
+    expect(audioToSilentVideo).toHaveBeenCalledWith("https://x/perf.mp4", {
+      aspectRatio: "16:9",
+    });
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(out).toHaveLength(1);
+    expect(out[0]!.type).toBe("video");
+  });
+
+  it("audio wins when both an audio and a video are wired", async () => {
+    await audioToVideoNodeSchema.execute!(
+      ctx({
+        audio: { type: "audio", value: { url: "https://x/song.mp3" } },
+        video: { type: "video", value: { url: "https://x/perf.mp4" } },
+      }) as Cfg,
+    );
+    expect(audioToSilentVideo).toHaveBeenCalledTimes(1);
+    expect(audioToSilentVideo).toHaveBeenCalledWith("https://x/song.mp3", {
+      aspectRatio: "16:9",
+    });
   });
 
   it("passes the configured aspect ratio through to the media op", async () => {
@@ -76,13 +133,24 @@ describe("audio-to-video node execute", () => {
     });
   });
 
-  it("is a non-reactive transform node with a single video output", () => {
+  it("is a non-reactive transform node that batches audio|video → video[]", () => {
     expect(audioToVideoNodeSchema.kind).toBe("audio-to-video");
+    expect(audioToVideoNodeSchema.title).toBe("Silent Video");
     expect(audioToVideoNodeSchema.category).toBe("transform");
     expect(audioToVideoNodeSchema.reactive).toBe(false);
-    expect(audioToVideoNodeSchema.inputs).toHaveLength(1);
-    expect(audioToVideoNodeSchema.inputs[0]?.dataType).toBe("audio");
+    // Two sources: an audio track OR a video (whose soundtrack we keep).
+    expect(audioToVideoNodeSchema.inputs).toHaveLength(2);
+    const byId = Object.fromEntries(
+      audioToVideoNodeSchema.inputs.map((i) => [i.id, i]),
+    );
+    expect(byId.audio?.dataType).toBe("audio");
+    expect(byId.video?.dataType).toBe("video");
+    // `multiple` is what lets a sliced array land whole (one clip per chunk)
+    // instead of just the previewed item.
+    expect(byId.audio?.multiple).toBe(true);
+    expect(byId.video?.multiple).toBe(true);
     expect(audioToVideoNodeSchema.outputs[0]?.dataType).toBe("video");
+    expect(audioToVideoNodeSchema.outputs[0]?.multiple).toBe(true);
   });
 });
 

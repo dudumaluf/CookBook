@@ -9,6 +9,7 @@ import { CanvasArea } from "./canvas-area";
 import { LibraryPanel } from "./library-panel";
 import { QueuePanel } from "./queue-panel";
 import { AddNodeButton } from "./add-node-button";
+import { AddRecipeButton } from "./add-recipe-button";
 import { RunButton } from "./run-button";
 import { CommandPalette } from "./command-palette";
 import { LogsPanel } from "./logs-panel";
@@ -124,6 +125,7 @@ export function RecipeEditShell({ recipeId }: { recipeId: string }) {
        *  recursion / cross-context confusion isn't worth the convenience. */}
       <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1.5">
         <RunButton />
+        <AddRecipeButton />
         <AddNodeButton />
       </div>
 
