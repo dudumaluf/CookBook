@@ -153,6 +153,15 @@ describe("frames-extract node", () => {
     expect(out.dataType).toBe("image");
     expect(out.multiple).toBe(true);
   });
+
+  it("exposes a view-only `index` input so a Number can drive the focused frame", () => {
+    const index = framesExtractNodeSchema.inputs.find((i) => i.id === "index");
+    expect(index).toMatchObject({
+      id: "index",
+      dataType: "number",
+      viewOnly: true,
+    });
+  });
 });
 
 describe("frames-extract node — curation / caching", () => {

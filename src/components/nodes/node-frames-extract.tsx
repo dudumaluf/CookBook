@@ -13,6 +13,7 @@ import { useId, useState } from "react";
 
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { MediaPreviewImage } from "@/components/nodes/media-preview";
+import { useExternalIndex } from "@/components/nodes/use-external-index";
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
@@ -165,7 +166,15 @@ function FramesExtractBody({
   // why it deliberately doesn't live in config.
   const [viewMode, setViewMode] = useState<"grid" | "single">("grid");
   const [previewIndex, setPreviewIndex] = useState(0);
-  const safeIndex = Math.min(Math.max(0, previewIndex), Math.max(0, frames.length - 1));
+  // A Number wired into `index` drives which frame is focused — so one
+  // Number can scrub frames in sync with the slicers + List. View-only (the
+  // output is the kept-frame array regardless), so it never re-extracts.
+  const externalIndex = useExternalIndex(nodeId, "index");
+  const isDriven = externalIndex !== null;
+  const safeIndex =
+    isDriven && frames.length > 0
+      ? Math.min(Math.max(0, Math.trunc(externalIndex)), frames.length - 1)
+      : Math.min(Math.max(0, previewIndex), Math.max(0, frames.length - 1));
 
   function toggleExcluded(index: number) {
     const next = new Set(config.excludedIndices ?? []);
@@ -245,6 +254,7 @@ function FramesExtractBody({
           excluded={excluded.has(safeIndex)}
           aspect={aspectFromMediaDimensions(frames[safeIndex], tileAspect)}
           onCursor={setPreviewIndex}
+          readOnly={isDriven}
           onToggleExcluded={() => toggleExcluded(safeIndex)}
         />
       ) : (
@@ -261,7 +271,12 @@ function FramesExtractBody({
                   }}
                   onPointerDown={(e) => e.stopPropagation()}
                   aria-label={`Preview frame ${i + 1} of ${frames.length}`}
-                  className="block w-full overflow-hidden rounded-md ring-0 transition-all hover:ring-2 hover:ring-foreground/20"
+                  className={cn(
+                    "block w-full overflow-hidden rounded-md transition-all hover:ring-2 hover:ring-foreground/20",
+                    isDriven && i === safeIndex
+                      ? "ring-2 ring-accent"
+                      : "ring-0",
+                  )}
                 >
                   <MediaPreviewImage
                     url={frame.url}
@@ -323,6 +338,7 @@ function SingleFrameView({
   aspect,
   onCursor,
   onToggleExcluded,
+  readOnly,
 }: {
   frame: ImageRef;
   index: number;
@@ -331,6 +347,7 @@ function SingleFrameView({
   aspect: string;
   onCursor: (next: number) => void;
   onToggleExcluded: () => void;
+  readOnly?: boolean;
 }) {
   return (
     <div className="relative">
@@ -347,6 +364,7 @@ function SingleFrameView({
             count={total}
             cursor={index}
             onCursorChange={onCursor}
+            readOnly={readOnly}
             ariaLabelPrefix="Frame"
             className="bg-background/75 shadow-sm backdrop-blur-sm"
           />
@@ -562,9 +580,12 @@ export const framesExtractNodeSchema = defineNode<FramesExtractNodeConfig>({
   category: "transform",
   title: "Frames Extract",
   description:
-    "Pull multiple frames from a video as an array of images. Three modes: count (N evenly-spaced thumbnails), span (N frames across the WHOLE clip — frame 1 = start, frame N = end, with a seeded jitter to vary the spacing), or interval (one frame every X seconds). Preview each frame and exclude the ones you don't want, then wire the array into the Image Grid node for a contact sheet. Client-side (mediabunny).",
+    "Pull multiple frames from a video as an array of images. Three modes: count (N evenly-spaced thumbnails), span (N frames across the WHOLE clip — frame 1 = start, frame N = end, with a seeded jitter to vary the spacing), or interval (one frame every X seconds). Preview each frame and exclude the ones you don't want, then wire the array into the Image Grid node for a contact sheet. Wire a Number into `index` to scrub the focused frame (in sync with the slicers + List). Client-side (mediabunny).",
   icon: Film,
-  inputs: [{ id: "video", label: "video", dataType: "video" }],
+  inputs: [
+    { id: "video", label: "video", dataType: "video" },
+    { id: "index", label: "index", dataType: "number", viewOnly: true },
+  ],
   outputs: [{ id: "out", label: "out", dataType: "image", multiple: true }],
   configParams: {
     mode: {

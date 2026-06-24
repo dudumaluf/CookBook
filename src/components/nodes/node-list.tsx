@@ -14,6 +14,7 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useExternalIndex } from "./use-external-index";
 
 /**
  * List node (Slice 5.7 / Slice 6.5).
@@ -44,14 +45,20 @@ import { IteratorCursor } from "./iterator-cursor";
  * mixed sources without authoring an Array node first.
  *
  * Two cursor sources, in priority order:
- * 1. **External `cursor` input** (number datatype). When wired, the
+ * 1. **External index input** (number datatype). When wired, the
  *    upstream number wins — useful for chaining a Number node with
- *    `mode: increment` to drive the List per run, ComfyUI-style.
- *    The list's own mode is ignored when an external cursor is
- *    present (the upstream number already has its own mutation
- *    discipline).
+ *    `mode: increment` to drive the List per run, ComfyUI-style, or
+ *    one Number driving several Lists in lockstep (aligned chunk
+ *    selection across audio / video / image arrays). The list's own
+ *    mode is ignored when an external index is present (the upstream
+ *    number already has its own mutation discipline).
  * 2. **Internal `cursor` config**, optionally mutated each run per
  *    `mode` (mirroring the iterator family).
+ *
+ * Naming note: the input handle id + config key are both `cursor`
+ * (stable since Slice 5.7 — existing edges, recipes, and saved projects
+ * connect to it). The user-facing LABEL reads "index" everywhere — the
+ * clearer word — without a breaking rename. See ADR-0077.
  *
  * Output `dataType: "text"` because in M0a the dominant flow is
  * `text-array → list → llm-text.user`, so the handle reads as text-blue
@@ -115,11 +122,13 @@ function listInputs(slotCount: number | undefined): NodeIO[] {
   //   items   ← array fan-in (legacy / power use)
   //   item 1  ← smart inputs grow from here
   //   item N
-  //   cursor  ← modifier last, visually separated
+  //   index   ← modifier last, visually separated
+  // The handle id stays `cursor` (so existing edges / recipes / saved
+  // projects keep connecting); only the user-facing LABEL reads "index".
   return [
     { id: "items", label: "items", dataType: "any", multiple: true },
     ...slots,
-    { id: "cursor", label: "cursor", dataType: "number" },
+    { id: "cursor", label: "index", dataType: "number" },
   ];
 }
 
@@ -188,7 +197,7 @@ function ListNodeBody({
   // body so changing the Number updates which item shows as selected —
   // index 0 = first item. The picker becomes read-only (externally
   // driven) so the user edits the Number, not the dropdown.
-  const externalCursor = useExternalCursorForList(nodeId);
+  const externalCursor = useExternalIndex(nodeId, "cursor");
   const isExternallyDriven = externalCursor !== null;
   const effectiveCursor =
     isExternallyDriven && items.length > 0
@@ -291,7 +300,7 @@ function ListNodeBody({
           plug individual items into the <code className="font-mono">item N</code>{" "}
           slots — the list emits one per run. Wire a{" "}
           <code className="font-mono">Number</code> into{" "}
-          <code className="font-mono">cursor</code> to drive selection externally.
+          <code className="font-mono">index</code> to drive selection externally.
         </p>
       ) : (
         // Tiny fingerprint so the user can see at a glance where each
@@ -425,42 +434,19 @@ function useUpstreamSlotItems(
   return items;
 }
 
-/**
- * Resolve the external `cursor` value (from a wired Number node) for live
- * body preview. Returns the number the upstream node emits, or null when
- * nothing is wired into `cursor`. Reactive — re-renders when the Number's
- * output record changes, so editing the Number updates the List selection.
- */
-function useExternalCursorForList(nodeId: string): number | null {
-  const sourceNodeId = useWorkflowStore((s) => {
-    const edge = s.edges.find(
-      (e) => e.target === nodeId && e.targetHandle === "cursor",
-    );
-    return edge?.source ?? null;
-  });
-  const record = useExecutionStore((s) =>
-    sourceNodeId ? s.records.get(sourceNodeId) : undefined,
-  );
-  if (!sourceNodeId) return null;
-  const out = record?.output;
-  const single = Array.isArray(out) ? out[0] : out;
-  if (single && single.type === "number") return single.value;
-  return null;
-}
-
 export const listNodeSchema = defineNode<ListNodeConfig>({
   kind: "list",
   category: "transform",
   title: "List",
   description:
-    "Pick one item from upstream sources. Wire an array into `items`, OR plug individual items (image / text / video / audio…) into the auto-growing `item N` slots — the dropdown shows them all together. Optional Number into `cursor` for external selection.",
+    "Pick one item from upstream sources. Wire an array into `items`, OR plug individual items (image / text / video / audio…) into the auto-growing `item N` slots — the dropdown shows them all together. Optional Number into `index` for external selection (one Number can drive several Lists in lockstep).",
   icon: ListOrdered,
   inputs: listInputs(MIN_SLOTS),
   getInputs: (config) => listInputs(config.slotCount),
   outputs: [{ id: "out", label: "out", dataType: "text" }],
   configParams: {
     mode: { control: "select", options: LIST_MODES, label: "mode" },
-    cursor: { control: "number", label: "cursor" },
+    cursor: { control: "number", label: "index" },
   },
   defaultConfig: {
     cursor: 0,

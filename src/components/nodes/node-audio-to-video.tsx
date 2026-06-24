@@ -12,6 +12,7 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useExternalIndex } from "./use-external-index";
 
 /**
  * Silent Video — render audio (or a video's soundtrack) as solid-black MP4(s)
@@ -74,7 +75,16 @@ function AudioToVideoBody({ nodeId, config }: NodeBodyProps<AudioToVideoNodeConf
 
   // View one clip at a time. Clamp the cursor as the clip count changes.
   const [cursor, setCursor] = useState(0);
-  const safeCursor = clips.length === 0 ? 0 : Math.min(cursor, clips.length - 1);
+  const localCursor = clips.length === 0 ? 0 : Math.min(cursor, clips.length - 1);
+  // A Number wired into `index` drives which clip is previewed — so one
+  // Number can scrub every slicer + List in lockstep. View-only (the output
+  // is always the full array), so scrubbing never re-renders the clips.
+  const externalIndex = useExternalIndex(nodeId, "index");
+  const isDriven = externalIndex !== null;
+  const safeCursor =
+    isDriven && clips.length > 0
+      ? Math.min(Math.max(0, Math.trunc(externalIndex)), clips.length - 1)
+      : localCursor;
   const [downloadingAll, setDownloadingAll] = useState(false);
   const prevLen = useRef(clips.length);
   useEffect(() => {
@@ -109,7 +119,8 @@ function AudioToVideoBody({ nodeId, config }: NodeBodyProps<AudioToVideoNodeConf
             <IteratorCursor
               count={clips.length}
               cursor={safeCursor}
-              onCursorChange={setCursor}
+              onCursorChange={isDriven ? () => {} : setCursor}
+              readOnly={isDriven}
               ariaLabelPrefix="Clip"
             />
           </span>
@@ -224,11 +235,12 @@ export const audioToVideoNodeSchema = defineNode<AudioToVideoNodeConfig>({
   category: "transform",
   title: "Silent Video",
   description:
-    "Render audio (or a video's soundtrack) as a black-screen MP4 so you can feed a song into Seedance's video slot (@Video1) as an AUDIO-ONLY reference — the picture comes from keyframes, the audio drives lip-sync/rhythm. Wire `audio` OR `video` (a video keeps its sound and blanks the picture; audio wins if both). Both inputs are multiple: wire a slicer's chunk array and it emits one black clip per chunk (a video[] you scrub with the cursor); a single source yields one clip. Wire, Run.",
+    "Render audio (or a video's soundtrack) as a black-screen MP4 so you can feed a song into Seedance's video slot (@Video1) as an AUDIO-ONLY reference — the picture comes from keyframes, the audio drives lip-sync/rhythm. Wire `audio` OR `video` (a video keeps its sound and blanks the picture; audio wins if both). Both inputs are multiple: wire a slicer's chunk array and it emits one black clip per chunk (a video[] you scrub with the cursor, or drive via a Number into `index` to stay in sync with the other slicers); a single source yields one clip. Wire, Run.",
   icon: Volume2,
   inputs: [
     { id: "audio", label: "audio", dataType: "audio", multiple: true },
     { id: "video", label: "video", dataType: "video", multiple: true },
+    { id: "index", label: "index", dataType: "number", viewOnly: true },
   ],
   outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
   configParams: {

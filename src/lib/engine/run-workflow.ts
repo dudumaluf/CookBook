@@ -507,9 +507,15 @@ export async function runWorkflow(
         continue;
       }
       const handleInputs = inputs[edge.targetHandle];
-      const isMulti =
-        effectiveInputs.find((i) => i.id === edge.targetHandle)?.multiple ??
-        false;
+      const io = effectiveInputs.find((i) => i.id === edge.targetHandle);
+      const isMulti = io?.multiple ?? false;
+      // View-only inputs (e.g. a Number wired into a slicer's `index` to
+      // scrub the preview) drive the node's BODY only — never its output —
+      // so they must NOT enter the cache hash. Otherwise bumping the Number
+      // would bust the consumer's hash and force an expensive re-run (a
+      // re-slice / re-decode) for a purely visual change. Mirrors
+      // VIEW_ONLY_CONFIG_KEYS, but for inputs (ADR-0077).
+      const isViewOnly = io?.viewOnly === true;
       // Salt for THIS edge's dep hash. Bumped below when a single input
       // pulls a non-first item out of an array source, so a downstream
       // re-run after the user changes the selection can't replay the old
@@ -534,7 +540,7 @@ export async function runWorkflow(
         const upstreamSchema = registry.get(sourceNode?.kind ?? "");
         const isIteratorSource =
           upstreamSchema?.iterator === true && Array.isArray(upstreamOutput);
-        if (isIteratorSource && fanOut === undefined) {
+        if (isIteratorSource && !isViewOnly && fanOut === undefined) {
           fanOut = {
             handle: edge.targetHandle,
             items: upstreamOutput as StandardizedOutput[],
@@ -553,10 +559,13 @@ export async function runWorkflow(
           inputs[edge.targetHandle] = upstreamOutput;
         }
       }
-      const hashBucket =
-        upstreamHashesByTargetHandle.get(edge.targetHandle) ?? [];
-      hashBucket.push(depHash);
-      upstreamHashesByTargetHandle.set(edge.targetHandle, hashBucket);
+      // View-only handles never salt the cache key (see `isViewOnly`).
+      if (!isViewOnly) {
+        const hashBucket =
+          upstreamHashesByTargetHandle.get(edge.targetHandle) ?? [];
+        hashBucket.push(depHash);
+        upstreamHashesByTargetHandle.set(edge.targetHandle, hashBucket);
+      }
     }
 
     const computedHash = computeNodeHash(

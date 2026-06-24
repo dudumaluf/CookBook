@@ -12,6 +12,7 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useExternalIndex } from "./use-external-index";
 
 /**
  * Video Slicer — split a video into sequential windows (motion references).
@@ -57,7 +58,16 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
 
   // View one slice at a time. Clamp the cursor as the chunk count changes.
   const [cursor, setCursor] = useState(0);
-  const safeCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  const localCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  // A Number wired into `index` drives which slice is previewed — so one
+  // Number can scrub every slicer + List in lockstep. View-only (the output
+  // is always the full array), so scrubbing never re-slices.
+  const externalIndex = useExternalIndex(nodeId, "index");
+  const isDriven = externalIndex !== null;
+  const safeCursor =
+    isDriven && chunks.length > 0
+      ? Math.min(Math.max(0, Math.trunc(externalIndex)), chunks.length - 1)
+      : localCursor;
   const [downloadingAll, setDownloadingAll] = useState(false);
   const prevLen = useRef(chunks.length);
   useEffect(() => {
@@ -94,7 +104,8 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
               <IteratorCursor
                 count={chunks.length}
                 cursor={safeCursor}
-                onCursorChange={setCursor}
+                onCursorChange={isDriven ? () => {} : setCursor}
+                readOnly={isDriven}
                 ariaLabelPrefix="Slice"
               />
             </span>
@@ -245,9 +256,12 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
   category: "transform",
   title: "Video Slicer",
   description:
-    "Split a video into sequential windows. Emits an array of video chunks; keeps the source audio by default (toggle off for a silent motion-only reference). Downscales to fit Seedance's ~720p reference cap.",
+    "Split a video into sequential windows. Emits an array of video chunks; keeps the source audio by default (toggle off for a silent motion-only reference). Downscales to fit Seedance's ~720p reference cap. Wire a Number into `index` to scrub the preview (one Number keeps every slicer + List on the same chunk).",
   icon: Scissors,
-  inputs: [{ id: "video", label: "video", dataType: "video" }],
+  inputs: [
+    { id: "video", label: "video", dataType: "video" },
+    { id: "index", label: "index", dataType: "number", viewOnly: true },
+  ],
   outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
   configParams: {
     maxHeight: { control: "select", options: ["720p", "480p", "source"], label: "downscale" },

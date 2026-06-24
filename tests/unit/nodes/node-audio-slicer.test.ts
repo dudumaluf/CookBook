@@ -122,3 +122,14 @@ describe("audio-slicer node execute", () => {
     });
   });
 });
+
+describe("audio-slicer schema", () => {
+  it("exposes a view-only `index` input so a Number can drive the preview", () => {
+    const index = audioSlicerNodeSchema.inputs.find((i) => i.id === "index");
+    expect(index).toMatchObject({
+      id: "index",
+      dataType: "number",
+      viewOnly: true,
+    });
+  });
+});

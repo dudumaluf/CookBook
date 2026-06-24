@@ -108,4 +108,29 @@ describe("<IteratorCursor />", () => {
       screen.getByRole("button", { name: /next item/i }),
     ).toBeDisabled();
   });
+
+  it("readOnly locks both arrows mid-range but keeps the counter (Number-driven)", () => {
+    // When a Number node drives the cursor, the user edits the Number, not
+    // the arrows — so both are greyed even though navigation would otherwise
+    // be possible. The counter still reflects the driven position.
+    const onCursorChange = vi.fn();
+    render(
+      <IteratorCursor
+        count={4}
+        cursor={1}
+        onCursorChange={onCursorChange}
+        readOnly
+      />,
+    );
+    const back = screen.getByRole("button", { name: /previous item/i });
+    const next = screen.getByRole("button", { name: /next item/i });
+    expect(back).toBeDisabled();
+    expect(next).toBeDisabled();
+    fireEvent.click(next);
+    fireEvent.click(back);
+    expect(onCursorChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("iterator-cursor-counter").textContent).toBe(
+      "2 / 4",
+    );
+  });
 });

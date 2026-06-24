@@ -40,6 +40,12 @@ export interface IteratorCursorProps {
   className?: string;
   /** Optional aria-label prefix to disambiguate when multiple cursors are on screen. */
   ariaLabelPrefix?: string;
+  /**
+   * Lock both arrows (the counter still shows the position). Used when an
+   * external Number node drives the cursor — the user edits the Number, not
+   * the arrows, so we grey them out to signal "driven from elsewhere".
+   */
+  readOnly?: boolean;
 }
 
 export function IteratorCursor({
@@ -48,6 +54,7 @@ export function IteratorCursor({
   onCursorChange,
   className,
   ariaLabelPrefix,
+  readOnly = false,
 }: IteratorCursorProps) {
   const safeCount = Math.max(0, Math.trunc(count));
   const safeCursor =
@@ -55,8 +62,8 @@ export function IteratorCursor({
       ? 0
       : Math.min(Math.max(0, Math.trunc(cursor)), safeCount - 1);
 
-  const canGoBack = safeCount > 1 && safeCursor > 0;
-  const canGoForward = safeCount > 1 && safeCursor < safeCount - 1;
+  const canGoBack = !readOnly && safeCount > 1 && safeCursor > 0;
+  const canGoForward = !readOnly && safeCount > 1 && safeCursor < safeCount - 1;
   const labelPrefix = ariaLabelPrefix ? `${ariaLabelPrefix} ` : "";
 
   function step(delta: -1 | 1) {

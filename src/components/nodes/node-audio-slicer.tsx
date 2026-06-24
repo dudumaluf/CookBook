@@ -12,6 +12,7 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { useExternalIndex } from "./use-external-index";
 
 /**
  * Audio Slicer — split a track into sequential windows (one paid generation
@@ -55,7 +56,16 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
 
   // View one slice at a time. Clamp the cursor as the chunk count changes.
   const [cursor, setCursor] = useState(0);
-  const safeCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  const localCursor = chunks.length === 0 ? 0 : Math.min(cursor, chunks.length - 1);
+  // A Number wired into `index` drives which chunk is previewed — so one
+  // Number can scrub every slicer + List in lockstep. View-only (the output
+  // is always the full array), so scrubbing never re-slices.
+  const externalIndex = useExternalIndex(nodeId, "index");
+  const isDriven = externalIndex !== null;
+  const safeCursor =
+    isDriven && chunks.length > 0
+      ? Math.min(Math.max(0, Math.trunc(externalIndex)), chunks.length - 1)
+      : localCursor;
   const [downloadingAll, setDownloadingAll] = useState(false);
   const prevLen = useRef(chunks.length);
   useEffect(() => {
@@ -91,7 +101,8 @@ function AudioSlicerBody({ nodeId, config }: NodeBodyProps<AudioSlicerNodeConfig
               <IteratorCursor
                 count={chunks.length}
                 cursor={safeCursor}
-                onCursorChange={setCursor}
+                onCursorChange={isDriven ? () => {} : setCursor}
+                readOnly={isDriven}
                 ariaLabelPrefix="Chunk"
               />
             </span>
@@ -221,11 +232,12 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
   category: "transform",
   title: "Audio Slicer",
   description:
-    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Accepts audio OR a video (its audio track is extracted). Output as WAV (lossless) or MP3 (smaller). Emits an array of audio chunks — feed a List to pick one per run, or fan out.",
+    "Split a song into sequential windows (default 15s, Seedance's per-chunk cap). Accepts audio OR a video (its audio track is extracted). Output as WAV (lossless) or MP3 (smaller). Emits an array of audio chunks — feed a List to pick one per run, or fan out. Wire a Number into `index` to scrub the preview (one Number keeps every slicer + List on the same chunk).",
   icon: Scissors,
   inputs: [
     { id: "audio", label: "audio", dataType: "audio" },
     { id: "video", label: "video", dataType: "video" },
+    { id: "index", label: "index", dataType: "number", viewOnly: true },
   ],
   outputs: [{ id: "out", label: "out", dataType: "audio", multiple: true }],
   configParams: {

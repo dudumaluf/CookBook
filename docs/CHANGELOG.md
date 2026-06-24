@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — One Number scrubs any multi-item preview (`index` drive, cache-safe)
+
+Aligning the multi-chunk singer method means pointing several nodes at the *same* chunk. The List node already had a `cursor` input for this, but (a) "cursor" was cryptic and (b) the slicers / Frames Extract had no such input. Now any multi-item node takes a wired `Number` on an `index` input that drives its preview — and crucially it never busts the (expensive) cache.
+
+**`NodeIO.viewOnly` + engine support** ([`node.ts`](src/types/node.ts) + [`run-workflow.ts`](src/lib/engine/run-workflow.ts)). New `viewOnly?: boolean` flag on input handles. In the per-edge dependency loop the engine now skips view-only edges from both the cache hash AND fan-out detection — so a `Number → slicer.index` edge changes the rendered item with **zero** effect on the node's hash. Without this, scrubbing the index on a non-reactive slicer/extractor would force a multi-second `mediabunny`/WebCodecs re-slice/re-decode on the next Run for a purely visual change. The input-side mirror of `VIEW_ONLY_CONFIG_KEYS`. **ADR-0077**.
+
+**`index` drive on four nodes** ([`node-video-slicer.tsx`](src/components/nodes/node-video-slicer.tsx), [`node-audio-slicer.tsx`](src/components/nodes/node-audio-slicer.tsx), [`node-audio-to-video.tsx`](src/components/nodes/node-audio-to-video.tsx), [`node-frames-extract.tsx`](src/components/nodes/node-frames-extract.tsx)). Each gains an `index` input (`number`, `viewOnly: true`). Wire one Number into several nodes' `index` to keep every chunk/keyframe aligned on the same window. Frames Extract highlights the externally-driven frame in grid view (`ring-2 ring-accent`); the others move their `IteratorCursor`.
+
+**List relabel (no rename)** ([`node-list.tsx`](src/components/nodes/node-list.tsx)). The drive handle keeps id `cursor` and config key `cursor` (every seeded recipe + existing edge references it) but its **label** and configParam label now read **"index"** — cosmetic only, zero migration.
+
+**Shared plumbing** ([`use-external-index.ts`](src/components/nodes/use-external-index.ts) + [`iterator-cursor.tsx`](src/components/nodes/iterator-cursor.tsx)). New `useExternalIndex(nodeId, handleId)` hook reads the live wired-Number value (or `null`) — replaces List's bespoke `useExternalCursorForList`. `IteratorCursor` gains a `readOnly` prop that locks both arrows (counter still shown) when an external Number is driving.
+
+**Tests (+7, 2,354 → 2,361).** [`run-workflow.test.ts`](tests/unit/engine/run-workflow.test.ts) (+2 — a view-only input never busts the consumer's cache; a normal input still does, as control), [`iterator-cursor.test.tsx`](tests/component/nodes/iterator-cursor.test.tsx) (+1 — `readOnly` locks both arrows mid-range), and a schema pin per node (+4 — Video/Audio Slicer, Silent Video, Frames Extract each expose `index` as `number` + `viewOnly`). [`node-list.test.tsx`](tests/component/nodes/node-list.test.tsx) gains label assertions (handle id still `cursor`, label now "index").
+
+**Verification:** `npm test` → 2,361 passing · `npx tsc --noEmit` clean · `npm run lint` 0 errors (pre-existing warnings only) · `npm run docs:check` OK. **ADR-0077** added; GLOSSARY + assistant vocabulary updated.
+
 ## 2026-06-24 — Video Slicer can keep the source audio
 
 The Video Slicer hard-discarded audio (built purely as a silent *motion* reference for Seedance). It now keeps the soundtrack by default, with a toggle to drop it — so the cuts double as standalone clips with sound.

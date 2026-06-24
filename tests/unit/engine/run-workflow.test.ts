@@ -1379,6 +1379,140 @@ describe("runWorkflow with endAtNodeId (Slice 5.8)", () => {
   });
 });
 
+/* viewOnly inputs (ADR-0077) ---------------------------------------------- */
+
+describe("runWorkflow — viewOnly inputs", () => {
+  /** Emits a number from config — stands in for the Number node. */
+  function numberSourceSchema() {
+    return defineNode<{ value: number }>({
+      kind: "num",
+      category: "input",
+      title: "Num",
+      description: "",
+      icon: Type,
+      inputs: [],
+      outputs: [{ id: "out", label: "out", dataType: "number" }],
+      defaultConfig: { value: 0 },
+      reactive: true,
+      execute: async ({ config }) => ({ type: "number", value: config.value }),
+      Body: EmptyBody as never,
+    });
+  }
+
+  /**
+   * A slicer-shaped consumer: one normal `in` input + a view-only `index`
+   * input that drives only its preview. The `index` value must never enter
+   * the cache hash, so changing it can't force an expensive re-run.
+   */
+  function voConsumerSchema() {
+    return defineNode<{ tag: string }>({
+      kind: "vo-consumer",
+      category: "transform",
+      title: "VO Consumer",
+      description: "",
+      icon: Sparkles,
+      inputs: [
+        { id: "in", label: "in", dataType: "text" },
+        { id: "index", label: "index", dataType: "number", viewOnly: true },
+      ],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: { tag: "" },
+      reactive: false,
+      execute: async ({ config, inputs }) => {
+        const up = inputs.in as StandardizedOutput | undefined;
+        const t = up?.type === "text" ? up.value : "";
+        return { type: "text", value: `${config.tag}:${t}` };
+      },
+      Body: EmptyBody as never,
+    });
+  }
+
+  function buildVoRegistry() {
+    const reg = new NodeRegistry();
+    reg.register(textSchema());
+    reg.register(numberSourceSchema());
+    reg.register(voConsumerSchema());
+    return reg;
+  }
+
+  it("a wired view-only input never busts the consumer's cache", async () => {
+    const registry = buildVoRegistry();
+    const nodes = [
+      node("a", "text", { text: "hi" }),
+      node("idx", "num", { value: 0 }),
+      node("c", "vo-consumer", { tag: "C" }),
+    ];
+    const edges = [
+      edge("a", "c", "out", "in"),
+      edge("idx", "c", "out", "index"),
+    ];
+    const cache = newCache();
+
+    const r1 = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => r1.set(id, r),
+    });
+    expect(r1.get("c")?.status).toBe("done");
+
+    // Change ONLY the view-only index source. The consumer's cache key
+    // must stay identical → cached (no re-run / re-slice for a preview-only
+    // change).
+    nodes[1] = node("idx", "num", { value: 5 });
+    const r2 = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => r2.set(id, r),
+    });
+    expect(r2.get("idx")?.status).toBe("done"); // the Number itself re-ran
+    expect(r2.get("c")?.status).toBe("cached"); // …but the consumer did not
+  });
+
+  it("a normal input still busts the consumer's cache (control)", async () => {
+    const registry = buildVoRegistry();
+    const nodes = [
+      node("a", "text", { text: "hi" }),
+      node("idx", "num", { value: 0 }),
+      node("c", "vo-consumer", { tag: "C" }),
+    ];
+    const edges = [
+      edge("a", "c", "out", "in"),
+      edge("idx", "c", "out", "index"),
+    ];
+    const cache = newCache();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    });
+
+    // Change the NORMAL input source → the consumer must re-run.
+    nodes[0] = node("a", "text", { text: "bye" });
+    const r2 = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes,
+      edges,
+      registry,
+      cache,
+      signal: new AbortController().signal,
+      onProgress: (id, r) => r2.set(id, r),
+    });
+    expect(r2.get("c")?.status).toBe("done");
+    expect((r2.get("c")?.output as StandardizedOutput).value).toBe("C:bye");
+  });
+});
+
 /* isCacheBusting (multimodal arc) ----------------------------------------- */
 
 describe("isCacheBusting", () => {

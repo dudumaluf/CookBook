@@ -138,8 +138,8 @@ describe("audio-to-video node execute", () => {
     expect(audioToVideoNodeSchema.title).toBe("Silent Video");
     expect(audioToVideoNodeSchema.category).toBe("transform");
     expect(audioToVideoNodeSchema.reactive).toBe(false);
-    // Two sources: an audio track OR a video (whose soundtrack we keep).
-    expect(audioToVideoNodeSchema.inputs).toHaveLength(2);
+    // Two media sources (audio OR video) + a view-only `index` drive input.
+    expect(audioToVideoNodeSchema.inputs).toHaveLength(3);
     const byId = Object.fromEntries(
       audioToVideoNodeSchema.inputs.map((i) => [i.id, i]),
     );
@@ -151,6 +151,17 @@ describe("audio-to-video node execute", () => {
     expect(byId.video?.multiple).toBe(true);
     expect(audioToVideoNodeSchema.outputs[0]?.dataType).toBe("video");
     expect(audioToVideoNodeSchema.outputs[0]?.multiple).toBe(true);
+  });
+
+  it("exposes a view-only `index` input so a Number can drive the preview", () => {
+    const byId = Object.fromEntries(
+      audioToVideoNodeSchema.inputs.map((i) => [i.id, i]),
+    );
+    expect(byId.index).toMatchObject({
+      id: "index",
+      dataType: "number",
+      viewOnly: true,
+    });
   });
 });
 

@@ -141,6 +141,16 @@ export interface NodeIO {
   dataType: DataType;
   /** If true, this input can accept multiple incoming edges (used by iterators). */
   multiple?: boolean;
+  /**
+   * View-only input (slicers / Frames Extract `index`): a value wired here
+   * drives the node's BODY/preview only — never its `execute()` output — so
+   * the engine strips it from the cache hash. Without this, plugging a
+   * Number into a preview-scrubber would bump the consumer's hash and force
+   * an expensive re-run (re-slice / re-decode) on the next Run for a purely
+   * visual change. Mirrors `VIEW_ONLY_CONFIG_KEYS` (run-workflow.ts) but for
+   * inputs. Only meaningful on inputs; ignored on outputs. See ADR-0077.
+   */
+  viewOnly?: boolean;
 }
 
 /**

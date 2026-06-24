@@ -3270,4 +3270,27 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **`audioToSilentVideo` returns a `video/mp4` Blob**; the node uploads it under `videos/`. Downstream treats it as a normal video — the only unusual thing is its picture is black.
   - **Two copies of the stage prompts** (TS constant + SQL literal) are kept in sync by a test rather than a shared import, since SQL can't import TS.
 
+## ADR-0077: View-only `index` drive input — a Number can scrub any multi-item preview without busting the cache
+
+- **Status**: Accepted (2026-06-24)
+
+- **Context**: The ByteDance multi-chunk method needs *every* per-chunk node (Video Slicer, Audio Slicer, Silent Video, Frames Extract, plus the existing List pickers) to point at the **same** chunk so the assets stay aligned. The natural control is a single `Number` node wired into each consumer to drive which item it shows. The List node already had this — its `cursor` input — but (a) the handle was labelled "cursor", which the user found cryptic, and (b) the slicers/Frames Extract had no such input at all; their preview only had click-arrows. The hard part is caching: slicers and Frames Extract are **non-reactive, expensive** (`mediabunny`/WebCodecs re-decode + re-encode on every Run). Their `execute()` already emits the *whole* array — the preview index only chooses which item the **body** renders, never what the node outputs. If a `Number` wired into that index entered the node's cache hash (as every normal input does), bumping the number would bust the hash and force a multi-second re-slice/re-decode for a purely visual change. We needed the input to drive the body but be invisible to the engine.
+
+- **Decision**: Introduce a **`viewOnly?: boolean` flag on `NodeIO`** (inputs only) and teach the engine to strip view-only edges from the cache key, then add a relabelled `index` drive everywhere it makes sense.
+  - **[`NodeIO.viewOnly`](src/types/node.ts)** — when `true`, a value wired into this input drives the node's **body/preview only**, never its `execute()` output. It's the input-side mirror of `VIEW_ONLY_CONFIG_KEYS` (the config keys the hash already ignores).
+  - **[`run-workflow.ts`](src/lib/engine/run-workflow.ts)** — in the per-edge dependency loop, a `viewOnly` target handle (1) never contributes its upstream hash to `upstreamHashesByTargetHandle` and (2) is excluded from fan-out detection. So a `Number → slicer.index` edge changes the rendered item with **zero** effect on the consumer's hash; the next Run reuses the cached slices.
+  - **[`useExternalIndex(nodeId, handleId)`](src/components/nodes/use-external-index.ts)** — one shared hook reads the live value of whatever `Number` is wired into a given handle (via the workflow edges + execution records), returning `null` when nothing is wired. Replaces the bespoke `useExternalCursorForList` helper.
+  - **[`IteratorCursor` `readOnly`](src/components/nodes/iterator-cursor.tsx)** — when an external Number is driving the preview, both arrows lock (the counter still shows position) so it's visually obvious the control is now external.
+  - **Relabel, don't rename.** The List drive keeps handle id `cursor` and config key `cursor` (existing edges + every seeded recipe reference it) but its **label** and `configParams` label now read **"index"**. New drives on Video Slicer / Audio Slicer / Silent Video / Frames Extract use a fresh handle whose id *and* label are `index`, all `viewOnly: true`.
+
+- **Why this is the right shape**:
+  - **Cache-correct by construction.** The expensive nodes can be scrubbed freely; the engine literally cannot see the index, so it cannot invalidate. This is the same principle as `VIEW_ONLY_CONFIG_KEYS`, extended from config to inputs.
+  - **One concept, one hook, one flag.** Rather than per-node bespoke wiring, every multi-item node gets the same `viewOnly` input + `useExternalIndex` + `readOnly` cursor. The List node sheds its private hook.
+  - **No breaking migration.** Keeping the List handle id `cursor` means zero recipe/edge churn; the change is purely cosmetic (label) plus additive (new inputs elsewhere).
+
+- **Consequences**:
+  - **`index` is 0-based and clamped.** A Number of 3 selects the 4th item; out-of-range values clamp to the available count (same semantics the arrows always had).
+  - **List's drive stays `cursor` under the hood.** Anyone reading the JSON/SQL still sees `cursor`; only the UI says "index". The node docstring + a unit test pin this id/label split so it can't silently drift.
+  - **`viewOnly` is meaningful on inputs only.** It's ignored on outputs. Today only the `index` drives use it; any future "preview-only" input (e.g. a scrub-time) can reuse the flag.
+
 

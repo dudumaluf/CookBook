@@ -105,4 +105,13 @@ describe("video-slicer schema", () => {
       label: "keep audio",
     });
   });
+
+  it("exposes a view-only `index` input so a Number can drive the preview", () => {
+    const index = videoSlicerNodeSchema.inputs.find((i) => i.id === "index");
+    expect(index).toMatchObject({
+      id: "index",
+      dataType: "number",
+      viewOnly: true,
+    });
+  });
 });

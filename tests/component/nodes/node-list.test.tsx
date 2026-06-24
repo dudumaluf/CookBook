@@ -24,7 +24,8 @@ describe("listNodeSchema", () => {
     expect(listNodeSchema.iterator).toBeFalsy();
     // Slice 6.5 — baseline inputs are `[items, slot-0, cursor]`. The
     // slot list grows dynamically via getInputs(config.slotCount) up to
-    // MAX_SLOTS = 8.
+    // MAX_SLOTS = 8. The drive handle's id stays `cursor` for back-compat
+    // (existing edges / recipes), but its LABEL reads "index" (ADR-0077).
     expect(listNodeSchema.inputs).toHaveLength(3);
     expect(listNodeSchema.inputs[0]?.id).toBe("items");
     expect(listNodeSchema.inputs[0]?.dataType).toBe("any");
@@ -32,6 +33,9 @@ describe("listNodeSchema", () => {
     expect(listNodeSchema.inputs[1]?.dataType).toBe("any");
     expect(listNodeSchema.inputs[2]?.id).toBe("cursor");
     expect(listNodeSchema.inputs[2]?.dataType).toBe("number");
+    expect(listNodeSchema.inputs[2]?.label).toBe("index");
+    // configParam label is relabelled too (id/key stay `cursor`).
+    expect(listNodeSchema.configParams?.cursor?.label).toBe("index");
     // Slice 6.4 hotfix — text-typed output (text-blue handle) since the
     // dominant flow is `text-array → list → llm-text.user`. See header
     // comment in node-list.tsx for the trade-off vs. "any".
