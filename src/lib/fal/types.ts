@@ -979,3 +979,71 @@ export type DwposeStatusRequest = z.infer<typeof dwposeStatusRequestSchema>;
 export type DwposeStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & DwposeSuccessResponse);
+
+/* ─────────────── SAM 3.1 Video RLE (video → tracked mask video) ─────────────── */
+
+/**
+ * Fal `fal-ai/sam-3-1/video-rle` — promptable video segmentation that tracks
+ * the prompted object across the clip and renders it as a mask video. We
+ * default `apply_mask: true` so the output isolates the object (bright on
+ * dark), which is exactly what the Object Track Crop / Track Recompose nodes
+ * need to track + matte. Long-running per-frame job → async-queue (submit +
+ * poll), same shape as DWPose. Pricing: $0.01 per 16 frames.
+ */
+export const SAM31_VIDEO_ENDPOINT = "fal-ai/sam-3-1/video-rle";
+
+export const SAM31_VIDEO_DETECTION_DEFAULT = 0.5;
+export const SAM31_VIDEO_DETECTION_MIN = 0.01;
+export const SAM31_VIDEO_DETECTION_MAX = 1;
+export const SAM31_VIDEO_MAX_OBJECTS_DEFAULT = 16;
+export const SAM31_VIDEO_MAX_OBJECTS_MIN = 1;
+export const SAM31_VIDEO_MAX_OBJECTS_MAX = 128;
+
+export const sam31VideoRequestSchema = z
+  .object({
+    videoUrl: z.string().url(),
+    /** Comma-separate to track multiple objects (e.g. "person, cloth"). */
+    prompt: z.string().optional(),
+    /** Isolate the object on black (true) vs. overlay on the video (false). */
+    applyMask: z.boolean().optional(),
+    detectionThreshold: z
+      .number()
+      .min(SAM31_VIDEO_DETECTION_MIN)
+      .max(SAM31_VIDEO_DETECTION_MAX)
+      .optional(),
+    maxNumObjects: z
+      .number()
+      .int()
+      .min(SAM31_VIDEO_MAX_OBJECTS_MIN)
+      .max(SAM31_VIDEO_MAX_OBJECTS_MAX)
+      .optional(),
+  })
+  .strict();
+
+export type Sam31VideoRequest = z.infer<typeof sam31VideoRequestSchema>;
+
+export interface Sam31VideoSuccessResponse {
+  videoUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface Sam31VideoSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const sam31VideoStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type Sam31VideoStatusRequest = z.infer<
+  typeof sam31VideoStatusRequestSchema
+>;
+
+export type Sam31VideoStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & Sam31VideoSuccessResponse);

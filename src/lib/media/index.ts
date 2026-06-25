@@ -81,3 +81,23 @@ export {
   type PadVideoResult,
   type PadVideoSplit,
 } from "./pad-video";
+
+export {
+  bboxFromMaskData,
+  buildTrack,
+  centerAt,
+  computeMaskTrack,
+  movingAverage,
+  OBJECT_TRACK_DEFAULTS,
+  type BuildTrackOptions,
+  type NormBox,
+  type ObjectTrack,
+  type TrackCenter,
+} from "./object-track";
+
+export { cropVideoToTrack, type CropVideoResult } from "./track-crop";
+
+export {
+  recomposeVideoFromTrack,
+  type RecomposeVideoResult,
+} from "./track-recompose";

@@ -3319,3 +3319,30 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 - **Update (2026-06-24)**: Fal shipped **`mini/image-to-video`** and **`fast/image-to-video`** (start frame + optional `end_image_url`). `pickSeedanceEndpoint` is now fully uniform: every tier prefixes the family (`standard` = none, `fast` = `/fast/`, `mini` = `/mini/`) onto the mode (`image-to-video` / `reference-to-video` / `text-to-video`), with Mini's text jobs still folded into `reference-to-video`. The node's **Mini + image-mode guard is removed** — all three tiers now do reference AND image-to-video. The 720p clamp still applies to Mini/Fast/image-to-video. (`bitrate_mode` — a Fast-only `standard|high` knob on both Fast modes — is left at the implicit `standard` default; can be surfaced later if needed.)
 
 
+## ADR-0079: Mask-tracked crop / stabilize / recompose — recompute geometry from the mask, don't pass a transform side-channel
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user wanted to mask an object (via SAM), get a crop **tracked + stabilized** to that object, edit the crop in some downstream node, then **recompose** the edit back into the original footage in the object's moving position. Fal shipped **`fal-ai/sam-3-1/video-rle`** (SAM 3.1 with Object Multiplex) which tracks a prompted object across a clip and renders it as a mask video. The hard part is local: a crop node would naturally want to emit *two* outputs — the cropped pixels **and** the per-frame transform (window centre/size) that produced them — so a recompose node could invert it. But the engine's `execute()` returns a **single** `StandardizedOutput` (ADR-0019); there is no multi-output. Stashing the transform in the video's metadata is also a dead end — intermediate editing nodes re-encode and strip anything we attach.
+
+- **Decision**: A **three-node workflow** where the recompose step **recomputes** the tracking geometry from the mask rather than receiving it:
+  1. **`fal-sam31-video` (SAM 3.1 Video, Fal, `ai-video`)** — `video` + `prompt` → a tracked **mask video**. Async queue (submit + poll), same shape as DWPose (ADR-0057). Defaults **`apply_mask: true`** so the object is isolated bright-on-dark (what the tracker keys off). Output mask is **re-hosted** into our bucket (ADR-0035) because the crop + recompose nodes decode it client-side, possibly much later than the SAM run.
+  2. **`object-track-crop` (Object Track Crop, local, `transform`)** — `video` + `mask` → a fixed-size, **position-stabilized** crop. The window size is constant (largest object box across the clip + padding); only its centre moves, following the smoothed mask centroid.
+  3. **`track-recompose` (Track Recompose, local, `transform`)** — `original` + `edited` + `mask` → the original with the edited object **keyed back** into its tracked position each frame (background untouched).
+  - **Shared deterministic geometry.** Both local nodes call the same pure module **[`object-track.ts`](src/lib/media/object-track.ts)** (`bboxFromMaskData` → `buildTrack` → `centerAt`) with **fixed internal constants** (`OBJECT_TRACK_DEFAULTS`: padding 0.15, smoothing 5, threshold 0.15). There are **no per-node knobs** in v1 — exposing padding/smoothing would let the two nodes disagree and silently misregister the paste-back. Same mask + same constants ⇒ identical windows by construction.
+  - **Normalized coordinates throughout.** Boxes/centres are 0..1, so the mask need not match the footage resolution — it only has to be frame-aligned in time.
+  - **Black-fill window shift, not clamp.** The crop draws the whole frame shifted so the tracked window maps to `(0,0)` and lets the canvas clip; off-frame area is black. That keeps the object **centred even at the frame edge**, and is exactly the geometry recompose inverts.
+  - **Threshold-keyed matte.** Recompose builds the paste-back alpha as a soft step around the luma threshold (not raw luma), so it works whether SAM returns a clean white matte or an object-on-black cutout (dark object pixels would otherwise key out as transparent).
+  - **Audio is dropped** in both local nodes (matches `video-pad` / `video-slicer`); the original footage keeps its audio, so re-attach after recompose with **Video Audio Merge**.
+
+- **Why this is the right shape**:
+  - **No engine change.** Recomputing geometry from the mask sidesteps the single-output constraint entirely — no new datatype, no multi-output, no metadata channel that editing nodes would strip.
+  - **Synchronization is structural, not procedural.** Because the windows come from a shared pure function + frozen constants, crop and recompose can't drift. The cost is one extra mask decode in recompose — cheap, and the mask is small/local.
+  - **Mirrors the media layer.** The WebCodecs decode→canvas→encode lives in `track-crop.ts` / `track-recompose.ts` (browser-only, mocked at the node-test layer); the geometry math is pure and unit-tested — same split as `pad-video` (ADR-0046).
+
+- **Consequences**:
+  - **Single-object, position-only in v1.** No rotation/scale normalization; multi-object masks would bound *all* bright regions (track one object per SAM run). Rotation/scale stabilization and multi-object windows are future work.
+  - **Recompose decodes three videos + recomputes the track.** Acceptable for the local re-encode; if it ever gets heavy we can cache the track per mask URL.
+  - **Edit must preserve the crop's framing.** Recompose scales the edited crop into the window and keys it by the mask, so an edit that re-frames/zooms will land off-register; the contract is "edit the look, keep the framing."
+
+
