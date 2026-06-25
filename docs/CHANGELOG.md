@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — Seedance `prompt refs:` row shows the `@Image[]` array fan-out
+
+Wiring a Frames Extract array into the `@Image[]` socket sent the frames as `@Image1..@ImageN` at run time, but the node's `prompt refs:` confirmation row only counted the numbered `image-N` sockets — so the array contributed **no** chips and it looked like the keyframes weren't recognized as references. The row now mirrors `execute()`'s `gather()` exactly.
+
+**Body fix** ([`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)). Two new primitive-returning store reads: the source node feeding the `@Image[]` handle (workflow store) and how many `image` outputs it currently emits (execution store). `refTokens` now enumerates numbered image sockets first, then the array fanned out sequentially (`@Image1..@ImageN`), capped at the Fal max of 9, then videos + audios. When the array is wired but the upstream hasn't produced frames yet, a single muted `@Image[]` chip stands in so it still reads as image refs. Purely a display read — no effect on the hash or the request.
+
+**Tests (+2).** [`node-fal-seedance-refs.test.tsx`](tests/component/nodes/node-fal-seedance-refs.test.tsx): a 9-frame array enumerates `@Image1..@Image9` (+ `@Video1`, no `@Image10`); an unwired-output array shows the `@Image[]` placeholder instead of `@Image1`.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — display-only.
+
 ## 2026-06-24 — Seedance Mini + Fast gain image-to-video (first/last frame)
 
 Fal shipped `bytedance/seedance-2.0/{mini,fast}/image-to-video` (start frame + optional `end_image_url`), completing the tier × mode matrix from the morning's tiers work. The earlier same-day "Mini = reference-only" guard is now lifted — **all three tiers do reference AND image-to-video**.

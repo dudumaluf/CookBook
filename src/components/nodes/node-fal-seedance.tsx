@@ -284,23 +284,60 @@ function SeedanceVideoNodeBody({
       ? (parseAspectRatio(config.aspectRatio)?.cssAspect ?? "16 / 9")
       : "16 / 9";
 
+  // The node + edges feeding the @Image[] array socket (handle id "image") and
+  // how many images that source currently emits. Lets the prompt-refs row show
+  // the array's fan-out (@Image1..@ImageN), not just the numbered sockets — so
+  // a Frames Extract wired straight in is visibly recognized as image refs.
+  const imageArraySource = useWorkflowStore((s) => {
+    const e = s.edges.find(
+      (ed) => ed.target === nodeId && ed.targetHandle === "image",
+    );
+    return e?.source ?? "";
+  });
+  const imageArrayLen = useExecutionStore((s) => {
+    if (!imageArraySource) return 0;
+    const out = s.records.get(imageArraySource)?.output;
+    if (!out) return 0;
+    const arr = Array.isArray(out) ? out : [out];
+    return arr.filter((o) => o && o.type === "image").length;
+  });
+
   // Prompt-reference tokens for the currently-wired slots, so the user knows
-  // exactly what to type (@Image1, @Video1, …). Built from the connected key.
+  // exactly what to type (@Image1, @Video1, …). Mirrors execute()'s gather():
+  // numbered image sockets first, THEN the @Image[] array fanned out in order,
+  // then videos + audios. Capped at the Fal per-type maxima.
   const refTokens = (() => {
     if (mode !== "reference") return [] as string[];
     const counts = connectedKey.split("|", 1)[0] ?? "-1,-1,-1";
     const [mi, mv, ma] = counts.split(",").map(Number) as [number, number, number];
     const names = config.refNames ?? {};
     const toks: string[] = [];
-    const add = (base: RefBase, max: number) => {
-      for (let i = 0; i <= max; i++) {
+    // Images: numbered sockets then the array socket, numbered sequentially.
+    let imgCount = 0;
+    for (let i = 0; i <= mi && imgCount < REF_CAPS.image; i++) {
+      const slot = `image-${i}`;
+      toks.push(names[slot] ? `@${names[slot]}` : refToken("image", imgCount));
+      imgCount++;
+    }
+    for (let j = 0; j < imageArrayLen && imgCount < REF_CAPS.image; j++) {
+      toks.push(refToken("image", imgCount));
+      imgCount++;
+    }
+    if (imageArraySource && imageArrayLen === 0 && imgCount < REF_CAPS.image) {
+      // Array wired but the upstream hasn't produced frames yet — show the
+      // array token so it reads as image refs (enumerates after a Run).
+      toks.push("@Image[]");
+    }
+    const addNumbered = (base: RefBase, max: number) => {
+      let c = 0;
+      for (let i = 0; i <= max && c < REF_CAPS[base]; i++) {
         const slot = `${base}-${i}`;
-        toks.push(names[slot] ? `@${names[slot]}` : refToken(base, i));
+        toks.push(names[slot] ? `@${names[slot]}` : refToken(base, c));
+        c++;
       }
     };
-    add("image", mi);
-    add("video", mv);
-    add("audio", ma);
+    addNumbered("video", mv);
+    addNumbered("audio", ma);
     return toks;
   })();
 
