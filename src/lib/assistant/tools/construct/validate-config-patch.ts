@@ -76,6 +76,7 @@ const KIND_ALLOWED_KEYS: Record<string, ReadonlySet<string>> = {
     "numInferenceSteps",
     "negativePrompt",
     "outputFormat",
+    "quality",
   ]),
 };
 

@@ -138,7 +138,8 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Use \`delimiter\` (string), not \`separator\`, to change the split character. \`separator\` is a phantom field the runtime ignores.`,
   ],
   "fal-image": [
-    `\`config.model\` takes the literal id ("nano-banana-2", "flux-2-pro", "seedream-v4.5", "krea-v2-medium", "krea-v2-large"), not the Fal endpoint id ("fal-ai/<...>"). Endpoint ids are server-side only.`,
+    `\`config.model\` takes the literal id ("nano-banana-2", "flux-2-pro", "seedream-v4.5", "krea-v2-medium", "krea-v2-large", "gpt-image-2"), not the Fal endpoint id ("fal-ai/<...>"). Endpoint ids are server-side only.`,
+    `"gpt-image-2" is EDIT-ONLY — it requires at least one wired image ref. It also accepts \`quality\` (auto/low/medium/high) + \`outputFormat\` (png/jpeg/webp) and ignores \`seed\` (it has none).`,
   ],
   "llm-text": [
     `\`user\` is a single socket — the multi-user smart-input pattern was rolled back. Combine multiple text sources via Text Concat upstream, not via \`config.userPorts\` (which is now ignored).`,

@@ -3348,3 +3348,29 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 - **Update (2026-06-25)**: After the first real run, two changes. (1) **Visual masking** — text prompts alone are often ambiguous ("which person?"), so the node now also targets the object **visually**: a modal mask editor pulls the clip's first frame (`extractFrame`) and accepts a **box** + **foreground/background points**, combinable with the text prompt (all three are independent SAM signals and stack). Marks are stored **normalised** in node config and converted to Fal's integer-pixel `point_prompts` / `box_prompts` at run time by the pure `sam31VisualPromptsToPixels` (the node reads the video's dimensions with `probeMedia`); `frame_index` 0 + single object in v1, consistent with the rest of the workflow. (2) **Output-parse fix** — Fal documents the `video` output inconsistently (OpenAPI `File` object vs. a bare string URL in the example); the result parser now accepts both (plus `video_url`/`url` fallbacks) and lists the output keys on a genuine miss.
 
 
+## ADR-0080: GPT Image 2 as a sixth Fal Image model — edit-only with required refs, an optional mask socket, and per-model scalar caps
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user asked to add OpenAI's **GPT Image 2** (`openai/gpt-image-2/edit`) to the Fal Image node, "with everything that needs to be exposed exposed and what's not relevant hidden." The node is already a single **caps-driven** multi-model node (ADR for Slice F): one `/api/fal/image` route, one `generateFalImage` dispatcher, and a `FAL_IMAGE_MODEL_CAPS` map that the settings panel reads to decide which controls render. GPT Image 2 doesn't fit the existing caps cleanly: it is **image-to-image only** (`image_urls` is *required*), it has **no `seed`**, and it introduces two scalar knobs the node had never modeled (`quality` — the dominant cost lever — and `output_format`) plus an optional **`mask_url`** for inpainting. The Fal OpenAPI gives **no `maxItems`** for `image_urls`.
+
+- **Decision**: Add it as **data + dispatch, not a new route**. GPT Image 2 is one more row in `FAL_IMAGE_MODELS` / `FAL_IMAGE_MODEL_LABELS` / `FAL_IMAGE_MODEL_CAPS` / the `ENDPOINTS` map; everything else falls out of the caps the panel already honours. The new pieces:
+  - **Five new caps fields** so the data describes the behaviour instead of branching on the model id: `quality?: string[]`, `outputFormats?: string[]` (caps-gated `<select>`s like `resolutions`/`creativity`), `requiresEditRefs?: boolean` (edit-only — `execute` throws a clear "wire at least one image" error when no ref is wired, rather than letting Fal 422), `mask?: boolean`, and `supportsSeed?: boolean` (**defaults true when omitted**).
+  - **Mask is an input socket, not a config field.** When `caps.mask`, `getInputs` appends a single `mask` handle *after* the `image 1..N` smart sockets. Its id isn't `image-`, so it's invisible to the auto-grow bookkeeping; it's forwarded as `mask_url`. This reuses the node's existing dynamic-inputs system instead of inventing a config-borne URL, and it lets a SAM/segmentation mask flow straight in.
+  - **Seed is suppressed two ways.** The Seed control is hidden in settings (`caps.supportsSeed !== false`) AND the server wrapper omits the field (`if (req.seed !== undefined && caps.supportsSeed !== false)`) so an unknown `seed` can't be rejected upstream. The node still runs cache-busting by default (default seed `-1` ⇒ `isCacheBusting`), so re-runs stay fresh.
+  - **`editRefs.max = 16`** — there is no Fal-documented ceiling, so we use OpenAI's known gpt-image edit limit (16). One-line change if it's ever wrong. The request schema's `imageUrls` cap moved 14 → 16 to match.
+  - **`gen === edit` endpoint.** GPT Image 2 has only the edit endpoint; both `ENDPOINTS` slots point to `openai/gpt-image-2/edit` so the existing `isEdit` branch forwards `image_urls` whenever present.
+  - **`image_size` reuses the preset-OR-custom control** (`modelSupportsCustomSize` += `gpt-image-2`, capped 256–4096 via `GPT_IMAGE_2_CUSTOM_SIZE`), with `auto` as the default preset.
+
+- **Why this is the right shape**:
+  - **No new route/wrapper.** The summary-era reflex of one API file per model would have cloned the whole stack; a caps row + dispatch entry is the surgical move and keeps the multi-model node the single source of truth.
+  - **Behaviour lives in data.** `requiresEditRefs` / `mask` / `supportsSeed` / `quality` / `outputFormats` are reusable — the next edit-only or seedless model is a caps entry, not another branch.
+  - **Three registry-free mirrors stay honest.** `FAL_IMAGE_MAX_REFS` (`migrate-graph.ts`, runs before the registry loads), the fal-image pitfalls (`node-health.ts`), and the `update_node_config` key allow-list (`validate-config-patch.ts`) are updated in lockstep — the same discipline ADR-0079-era work established.
+
+- **Consequences**:
+  - **Edit-only is enforced at the node, not just Fal.** Running GPT Image 2 with no wired ref fails fast with a friendly message.
+  - **`quality` defaults to `high`** (Fal's default) and is only sent when the user changes it — but `high` is expensive, so the panel carries an inline cost note. `auto` lets the model pick.
+  - **`configParams` advertises `quality`/`outputFormat` for every fal-image node**; they're no-ops on the other models (dropped at `execute` by caps gating), matching how `numImages`/`seed` already over-advertise.
+  - **The `mask` socket only appears in the dynamic `getInputs`** (model-dependent), so the assistant's static node catalog won't list it until it inspects a `gpt-image-2` node — acceptable; the socket still renders and runs.
+
+

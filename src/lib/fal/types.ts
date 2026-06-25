@@ -175,6 +175,7 @@ export const FAL_IMAGE_MODELS = [
   "seedream-v4.5",
   "krea-v2-medium",
   "krea-v2-large",
+  "gpt-image-2",
 ] as const;
 
 export type FalImageModel = (typeof FAL_IMAGE_MODELS)[number];
@@ -217,6 +218,7 @@ export const FAL_IMAGE_MODEL_LABELS: Record<FalImageModel, string> = {
   "seedream-v4.5": "Seedream 4.5 (ByteDance)",
   "krea-v2-medium": "Krea 2 Medium",
   "krea-v2-large": "Krea 2 Large",
+  "gpt-image-2": "GPT Image 2 (OpenAI)",
 };
 
 /* Per-model option sets (verified from Fal docs 2026-05-29). Each model takes
@@ -253,10 +255,27 @@ export const SEEDREAM_CUSTOM_SIZE = {
   max: 4096,
   default: 2048,
 } as const;
+/** GPT Image 2 custom `{ width, height }` — schema allows up to 14142px, but
+ *  the model targets "up to 4K"; cap the UI at 4096 so the inputs stay sane. */
+export const GPT_IMAGE_2_CUSTOM_SIZE = {
+  min: 256,
+  max: 4096,
+  default: 1024,
+} as const;
 export const KREA_ASPECT_RATIOS = [
   "1:1", "4:3", "3:2", "16:9", "2.35:1", "4:5", "2:3", "9:16",
 ] as const;
 export const KREA_CREATIVITY = ["raw", "low", "medium", "high"] as const;
+
+/* GPT Image 2 (OpenAI, edit-only) — `image_size` accepts these presets OR a
+ * custom { width, height } object; `auto` (default) infers from the input
+ * image(s). `quality` is the dominant cost lever (default `high`). */
+export const GPT_IMAGE_2_IMAGE_SIZES = [
+  "auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+  "landscape_4_3", "landscape_16_9",
+] as const;
+export const GPT_IMAGE_2_QUALITY = ["auto", "low", "medium", "high"] as const;
+export const GPT_IMAGE_2_OUTPUT_FORMATS = ["png", "jpeg", "webp"] as const;
 
 /**
  * What each image model actually accepts. Absent field = control hidden and
@@ -272,6 +291,28 @@ export interface FalImageModelCaps {
   creativity?: readonly string[];
   styleReferences?: { max: number };
   editRefs?: { max: number };
+  /** Quality tier options (GPT Image 2) — control hidden when absent. */
+  quality?: readonly string[];
+  /** Output container options (GPT Image 2) — control hidden when absent. */
+  outputFormats?: readonly string[];
+  /**
+   * Edit-only model: at least one wired image reference is REQUIRED (GPT
+   * Image 2). `execute` throws a friendly error when none is wired, rather
+   * than letting Fal reject the call.
+   */
+  requiresEditRefs?: boolean;
+  /**
+   * Accepts an optional inpainting mask. When set, the node exposes a single
+   * `mask` input socket (separate from the `image 1..N` refs) and forwards it
+   * as `mask_url`.
+   */
+  mask?: boolean;
+  /**
+   * Whether the model accepts a `seed`. Defaults to `true` when omitted; set
+   * `false` (GPT Image 2 has no seed) to hide the Seed control AND drop the
+   * field server-side so Fal doesn't reject an unknown parameter.
+   */
+  supportsSeed?: boolean;
 }
 
 export const FAL_IMAGE_MODEL_CAPS: Record<FalImageModel, FalImageModelCaps> = {
@@ -300,6 +341,19 @@ export const FAL_IMAGE_MODEL_CAPS: Record<FalImageModel, FalImageModelCaps> = {
     creativity: KREA_CREATIVITY,
     styleReferences: { max: 10 },
   },
+  // GPT Image 2 is edit-only: image_urls is required (requiresEditRefs). No
+  // documented per-call max on Fal — 16 matches OpenAI's gpt-image edit
+  // ceiling. No seed (supportsSeed: false). image_size = preset OR custom.
+  "gpt-image-2": {
+    imageSizes: GPT_IMAGE_2_IMAGE_SIZES,
+    numImages: { max: 4 },
+    quality: GPT_IMAGE_2_QUALITY,
+    outputFormats: GPT_IMAGE_2_OUTPUT_FORMATS,
+    editRefs: { max: 16 },
+    requiresEditRefs: true,
+    mask: true,
+    supportsSeed: false,
+  },
 };
 
 /** Krea style-reference entry: a public image URL + influence strength. */
@@ -327,12 +381,12 @@ export const falImageRequestSchema = z
     model: z.enum(FAL_IMAGE_MODELS),
     prompt: z.string().min(1),
     /** When present (edit-capable models), switches to the edit endpoint. */
-    imageUrls: z.array(z.string().url()).max(14).optional(),
+    imageUrls: z.array(z.string().url()).max(16).optional(),
     numImages: z.number().int().min(1).max(6).optional(),
     seed: z.number().int().optional(),
     /** nano-banana / krea. */
     aspectRatio: z.string().optional(),
-    /** flux / seedream — preset name OR { width, height }. */
+    /** flux / seedream / gpt-image-2 — preset name OR { width, height }. */
     imageSize: z.union([z.string(), falImageCustomSizeSchema]).optional(),
     /** nano-banana. */
     resolution: z.string().optional(),
@@ -340,6 +394,12 @@ export const falImageRequestSchema = z
     creativity: z.string().optional(),
     /** krea — wired images as style guides. */
     styleReferences: z.array(falStyleReferenceSchema).max(10).optional(),
+    /** gpt-image-2 — quality tier (auto/low/medium/high). */
+    quality: z.string().optional(),
+    /** gpt-image-2 — output container (png/jpeg/webp). */
+    outputFormat: z.string().optional(),
+    /** gpt-image-2 — optional inpainting mask (what region to edit). */
+    maskUrl: z.string().url().optional(),
   })
   .strict();
 

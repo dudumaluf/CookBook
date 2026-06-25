@@ -52,6 +52,12 @@ const ENDPOINTS: Record<FalImageModel, { gen: string; edit?: string }> = {
   // Krea has no edit endpoint — wired images steer style, not edits.
   "krea-v2-medium": { gen: "krea/v2/medium/text-to-image" },
   "krea-v2-large": { gen: "krea/v2/large/text-to-image" },
+  // GPT Image 2 is edit-only — one endpoint, always needs image_urls. gen ===
+  // edit so the isEdit branch forwards refs whenever they're present.
+  "gpt-image-2": {
+    gen: "openai/gpt-image-2/edit",
+    edit: "openai/gpt-image-2/edit",
+  },
 };
 
 interface FalImageRawOutput {
@@ -89,7 +95,11 @@ export async function generateFalImage(
   if (req.numImages !== undefined && caps.numImages) {
     input.num_images = req.numImages;
   }
-  if (req.seed !== undefined) input.seed = req.seed;
+  // Seed is sent for every model EXCEPT those that don't accept one (GPT
+  // Image 2) — forwarding an unknown field there would be rejected by Fal.
+  if (req.seed !== undefined && caps.supportsSeed !== false) {
+    input.seed = req.seed;
+  }
   if (req.aspectRatio && caps.aspectRatios?.includes(req.aspectRatio)) {
     input.aspect_ratio = req.aspectRatio;
   }
@@ -125,6 +135,13 @@ export async function generateFalImage(
         ...(r.strength !== undefined ? { strength: r.strength } : {}),
       }));
   }
+  if (req.quality && caps.quality?.includes(req.quality)) {
+    input.quality = req.quality;
+  }
+  if (req.outputFormat && caps.outputFormats?.includes(req.outputFormat)) {
+    input.output_format = req.outputFormat;
+  }
+  if (req.maskUrl && caps.mask) input.mask_url = req.maskUrl;
 
   let result: { data: FalImageRawOutput };
   try {

@@ -184,6 +184,7 @@ const FAL_IMAGE_MAX_REFS: Record<string, number> = {
   "nano-banana-2": 14,
   "flux-2-pro": 8,
   "seedream-v4.5": 10,
+  "gpt-image-2": 16,
   "krea-v2-medium": 10,
   "krea-v2-large": 10,
 };

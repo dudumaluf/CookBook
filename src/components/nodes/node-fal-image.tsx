@@ -12,6 +12,9 @@ import {
   FAL_IMAGE_MODEL_LABELS,
   FAL_IMAGE_MODELS,
   FLUX_CUSTOM_SIZE,
+  GPT_IMAGE_2_CUSTOM_SIZE,
+  GPT_IMAGE_2_OUTPUT_FORMATS,
+  GPT_IMAGE_2_QUALITY,
   SEEDREAM_CUSTOM_SIZE,
   type FalImageModel,
   type FalStyleReference,
@@ -38,11 +41,12 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
 /**
  * Fal Image — multi-model image generation/edit (Slice F).
  *
- * One node, a model picker (Nano Banana 2 default, Flux 2, Seedream, Krea).
- * Wire a prompt; wire reference image(s) into the smart-input slots
- * (`image 1..N`, auto-grows to the model's per-call max — Nano Banana 2 = 14,
- * Seedream 4.5 = 10, Krea v2 = 10 style refs, Flux 2 Pro = 8). Output is the
- * batch of generated images. Non-reactive (costs money).
+ * One node, a model picker (Nano Banana 2 default, Flux 2, Seedream, Krea,
+ * GPT Image 2). Wire a prompt; wire reference image(s) into the smart-input
+ * slots (`image 1..N`, auto-grows to the model's per-call max — Nano Banana
+ * 2 = 14, GPT Image 2 = 16, Seedream 4.5 = 10, Krea v2 = 10 style refs, Flux
+ * 2 Pro = 8). Output is the batch of generated images. Non-reactive (costs
+ * money).
  *
  * Per-model settings (Slice F.2):
  *   - nano-banana-2: aspect_ratio (15) + resolution (0.5K..4K) + num_images
@@ -50,6 +54,9 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  *   - seedream-v4.5: image_size (preset, +auto_2K/4K) OR custom { width,
  *                    height } in 1920..4096 + num_images
  *   - krea v2:       aspect_ratio + creativity + style strength (per-ref)
+ *   - gpt-image-2:   EDIT-ONLY (needs ≥1 ref). image_size (preset/auto OR
+ *                    custom up to 4096) + quality + num_images +
+ *                    output_format + optional `mask` socket. No seed.
  */
 export interface FalImageNodeConfig {
   model?: FalImageModel;
@@ -70,6 +77,10 @@ export interface FalImageNodeConfig {
   creativity?: string;
   /** krea — strength applied to every wired style reference. */
   styleStrength?: number;
+  /** gpt-image-2 — quality tier (auto/low/medium/high). Dominant cost lever. */
+  quality?: string;
+  /** gpt-image-2 — output container (png/jpeg/webp). */
+  outputFormat?: string;
   /**
    * Smart-input image port count (auto-grow). The body bumps this to
    * `connectedCount + 1` so there's always one empty trailing socket
@@ -201,12 +212,21 @@ function falImageInputs(config: FalImageNodeConfig): NodeIO[] {
       dataType: "image",
     });
   }
+  // Optional inpainting mask (GPT Image 2). Distinct from the `image 1..N`
+  // refs and not part of the auto-grow bookkeeping (its id isn't `image-`).
+  if (FAL_IMAGE_MODEL_CAPS[model].mask) {
+    inputs.push({ id: "mask", label: "mask (optional)", dataType: "image" });
+  }
   return inputs;
 }
 
 /** Whether the active model supports a `{ width, height }` custom size. */
 function modelSupportsCustomSize(model: FalImageModel): boolean {
-  return model === "flux-2-pro" || model === "seedream-v4.5";
+  return (
+    model === "flux-2-pro" ||
+    model === "seedream-v4.5" ||
+    model === "gpt-image-2"
+  );
 }
 
 /**
@@ -221,6 +241,7 @@ function modelCustomSizeRange(model: FalImageModel): {
   default: number;
 } {
   if (model === "seedream-v4.5") return SEEDREAM_CUSTOM_SIZE;
+  if (model === "gpt-image-2") return GPT_IMAGE_2_CUSTOM_SIZE;
   return FLUX_CUSTOM_SIZE;
 }
 
@@ -234,6 +255,8 @@ function hasOverrides(config: FalImageNodeConfig): boolean {
     config.resolution !== undefined ||
     config.creativity !== undefined ||
     config.styleStrength !== undefined ||
+    config.quality !== undefined ||
+    config.outputFormat !== undefined ||
     !isRandomSeed(config.seed)
   );
 }
@@ -503,7 +526,9 @@ function ImageSizeControl({
           <p className="col-span-2 text-[10px] leading-snug text-muted-foreground/80">
             {model === "seedream-v4.5"
               ? "Seedream: width and height between 1920 and 4096."
-              : "Flux 2 Pro: any positive integers (256–2048 typical)."}
+              : model === "gpt-image-2"
+                ? "GPT Image 2: 256–4096 per axis (or pick a preset / auto)."
+                : "Flux 2 Pro: any positive integers (256–2048 typical)."}
           </p>
         </div>
       ) : (
@@ -539,7 +564,9 @@ function FalImageSettings({
   const wireHint = caps.styleReferences
     ? `Wire image(s) to use as style references (up to ${caps.styleReferences.max}).`
     : caps.editRefs
-      ? `Wire image(s) to switch into edit mode (up to ${caps.editRefs.max}).`
+      ? caps.requiresEditRefs
+        ? `Wire at least one image to edit — required (up to ${caps.editRefs.max}).`
+        : `Wire image(s) to switch into edit mode (up to ${caps.editRefs.max}).`
       : null;
 
   return (
@@ -589,6 +616,29 @@ function FalImageSettings({
       ) : null}
 
       <ImageSizeControl config={config} updateConfig={updateConfig} />
+
+      {caps.quality ? (
+        <div className="flex flex-col gap-1.5">
+          <LabeledSelect
+            label="Quality"
+            value={config.quality ?? "high"}
+            options={caps.quality}
+            onChange={(v) => updateConfig({ quality: v })}
+          />
+          <p className="text-[10px] leading-snug text-muted-foreground/70">
+            Higher quality costs more (image tokens). `auto` lets the model pick.
+          </p>
+        </div>
+      ) : null}
+
+      {caps.outputFormats ? (
+        <LabeledSelect
+          label="Output format"
+          value={config.outputFormat ?? "png"}
+          options={caps.outputFormats}
+          onChange={(v) => updateConfig({ outputFormat: v })}
+        />
+      ) : null}
 
       {caps.resolutions ? (
         <LabeledSelect
@@ -655,28 +705,30 @@ function FalImageSettings({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={seedId} className="font-medium text-foreground/90">
-          Seed
-          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-            (-1 = random each run)
-          </span>
-        </label>
-        <input
-          id={seedId}
-          type="number"
-          step={1}
-          placeholder="-1"
-          value={config.seed ?? RANDOM_SEED}
-          onChange={(e) => {
-            const raw = e.target.value;
-            updateConfig({
-              seed: raw === "" ? RANDOM_SEED : Number(raw),
-            });
-          }}
-          className={SELECT_CLASS}
-        />
-      </div>
+      {caps.supportsSeed !== false ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={seedId} className="font-medium text-foreground/90">
+            Seed
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              (-1 = random each run)
+            </span>
+          </label>
+          <input
+            id={seedId}
+            type="number"
+            step={1}
+            placeholder="-1"
+            value={config.seed ?? RANDOM_SEED}
+            onChange={(e) => {
+              const raw = e.target.value;
+              updateConfig({
+                seed: raw === "" ? RANDOM_SEED : Number(raw),
+              });
+            }}
+            className={SELECT_CLASS}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -686,7 +738,7 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
   category: "ai-image",
   title: "Fal Image",
   description:
-    "Generate or edit images with Fal — Nano Banana 2 (default, up to 14 image refs), Flux 2, Seedream, or Krea 2. Each model exposes its own controls (aspect ratio, image size — preset or custom width/height for Flux & Seedream, resolution, creativity, style references). Wire a prompt; wire image(s) into the auto-growing `image 1..N` slots to edit or steer style.",
+    "Generate or edit images with Fal — Nano Banana 2 (default, up to 14 image refs), Flux 2, Seedream, Krea 2, or GPT Image 2 (OpenAI, edit-only: needs ≥1 image ref, exposes quality + output format + optional inpainting mask). Each model exposes its own controls (aspect ratio, image size — preset or custom width/height for Flux/Seedream/GPT Image 2, resolution, creativity, style references, quality). Wire a prompt; wire image(s) into the auto-growing `image 1..N` slots to edit or steer style.",
   icon: Sparkles,
   // Static inputs cover the initial port count (two image slots) so a
   // fresh node renders with `image 1` and `image 2`. The dynamic shape —
@@ -699,6 +751,17 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
     model: { control: "select", options: FAL_IMAGE_MODELS, label: "model" },
     numImages: { control: "number", label: "images" },
     seed: { control: "number", label: "seed" },
+    // gpt-image-2 only — harmless on the other models (gated at execute()).
+    quality: {
+      control: "select",
+      options: GPT_IMAGE_2_QUALITY,
+      label: "quality",
+    },
+    outputFormat: {
+      control: "select",
+      options: GPT_IMAGE_2_OUTPUT_FORMATS,
+      label: "output format",
+    },
   },
   defaultConfig: {
     model: DEFAULT_MODEL,
@@ -733,8 +796,21 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
       if (ref?.url) wiredImages.push(ref.url);
     }
 
-    // Wired images go to the edit endpoint (nano/flux/seedream) OR become
-    // Krea style references — never both. Per-model caps decide which.
+    // Edit-only models (GPT Image 2) need at least one reference — fail early
+    // with a clear message instead of letting Fal reject the call.
+    if (caps.requiresEditRefs && wiredImages.length === 0) {
+      throw new Error(
+        `${FAL_IMAGE_MODEL_LABELS[model]} edits an image — wire at least one image into an \`image\` handle.`,
+      );
+    }
+
+    // Optional inpainting mask (GPT Image 2 only — gated by caps.mask).
+    const maskUrl = caps.mask
+      ? extractInputByType(inputs, "mask", "image")?.url
+      : undefined;
+
+    // Wired images go to the edit endpoint (nano/flux/seedream/gpt-image-2) OR
+    // become Krea style references — never both. Per-model caps decide which.
     const editImageUrls =
       caps.editRefs && wiredImages.length
         ? wiredImages.slice(0, caps.editRefs.max)
@@ -787,7 +863,13 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
       ...(caps.creativity && config.creativity
         ? { creativity: config.creativity }
         : {}),
-      // Resolve -1 / unset to a concrete random seed each run.
+      ...(caps.quality && config.quality ? { quality: config.quality } : {}),
+      ...(caps.outputFormats && config.outputFormat
+        ? { outputFormat: config.outputFormat }
+        : {}),
+      ...(caps.mask && maskUrl ? { maskUrl } : {}),
+      // Resolve -1 / unset to a concrete random seed each run. The wrapper
+      // drops it for models that don't accept a seed (caps.supportsSeed).
       seed: resolveSeed(config.seed),
       signal,
     });

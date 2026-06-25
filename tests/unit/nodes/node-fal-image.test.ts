@@ -253,6 +253,59 @@ describe("fal-image node", () => {
     expect(arg.imageSize).toBeUndefined();
   });
 
+  it("forwards GPT Image 2 edit params (quality, output format, mask, size)", async () => {
+    await falImageNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "give them airpods" },
+          "image-0": { type: "image", value: { url: "https://x/a.png" } },
+          mask: { type: "image", value: { url: "https://x/mask.png" } },
+        },
+        {
+          model: "gpt-image-2",
+          quality: "medium",
+          outputFormat: "webp",
+          imageSize: "landscape_16_9",
+          imageSizeMode: "preset",
+          numImages: 2,
+        },
+      ) as never,
+    );
+    const arg = callFalImage.mock.calls[0]![0];
+    expect(arg.model).toBe("gpt-image-2");
+    expect(arg.imageUrls).toEqual(["https://x/a.png"]);
+    expect(arg.maskUrl).toBe("https://x/mask.png");
+    expect(arg.quality).toBe("medium");
+    expect(arg.outputFormat).toBe("webp");
+    expect(arg.imageSize).toBe("landscape_16_9");
+    expect(arg.numImages).toBe(2);
+  });
+
+  it("throws when GPT Image 2 (edit-only) has no wired image", async () => {
+    await expect(
+      falImageNodeSchema.execute!(
+        ctx(
+          { prompt: { type: "text", value: "edit it" } },
+          { model: "gpt-image-2" },
+        ) as never,
+      ),
+    ).rejects.toThrow(/wire at least one image/i);
+  });
+
+  it("omits the GPT Image 2 mask when none is wired", async () => {
+    await falImageNodeSchema.execute!(
+      ctx(
+        {
+          prompt: { type: "text", value: "edit it" },
+          "image-0": { type: "image", value: { url: "https://x/a.png" } },
+        },
+        { model: "gpt-image-2" },
+      ) as never,
+    );
+    const arg = callFalImage.mock.calls[0]![0];
+    expect(arg.maskUrl).toBeUndefined();
+  });
+
   it("is a non-reactive ai-image node outputting image[]", () => {
     expect(falImageNodeSchema.kind).toBe("fal-image");
     expect(falImageNodeSchema.category).toBe("ai-image");
@@ -299,6 +352,7 @@ describe("fal-image smart-input ports", () => {
     expect(modelMaxRefs("seedream-v4.5")).toBe(10);
     expect(modelMaxRefs("krea-v2-medium")).toBe(10);
     expect(modelMaxRefs("krea-v2-large")).toBe(10);
+    expect(modelMaxRefs("gpt-image-2")).toBe(16);
   });
 
   it("clampImagePorts floors at MIN_IMAGE_PORTS and caps at the model's max", () => {
@@ -306,6 +360,21 @@ describe("fal-image smart-input ports", () => {
     expect(clampImagePorts("flux-2-pro", 6)).toBe(6);
     expect(clampImagePorts("flux-2-pro", 50)).toBe(8);
     expect(clampImagePorts("nano-banana-2", 50)).toBe(14);
+    expect(clampImagePorts("gpt-image-2", 50)).toBe(16);
+  });
+
+  it("exposes an optional mask socket only for gpt-image-2", () => {
+    const gpt = falImageInputs({ model: "gpt-image-2" });
+    expect(gpt.some((i) => i.id === "mask")).toBe(true);
+    // The mask socket is NOT counted as an `image-` smart-input port.
+    expect(gpt.filter((i) => i.id.startsWith(IMAGE_PORT_PREFIX))).toHaveLength(
+      2,
+    );
+    for (const m of ["nano-banana-2", "flux-2-pro", "krea-v2-medium"] as const) {
+      expect(falImageInputs({ model: m }).some((i) => i.id === "mask")).toBe(
+        false,
+      );
+    }
   });
 
   it("does not crash when config.model is the Fal endpoint id (legacy bug)", () => {

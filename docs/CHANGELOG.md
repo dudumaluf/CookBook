@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-25 — Fal Image: GPT Image 2 (OpenAI) as a sixth model
+
+GPT Image 2 (`openai/gpt-image-2/edit`) joins the Fal Image node's model picker. It's **edit-only** — wire at least one reference image (the node throws a clear error otherwise) plus a prompt, and it makes fine-grained edits. Same node, same single `/api/fal/image` route: GPT Image 2 is purely another `FAL_IMAGE_MODEL_CAPS` entry + dispatch row, so the caps-driven settings panel shows only its relevant controls and hides the rest. See **ADR-0080**.
+
+**Exposed (caps-gated):** the `image 1..N` refs auto-grow up to **16** (OpenAI's gpt-image edit ceiling — Fal documents no max), an optional **`mask`** socket (inpainting — *what region* to edit; flows straight from the SAM mask nodes), **image size** (the `auto`/preset enum OR a custom `{ width, height }` up to 4096), **quality** (`auto`/`low`/`medium`/`high`, default `high` — the dominant cost lever, with an in-panel note), **images** (1–4), and **output format** (`png`/`jpeg`/`webp`). **Hidden:** the **Seed** control (GPT Image 2 has no seed — and the wrapper drops the field so Fal can't reject it) and `sync_mode` (internal).
+
+**Where it landed.** [`types.ts`](src/lib/fal/types.ts): model + label + caps (new `quality` / `outputFormats` / `requiresEditRefs` / `mask` / `supportsSeed` cap fields) + `GPT_IMAGE_2_*` constants + request fields (`quality`, `outputFormat`, `maskUrl`; `imageUrls` max 14 → 16). [`image-api.ts`](src/lib/fal/image-api.ts): endpoint row + `quality` / `output_format` / `mask_url` mapping + `seed` gated by `supportsSeed`. [`node-fal-image.tsx`](src/components/nodes/node-fal-image.tsx): config fields, optional `mask` input, custom-size support, Quality + Output-format selects, hidden seed, edit-only validation, forwarding. Three registry-free mirrors kept in sync: `FAL_IMAGE_MAX_REFS` ([`migrate-graph.ts`](src/lib/engine/migrate-graph.ts)), the fal-image pitfalls ([`node-health.ts`](src/lib/engine/node-health.ts)), the `update_node_config` key allow-list ([`validate-config-patch.ts`](src/lib/assistant/tools/construct/validate-config-patch.ts)).
+
+**Tests (+9).** [`node-fal-image.test.ts`](tests/unit/nodes/node-fal-image.test.ts): forwards quality/output-format/mask/size, throws with no ref (edit-only), omits an unwired mask, 16-ref ceiling + clamp, mask socket only on `gpt-image-2`. New [`image-api.test.ts`](tests/unit/fal/image-api.test.ts): edit endpoint + field mapping, custom `{ w, h }`, seed dropped for GPT Image 2, out-of-enum quality dropped, other models still send seed + ignore GPT-only fields.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. **ADR-0080** added; GLOSSARY + assistant vocabulary updated.
+
 ## 2026-06-25 — SAM 3.1 Video: visual masking (box + points) + output-parse fix
 
 Two follow-ups after the first real run of the mask-tracked workflow.
