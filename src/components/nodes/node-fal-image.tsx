@@ -532,17 +532,27 @@ function ImageSizeControl({
           </p>
         </div>
       ) : (
-        <select
-          value={config.imageSize ?? caps.imageSizes[0]!}
-          onChange={(e) => updateConfig({ imageSize: e.target.value })}
-          className={SELECT_CLASS}
-        >
-          {caps.imageSizes.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
+        <>
+          <select
+            value={config.imageSize ?? caps.imageSizes[0]!}
+            onChange={(e) => updateConfig({ imageSize: e.target.value })}
+            className={SELECT_CLASS}
+          >
+            {caps.imageSizes.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          {model === "gpt-image-2" ? (
+            <p className="text-[10px] leading-snug text-muted-foreground/70">
+              <code>auto</code> matches the input image&apos;s resolution —
+              pick a preset or switch to <code>custom</code> for a specific
+              size. <strong>Quality</strong> controls detail &amp; cost, not
+              pixels.
+            </p>
+          ) : null}
+        </>
       )}
     </div>
   );
