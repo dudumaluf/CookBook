@@ -117,3 +117,50 @@ describe("seedance prompt-refs row reflects the @Image[] array fan-out", () => {
     expect(screen.queryByText("@Image1")).toBeNull();
   });
 });
+
+describe("seedance settings — resolution respects the model tier + mode", () => {
+  const Settings = seedanceVideoNodeSchema.settings!.Content;
+  const resolutionOptions = () =>
+    Array.from(
+      (screen.getByLabelText("Resolution") as HTMLSelectElement).options,
+    ).map((o) => o.value);
+
+  it("offers 1080p on the standard tier in reference mode", () => {
+    render(
+      <Settings
+        nodeId="sd"
+        config={{ model: "standard", mode: "reference" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    expect(resolutionOptions()).toContain("1080p");
+  });
+
+  it("hides 1080p on the fast tier and shows the clamped 720p as selected", () => {
+    render(
+      <Settings
+        nodeId="sd"
+        config={{ model: "fast", mode: "reference", resolution: "1080p" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    expect(resolutionOptions()).toEqual(["480p", "720p"]);
+    expect((screen.getByLabelText("Resolution") as HTMLSelectElement).value).toBe(
+      "720p",
+    );
+  });
+
+  it("hides 1080p in image-to-video mode even on the standard tier", () => {
+    render(
+      <Settings
+        nodeId="sd"
+        config={{ model: "standard", mode: "first-frame", resolution: "1080p" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    expect(resolutionOptions()).not.toContain("1080p");
+  });
+});

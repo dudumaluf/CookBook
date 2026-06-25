@@ -284,6 +284,16 @@ function SeedanceVideoNodeBody({
       ? (parseAspectRatio(config.aspectRatio)?.cssAspect ?? "16 / 9")
       : "16 / 9";
 
+  // Show the resolution Fal will actually use: fast/mini + image-to-video cap
+  // at 720p (mirrors buildSeedanceInput's clamp), so a stored 1080p reads as
+  // 720p here rather than misrepresenting the output.
+  const effectiveResolution =
+    (resolveTier(config) !== "standard" ||
+      (config.mode ?? DEFAULT_MODE) !== "reference") &&
+    (config.resolution ?? DEFAULT_RESOLUTION) === "1080p"
+      ? "720p"
+      : (config.resolution ?? DEFAULT_RESOLUTION);
+
   // The node + edges feeding the @Image[] array socket (handle id "image") and
   // how many images that source currently emits. Lets the prompt-refs row show
   // the array's fan-out (@Image1..@ImageN), not just the numbered sockets — so
@@ -346,7 +356,7 @@ function SeedanceVideoNodeBody({
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
         <span>{config.aspectRatio ?? DEFAULT_ASPECT}</span>
         <span className="text-muted-foreground/60">·</span>
-        <span>{config.resolution ?? DEFAULT_RESOLUTION}</span>
+        <span>{effectiveResolution}</span>
         {config.mode && config.mode !== DEFAULT_MODE ? (
           <>
             <span className="text-muted-foreground/60">·</span>
@@ -446,6 +456,18 @@ function SeedanceVideoSettingsContent({
   const mode = config.mode ?? DEFAULT_MODE;
   const isImageMode = mode !== "reference";
   const tier = resolveTier(config);
+
+  // fast / mini render at ≤720p, and image-to-video caps at 720p on every tier
+  // — mirror buildSeedanceInput's clamp so the dropdown never offers a
+  // resolution Fal would silently downgrade. Display the clamped value while
+  // keeping any stored 1080p preference (restored on switch back to standard).
+  const capsAt720 = tier !== "standard" || isImageMode;
+  const selectedResolution = config.resolution ?? DEFAULT_RESOLUTION;
+  const effectiveResolution =
+    capsAt720 && selectedResolution === "1080p" ? "720p" : selectedResolution;
+  const allowedResolutions = capsAt720
+    ? SEEDANCE_RESOLUTIONS.filter((r) => r !== "1080p")
+    : SEEDANCE_RESOLUTIONS;
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -558,7 +580,7 @@ function SeedanceVideoSettingsContent({
         </label>
         <select
           id={resolutionId}
-          value={config.resolution ?? DEFAULT_RESOLUTION}
+          value={effectiveResolution}
           onChange={(e) =>
             updateConfig({
               resolution: e.target
@@ -567,12 +589,19 @@ function SeedanceVideoSettingsContent({
           }
           className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
         >
-          {SEEDANCE_RESOLUTIONS.map((r) => (
+          {allowedResolutions.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
         </select>
+        {capsAt720 ? (
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {tier !== "standard"
+              ? `${tier} renders at ≤ 720p.`
+              : "Image-to-video caps at 720p."}
+          </p>
+        ) : null}
       </div>
 
       {/* Native audio toggle */}
