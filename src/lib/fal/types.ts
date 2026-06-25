@@ -429,6 +429,57 @@ export interface Sam3SuccessResponse {
   model: string;
 }
 
+/* ───────────────── TeleStyle V2 (style transfer, image → image) ───────────────── */
+
+/**
+ * Fal `fal-ai/telestyle-v2` — restyle a CONTENT image using a STYLE reference
+ * image (TeleStyleV2 on Qwen-Image-Edit-2509). The prompt is derived
+ * automatically from both images by a vision-language model — no prompt input
+ * is required.
+ */
+export const TELESTYLE_V2_ENDPOINT = "fal-ai/telestyle-v2";
+
+export const TELESTYLE_V2_OUTPUT_FORMATS = ["png", "jpeg"] as const;
+export type TelestyleV2OutputFormat =
+  (typeof TELESTYLE_V2_OUTPUT_FORMATS)[number];
+
+/** Style-adapter strength. 1.0 matches the reference; lower applies it subtly. */
+export const TELESTYLE_V2_DEFAULT_LORA_SCALE = 1;
+export const TELESTYLE_V2_MIN_LORA_SCALE = 0;
+export const TELESTYLE_V2_MAX_LORA_SCALE = 4;
+
+export const telestyleV2RequestSchema = z
+  .object({
+    /** Subject + structure are preserved from this image. */
+    contentImageUrl: z.string().url(),
+    /** Artistic style / material / lighting / colour come from this image. */
+    styleImageUrl: z.string().url(),
+    /** TeleStyleV2 adapter strength (0..4). Omit for the 1.0 default. */
+    loraScale: z
+      .number()
+      .min(TELESTYLE_V2_MIN_LORA_SCALE)
+      .max(TELESTYLE_V2_MAX_LORA_SCALE)
+      .optional(),
+    outputFormat: z.enum(TELESTYLE_V2_OUTPUT_FORMATS).optional(),
+    // DEFERRED (v1 leaves these out — future work): `use_lightning_lora` /
+    // `lightning_lora_scale`, `use_content_description` / `use_style_description`
+    // (VLM prompt toggles), `image_size`, `negative_prompt`,
+    // `num_inference_steps`, `guidance_scale`, `acceleration`, `num_images`,
+    // `seed`, `enable_safety_checker`. Add when a workflow actually asks.
+  })
+  .strict();
+
+export type TelestyleV2Request = z.infer<typeof telestyleV2RequestSchema>;
+
+export interface TelestyleV2SuccessResponse {
+  imageUrl: string;
+  mime?: string;
+  /** The prompt the VLM derived from the content + style images. */
+  prompt?: string;
+  seed?: number;
+  model: string;
+}
+
 /* ───────────────────── Hunyuan 3D Pro image-to-3d ───────────────────── */
 
 /** Fal `fal-ai/hunyuan-3d/v3.1/pro/image-to-3d` — generate a GLB mesh from images. */
@@ -869,3 +920,62 @@ export type VeedSubtitlesStatusRequest = z.infer<
 export type VeedSubtitlesStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & VeedSubtitlesSuccessResponse);
+
+/* ─────────────────── DWPose (video → pose-annotated video) ─────────────────── */
+
+/** Fal `fal-ai/dwpose/video` — draw DWPose skeletons / masks onto a video. */
+export const DWPOSE_ENDPOINT = "fal-ai/dwpose/video";
+
+/**
+ * How the pose is rendered onto the output video. The `*-pose` modes draw the
+ * detected skeleton (whole body / face / hands); the `*-mask` modes output a
+ * white-on-black region mask instead of a skeleton. Mirrors Fal's `draw_mode`
+ * enum; `body-pose` is the documented default.
+ */
+export const DWPOSE_DRAW_MODES = [
+  "full-pose",
+  "body-pose",
+  "face-pose",
+  "hand-pose",
+  "face-hand-mask",
+  "face-mask",
+  "hand-mask",
+] as const;
+export type DwposeDrawMode = (typeof DWPOSE_DRAW_MODES)[number];
+
+/** Fal's documented default `draw_mode`. */
+export const DWPOSE_DEFAULT_DRAW_MODE: DwposeDrawMode = "body-pose";
+
+export const dwposeRequestSchema = z
+  .object({
+    videoUrl: z.string().url(),
+    /** Pose / mask render style. Omit to use Fal's `body-pose` default. */
+    drawMode: z.enum(DWPOSE_DRAW_MODES).optional(),
+  })
+  .strict();
+
+export type DwposeRequest = z.infer<typeof dwposeRequestSchema>;
+
+export interface DwposeSuccessResponse {
+  videoUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface DwposeSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const dwposeStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type DwposeStatusRequest = z.infer<typeof dwposeStatusRequestSchema>;
+
+export type DwposeStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & DwposeSuccessResponse);

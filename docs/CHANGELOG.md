@@ -2,6 +2,40 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-25 — TeleStyle V2 node: image style transfer (Fal)
+
+New `fal-telestyle-v2` node wrapping Fal's `fal-ai/telestyle-v2` (TeleStyleV2 on Qwen-Image-Edit-2509) — wire a **content** image (subject/structure to keep) + a **style** image (look to borrow), Run, get the content restyled in the reference's style. The prompt is derived automatically from both images by a VLM, so there's **no prompt input**.
+
+**Full Fal stack, cloned from the SAM 3 shape** (synchronous `fal.subscribe`, not the submit→poll queue — TeleStyle runs a fast 4-step Lightning edit). [`types.ts`](src/lib/fal/types.ts): `TELESTYLE_V2_ENDPOINT`, `TELESTYLE_V2_OUTPUT_FORMATS` (`png` / `jpeg`), `loraScale` bounds (0..4, default 1), `telestyleV2RequestSchema` (content + style URLs required, optional `loraScale` + `outputFormat`). [`telestyle-v2-api.ts`](src/lib/fal/telestyle-v2-api.ts) server-only wrapper (`FAL_KEY` stays server-side) + [`/api/fal/telestyle-v2`](src/app/api/fal/telestyle-v2/route.ts) route. [`call-telestyle-v2.ts`](src/lib/fal/call-telestyle-v2.ts) client (180s timeout). Deferred (v1 leaves out, defaulted on Fal): the VLM-description toggles, `image_size`, `negative_prompt`, `num_inference_steps`, `guidance_scale`, `acceleration`, `num_images`, `seed`, safety toggle.
+
+**Node** ([`node-fal-telestyle-v2.tsx`](src/components/nodes/node-fal-telestyle-v2.tsx)). Non-reactive `ai-image` node, `content` + `style` in → `styled` image out, registered in [`all-nodes.ts`](src/lib/engine/all-nodes.ts). The result is re-hosted into our bucket (like the SAM 3 cutout) so it survives Fal's CDN TTL and feeds downstream nodes. The `⋯` settings hold a **Style strength** slider (`loraScale`, 0..4, live value readout) + an **Output format** `<select>`. History-cursor image preview. Auto-visible to the assistant via the registry-derived node catalog.
+
+**Tests (+14).** [`telestyle-v2-route.test.ts`](tests/unit/fal/telestyle-v2-route.test.ts) (missing content/style → 400, out-of-range `loraScale` → 400, happy path, `missing_key` → 500, `upstream_error` → 502) + [`node-fal-telestyle-v2.test.ts`](tests/unit/nodes/node-fal-telestyle-v2.test.ts) (missing-image throws, re-hosts the result, passes `loraScale`/`outputFormat` through, omits unset knobs, schema shape, `hasOverrides`).
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — straight reuse of the SAM 3 single-call image→image pattern.
+
+## 2026-06-24 — DWPose node: pose / mask estimation on a video (Fal)
+
+New `fal-dwpose` node wrapping Fal's `fal-ai/dwpose/video` — wire a `video`, Run, get the same clip back with a DWPose **skeleton** (whole body / face / hands) or a **region mask** drawn on top. Useful as a control/reference video for motion-transfer downstream or just as a pose overlay.
+
+**Full Fal stack, cloned from the VEED Subtitles shape** (ADR-0057 submit→poll). [`types.ts`](src/lib/fal/types.ts): `DWPOSE_ENDPOINT`, the 7-value `DWPOSE_DRAW_MODES` enum (`full-pose` / `body-pose` / `face-pose` / `hand-pose` / `face-hand-mask` / `face-mask` / `hand-mask`, default `body-pose`), request/submit/status schemas. [`dwpose-api.ts`](src/lib/fal/dwpose-api.ts) server-only wrapper (`FAL_KEY` stays server-side) + [`/api/fal/dwpose`](src/app/api/fal/dwpose/route.ts) + [`/status`](src/app/api/fal/dwpose/status/route.ts) routes. [`call-dwpose.ts`](src/lib/fal/call-dwpose.ts) client poller (20-min ceiling, 5-blip tolerance).
+
+**Node** ([`node-fal-dwpose.tsx`](src/components/nodes/node-fal-dwpose.tsx)). Non-reactive `ai-video` node, `video` in → `video` out, registered in [`all-nodes.ts`](src/lib/engine/all-nodes.ts). The `⋯` settings hold one `Draw mode` `<select>`, grouped into **Pose (skeleton overlay)** vs **Mask (white-on-black region)**, with a one-line note explaining the active mode + the `$0.0006/compute second` rate. History-cursor video preview like the other Fal video nodes. Auto-visible to the assistant via the registry-derived node catalog.
+
+**Tests (+13).** [`dwpose-route.test.ts`](tests/unit/fal/dwpose-route.test.ts) (submit validation incl. unknown `draw_mode` → 400, no-mode accepted, `missing_key` → 500; status pending/done) + [`node-fal-dwpose.test.ts`](tests/unit/nodes/node-fal-dwpose.test.ts) (no-video throws, emits a video, defaults to `body-pose`, passes a configured mode through, schema shape).
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — straight reuse of the VEED Subtitles single-input video→video pattern.
+
+## 2026-06-24 — Seedance resolution dropdown hides 1080p when the tier/mode caps at 720p
+
+`buildSeedanceInput` already clamps 1080p → 720p for fast/mini and image-to-video, but the UI still *offered* 1080p there — so picking it silently downgraded. Now the dropdown only shows resolutions the selected model + mode actually render.
+
+**Settings + body** ([`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)). The `⋯` Resolution `<select>` filters out `1080p` when `tier !== "standard"` OR the mode is image-to-video (the exact `capsAt720` condition the server clamp uses), with a one-line note (`fast renders at ≤ 720p` / `Image-to-video caps at 720p`). Display is clamped — a stored `1080p` shows as `720p` while a capped tier/mode is active but is **preserved** (restored when you switch back to standard reference), so toggling tiers to compare isn't destructive. The body chip shows the same effective resolution, so it never reads `1080p` while rendering 720p.
+
+**Tests (+3).** [`node-fal-seedance-refs.test.tsx`](tests/component/nodes/node-fal-seedance-refs.test.tsx): standard+reference offers 1080p; fast clamps the option list to `["480p","720p"]` and shows 720p selected; image-to-video on standard drops 1080p too.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — UI mirror of the existing ADR-0078 clamp.
+
 ## 2026-06-24 — Seedance poll ceiling 10 → 30 min (heavy 1080p jobs were timing out)
 
 A 1080p **standard**-tier reference-to-video with 9 image refs + a video ref is one of the slowest jobs Fal offers, and it was blowing past the client poll loop's 10-minute ceiling → "Seedance timed out waiting for the video." The job itself keeps rendering on Fal (we submit+poll via the queue, ADR-0057 — each request is short, so no Vercel function limit is involved); the 10 min was purely how long *we* waited. Keeping 1080p matters for full-body character likeness, so the answer is a longer fuse, not lower quality.
