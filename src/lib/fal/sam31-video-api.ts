@@ -50,13 +50,29 @@ function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
   return input;
 }
 
-interface Sam31VideoRawFile {
+/**
+ * Pull the output video URL out of SAM 3.1's result. Fal documents the
+ * `video` field inconsistently — the OpenAPI schema types it as a `File`
+ * object (`{ url, content_type }`) but the docs' example response shows a
+ * bare string URL. Handle both (plus a couple of cross-endpoint fallbacks)
+ * so a real run doesn't bounce off a shape mismatch.
+ */
+function extractVideoUrl(data: Record<string, unknown> | undefined): {
   url?: string;
-  content_type?: string;
-}
-
-interface Sam31VideoRawOutput {
-  video?: Sam31VideoRawFile;
+  contentType?: string;
+} {
+  if (!data) return {};
+  const v = data.video;
+  if (typeof v === "string") return { url: v };
+  if (v && typeof v === "object") {
+    const f = v as { url?: string; content_type?: string };
+    if (typeof f.url === "string") {
+      return { url: f.url, contentType: f.content_type };
+    }
+  }
+  if (typeof data.video_url === "string") return { url: data.video_url };
+  if (typeof data.url === "string") return { url: data.url };
+  return {};
 }
 
 function isAbort(err: unknown, signal: AbortSignal): boolean {
@@ -116,22 +132,26 @@ export async function getSam31VideoResult(
   try {
     const st = await fal.queue.status(endpoint, { requestId, abortSignal: signal });
     if (st.status !== "COMPLETED") return { status: "pending" };
-    const result = (await fal.queue.result(endpoint, {
+    const raw = (await fal.queue.result(endpoint, {
       requestId,
       abortSignal: signal,
-    })) as { data: Sam31VideoRawOutput };
+    })) as { data?: Record<string, unknown> } & Record<string, unknown>;
 
-    const url = result.data.video?.url;
+    // The fal client normally wraps the payload in `.data`; fall back to the
+    // top level in case a future client version returns it unwrapped.
+    const data = (raw.data ?? raw) as Record<string, unknown>;
+    const { url, contentType } = extractVideoUrl(data);
     if (!url) {
+      const keys = data ? Object.keys(data).join(", ") : "none";
       throw annotate(
-        new Error("SAM 3.1 Video returned no video URL"),
+        new Error(`SAM 3.1 Video returned no video URL (output keys: ${keys})`),
         "upstream_error",
       );
     }
     return {
       status: "done",
       videoUrl: url,
-      mime: result.data.video?.content_type ?? "video/mp4",
+      mime: contentType ?? "video/mp4",
       model: endpoint,
     };
   } catch (err) {
