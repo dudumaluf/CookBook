@@ -999,11 +999,37 @@ export const SAM31_VIDEO_MAX_OBJECTS_DEFAULT = 16;
 export const SAM31_VIDEO_MAX_OBJECTS_MIN = 1;
 export const SAM31_VIDEO_MAX_OBJECTS_MAX = 128;
 
+/**
+ * A click prompt on a specific frame. `label` is 1 for foreground ("this is
+ * the object") or 0 for background ("not this"). Pixel coordinates.
+ */
+export const sam31PointPromptSchema = z.object({
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  label: z.union([z.literal(0), z.literal(1)]).optional(),
+  frameIndex: z.number().int().min(0).optional(),
+});
+export type Sam31PointPrompt = z.infer<typeof sam31PointPromptSchema>;
+
+/** A box prompt bounding the object on a frame. Pixel coordinates. */
+export const sam31BoxPromptSchema = z.object({
+  xMin: z.number().int().min(0),
+  yMin: z.number().int().min(0),
+  xMax: z.number().int().min(0),
+  yMax: z.number().int().min(0),
+  frameIndex: z.number().int().min(0).optional(),
+});
+export type Sam31BoxPrompt = z.infer<typeof sam31BoxPromptSchema>;
+
 export const sam31VideoRequestSchema = z
   .object({
     videoUrl: z.string().url(),
     /** Comma-separate to track multiple objects (e.g. "person, cloth"). */
     prompt: z.string().optional(),
+    /** Foreground/background click prompts (visual masking). */
+    pointPrompts: z.array(sam31PointPromptSchema).optional(),
+    /** Bounding-box prompts (visual masking). */
+    boxPrompts: z.array(sam31BoxPromptSchema).optional(),
     /** Isolate the object on black (true) vs. overlay on the video (false). */
     applyMask: z.boolean().optional(),
     detectionThreshold: z

@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-25 — SAM 3.1 Video: visual masking (box + points) + output-parse fix
+
+Two follow-ups after the first real run of the mask-tracked workflow.
+
+**Visual masking.** Beyond the text prompt, SAM 3.1 Video can now target the object **visually**: a **"Target by" toggle** (Describe / Mark visually) in the settings opens a **modal mask editor** ([`node-fal-sam31-video.tsx`](src/components/nodes/node-fal-sam31-video.tsx)) that pulls the source clip's first frame (via [`extractFrame`](src/lib/media/extract-frame.ts)) and lets you **drag a box** around the object and drop **foreground (Include) / background (Exclude) points** on it — combinable, and the text prompt is still sent alongside if set (all three sharpen the mask). Marks are stored normalised (0..1) in node config and converted to Fal's pixel `point_prompts` / `box_prompts` at run time via the pure, unit-tested `sam31VisualPromptsToPixels` (the node probes the video for its dimensions with [`probeMedia`](src/lib/media/probe.ts)). Schema + server mapping added in [`types.ts`](src/lib/fal/types.ts) (`sam31PointPromptSchema`, `sam31BoxPromptSchema`) + [`sam31-video-api.ts`](src/lib/fal/sam31-video-api.ts) `buildInput`; the client wrapper forwards them automatically. `frame_index` 0 + single object in v1. See **ADR-0079** (update).
+
+**Fix — "SAM 3.1 Video returned no video URL".** The job completed but the parser only read `data.video.url`, while Fal's docs example returns `video` as a **bare string** (OpenAPI types it as a `File` object). The result parse now accepts string-or-object (plus `video_url`/`url` fallbacks) and unwraps `.data` defensively; on a genuine miss the error lists the output keys so the real shape is visible.
+
+**Tests (+11):** `sam31VisualPromptsToPixels` (point scaling + fg/bg labels, box corner-normalisation, degenerate-box drop, empty), visual-mode execute (probes + forwards pixel box/point prompts, no text default, throws with no marks), route accepts/forwards point+box prompts + 400 on a negative coord. `npx tsc --noEmit` · `npm run lint` green.
+
 ## 2026-06-25 — Mask-tracked crop / stabilize / recompose (SAM 3.1 Video + 2 local nodes)
 
 A three-node workflow to **mask an object, track + stabilize a crop of it, edit that crop, and recompose the edit back into the original footage** in the object's moving position. See **ADR-0079** for the architecture (why recompose recomputes the geometry from the mask instead of receiving a transform side-channel).

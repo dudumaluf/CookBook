@@ -40,6 +40,23 @@ function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
   if (req.prompt !== undefined && req.prompt.length > 0) {
     input.prompt = req.prompt;
   }
+  if (req.pointPrompts && req.pointPrompts.length > 0) {
+    input.point_prompts = req.pointPrompts.map((p) => ({
+      x: p.x,
+      y: p.y,
+      label: p.label ?? 1,
+      frame_index: p.frameIndex ?? 0,
+    }));
+  }
+  if (req.boxPrompts && req.boxPrompts.length > 0) {
+    input.box_prompts = req.boxPrompts.map((b) => ({
+      x_min: b.xMin,
+      y_min: b.yMin,
+      x_max: b.xMax,
+      y_max: b.yMax,
+      frame_index: b.frameIndex ?? 0,
+    }));
+  }
   if (req.applyMask !== undefined) input.apply_mask = req.applyMask;
   if (req.detectionThreshold !== undefined) {
     input.detection_threshold = req.detectionThreshold;

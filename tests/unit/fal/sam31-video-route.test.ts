@@ -87,6 +87,41 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
     );
   });
 
+  it("accepts and forwards visual point + box prompts", async () => {
+    submitSam31Video.mockResolvedValueOnce({
+      requestId: "req-3",
+      endpoint: "fal-ai/sam-3-1/video-rle",
+    });
+    const res = await SUBMIT(
+      makeRequest({
+        videoUrl: "https://x/v.mp4",
+        pointPrompts: [{ x: 100, y: 50, label: 1, frameIndex: 0 }],
+        boxPrompts: [{ xMin: 10, yMin: 20, xMax: 200, yMax: 180, frameIndex: 0 }],
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(submitSam31Video).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pointPrompts: [{ x: 100, y: 50, label: 1, frameIndex: 0 }],
+        boxPrompts: [
+          { xMin: 10, yMin: 20, xMax: 200, yMax: 180, frameIndex: 0 },
+        ],
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("returns 400 on a negative point coordinate", async () => {
+    const res = await SUBMIT(
+      makeRequest({
+        videoUrl: "https://x/v.mp4",
+        pointPrompts: [{ x: -5, y: 10 }],
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+  });
+
   it("maps upstream_error to 502", async () => {
     const err = new Error("Fal: boom");
     (err as Error & { code?: string }).code = "upstream_error";
