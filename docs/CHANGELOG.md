@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-24 — Seedance poll ceiling 10 → 30 min (heavy 1080p jobs were timing out)
+
+A 1080p **standard**-tier reference-to-video with 9 image refs + a video ref is one of the slowest jobs Fal offers, and it was blowing past the client poll loop's 10-minute ceiling → "Seedance timed out waiting for the video." The job itself keeps rendering on Fal (we submit+poll via the queue, ADR-0057 — each request is short, so no Vercel function limit is involved); the 10 min was purely how long *we* waited. Keeping 1080p matters for full-body character likeness, so the answer is a longer fuse, not lower quality.
+
+**Ceiling + message** ([`call-seedance.ts`](src/lib/fal/call-seedance.ts)). `MAX_WAIT_MS` 10 → 30 min (3×), with a comment on why video renders need the headroom and that the user can always abort early. The timeout error is now actionable: it notes the job may still finish on Fal and points at **720p / the fast / mini tier** for quicker renders. No behavior change to the submit/poll robustness (transient-blip tolerance, abort handling) — just a longer fuse.
+
+**Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. No new ADR — tuning an existing constant.
+
 ## 2026-06-24 — Seedance `prompt refs:` row shows the `@Image[]` array fan-out
 
 Wiring a Frames Extract array into the `@Image[]` socket sent the frames as `@Image1..@ImageN` at run time, but the node's `prompt refs:` confirmation row only counted the numbered `image-N` sockets — so the array contributed **no** chips and it looked like the keyframes weren't recognized as references. The row now mirrors `execute()`'s `gather()` exactly.

@@ -39,7 +39,12 @@ export interface CallSeedanceArgs extends SeedanceVideoRequest {
 
 /** How often to poll, the overall ceiling, and how many poll blips to ride out. */
 const POLL_INTERVAL_MS = 3_000;
-const MAX_WAIT_MS = 10 * 60_000;
+// Heavy Seedance jobs (1080p standard + many references, 15s) routinely render
+// for many minutes on Fal, and the queue can add more under load. Keep a
+// generous ceiling so a legitimately slow render isn't abandoned client-side
+// (the job is queued on Fal regardless — this is just how long WE wait). The
+// user can always abort early; lower res / the fast tier renders quicker.
+const MAX_WAIT_MS = 30 * 60_000;
 const MAX_CONSECUTIVE_POLL_ERRORS = 5;
 
 function abortError(message = "Request cancelled"): Error {
@@ -162,7 +167,10 @@ export async function callSeedanceVideo(
       };
     }
     if (Date.now() > deadline) {
-      throw new FalCallError("Seedance timed out waiting for the video.", "timeout");
+      throw new FalCallError(
+        "Seedance is still rendering after 30 min — heavy jobs (1080p + many references) are slow. It may still finish on Fal; for quicker renders try 720p or the fast / mini tier.",
+        "timeout",
+      );
     }
   }
 }
