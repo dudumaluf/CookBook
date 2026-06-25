@@ -12,6 +12,8 @@ GPT Image 2 (`openai/gpt-image-2/edit`) joins the Fal Image node's model picker.
 
 **Tests (+9).** [`node-fal-image.test.ts`](tests/unit/nodes/node-fal-image.test.ts): forwards quality/output-format/mask/size, throws with no ref (edit-only), omits an unwired mask, 16-ref ceiling + clamp, mask socket only on `gpt-image-2`. New [`image-api.test.ts`](tests/unit/fal/image-api.test.ts): edit endpoint + field mapping, custom `{ w, h }`, seed dropped for GPT Image 2, out-of-enum quality dropped, other models still send seed + ignore GPT-only fields.
 
+**Follow-up (timeout fix).** GPT Image 2 is the first *slow* image model, and `/api/fal/image` had **no `maxDuration`** (synchronous `fal.subscribe` holds the function open for the whole render) — so Vercel killed the function mid-render and the client showed a misleading "Could not reach the Fal image endpoint" **while Fal finished the job**. Fixed: route `maxDuration = 300` ([`route.ts`](src/app/api/fal/image/route.ts)) + client ceiling 120s → 300s with a **distinct timeout message** (a fired `TimeoutError` was being mislabeled as a network failure) ([`call-fal-image.ts`](src/lib/fal/call-fal-image.ts)).
+
 **Verification:** `npm test` · `npx tsc --noEmit` · `npm run lint` · `npm run docs:check` all green. **ADR-0080** added; GLOSSARY + assistant vocabulary updated.
 
 ## 2026-06-25 — SAM 3.1 Video: visual masking (box + points) + output-parse fix

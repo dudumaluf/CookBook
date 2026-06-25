@@ -6,11 +6,16 @@ import { falImageRequestSchema, type FalErrorResponse } from "@/lib/fal/types";
 
 /**
  * POST /api/fal/image — Slice F. Proxies Fal image generation/edit (Nano
- * Banana 2 / Flux 2 / Seedream), keeping FAL_KEY server-only. Mirrors the
- * Seedance route shape. Image gen is fast, so no elevated maxDuration.
+ * Banana 2 / Flux 2 / Seedream / Krea / GPT Image 2), keeping FAL_KEY
+ * server-only. Synchronous `fal.subscribe`, so the function stays open for
+ * the whole render. Most models finish in seconds, but GPT Image 2 (OpenAI
+ * backend, default `high` quality, or many/large images) can take 1–2 min —
+ * hence the elevated maxDuration so Vercel doesn't kill the function (which
+ * surfaced on the client as a misleading "could not reach the endpoint").
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const __auth = await requireUser(req);
