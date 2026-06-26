@@ -264,8 +264,14 @@ function Sam31VideoBody({ nodeId, config }: NodeBodyProps<Sam31VideoNodeConfig>)
 
 type MaskTool = "fg" | "bg" | "box";
 
-const FRAME_MAX_W = 632;
-const FRAME_MAX_H = 440;
+// The marking surface fills the modal: up to this many px wide, capped to a
+// share of the viewport so it scales up on big screens (precise marking) and
+// never overflows on small ones. The frame box is sized to the frame's true
+// DISPLAY aspect (so normalised marks map 1:1 — no letterboxing math).
+const FRAME_CAP_W = 1180;
+const FRAME_VW = 0.92;
+const FRAME_VH = 0.66;
+const FRAME_CHROME_PX = 64;
 
 function loadImageDims(url: string): Promise<{ w: number; h: number }> {
   return new Promise((resolve, reject) => {
@@ -297,9 +303,20 @@ function Sam31MaskEditor({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftBox, setDraftBox] = useState<Sam31MaskBox | null>(null);
+  const [viewport, setViewport] = useState({ w: 1280, h: 800 });
   const dragStart = useRef<{ x: number; y: number } | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const frameUrlRef = useRef<string | null>(null);
+
+  // Track the viewport so the marking surface grows/shrinks with the window.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const update = () =>
+      setViewport({ w: window.innerWidth, h: window.innerHeight });
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   // Revoke the last object URL on unmount (the load happens in the click
   // handler below, not here, so the effect never calls setState).
@@ -334,11 +351,13 @@ function Sam31MaskEditor({
     }
   }
 
-  const scale = dims
-    ? Math.min(FRAME_MAX_W / dims.w, FRAME_MAX_H / dims.h)
-    : 1;
-  const displayW = dims ? Math.round(dims.w * scale) : FRAME_MAX_W;
-  const displayH = dims ? Math.round(dims.h * scale) : Math.round((FRAME_MAX_W * 9) / 16);
+  const maxW = Math.min(viewport.w * FRAME_VW, FRAME_CAP_W) - FRAME_CHROME_PX;
+  const maxH = viewport.h * FRAME_VH;
+  const scale = dims ? Math.min(maxW / dims.w, maxH / dims.h) : 1;
+  const displayW = dims ? Math.max(1, Math.round(dims.w * scale)) : Math.round(maxW);
+  const displayH = dims
+    ? Math.max(1, Math.round(dims.h * scale))
+    : Math.round((maxW * 9) / 16);
 
   function normFromEvent(e: React.PointerEvent | React.MouseEvent) {
     const el = frameRef.current;
@@ -436,7 +455,7 @@ function Sam31MaskEditor({
       ) : null}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[680px]">
+        <DialogContent className="w-[92vw] sm:max-w-[1180px]">
           <DialogHeader>
             <DialogTitle>Mark the object</DialogTitle>
             <DialogDescription>
@@ -779,7 +798,16 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
     let boxPrompts: Sam31BoxPrompt[] | undefined;
     if (mode === "visual") {
       const probe = await probeMedia(video.url);
-      if (!probe.width || !probe.height) {
+      // Marks are captured on the DISPLAY frame (the editor's `extractFrame`
+      // thumbnail bakes in rotation + pixel-aspect), so they must be mapped
+      // against display dimensions — NOT the coded buffer size. For a rotated
+      // phone clip coded≠display (e.g. coded 1920×1080 → display 1080×1920);
+      // mapping against coded coords lands the box out of Fal's display-space
+      // bounds and the model 500s. Fall back to coded for upright square-pixel
+      // clips (where they're equal) and older probe shapes.
+      const frameW = probe.displayWidth ?? probe.width;
+      const frameH = probe.displayHeight ?? probe.height;
+      if (!frameW || !frameH) {
         throw new Error(
           "Couldn't read the video size to place the visual mask — switch to a text prompt.",
         );
@@ -787,8 +815,8 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
       ({ pointPrompts, boxPrompts } = sam31VisualPromptsToPixels(
         config.points,
         config.box,
-        probe.width,
-        probe.height,
+        frameW,
+        frameH,
       ));
     }
 

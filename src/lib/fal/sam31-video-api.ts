@@ -96,6 +96,18 @@ function isAbort(err: unknown, signal: AbortSignal): boolean {
   return (err as Error)?.name === "AbortError" || signal.aborted;
 }
 
+/**
+ * Wrap a Fal failure with its HTTP status when present so a stuck job is
+ * legible: `Fal (500)` = the model crashed (e.g. prompts out of frame
+ * bounds), `Fal (422)` = a rejected payload (with field detail from
+ * `describeFalError`). Both still map to a 502 at the route.
+ */
+function upstreamError(err: unknown): Error {
+  const status = (err as { status?: number })?.status;
+  const prefix = typeof status === "number" ? `Fal (${status})` : "Fal";
+  return annotate(new Error(`${prefix}: ${describeFalError(err)}`), "upstream_error");
+}
+
 export async function submitSam31Video(
   req: Sam31VideoRequest,
   signal: AbortSignal,
@@ -123,7 +135,7 @@ export async function submitSam31Video(
     if (isAbort(err, signal)) {
       throw annotate(new Error("Request cancelled"), "aborted");
     }
-    throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
+    throw upstreamError(err);
   }
 }
 
@@ -176,6 +188,6 @@ export async function getSam31VideoResult(
       throw annotate(new Error("Request cancelled"), "aborted");
     }
     if ((err as { code?: string }).code) throw err;
-    throw annotate(new Error(`Fal: ${describeFalError(err)}`), "upstream_error");
+    throw upstreamError(err);
   }
 }

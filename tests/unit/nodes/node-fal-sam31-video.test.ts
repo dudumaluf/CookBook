@@ -179,6 +179,51 @@ describe("sam31-video node execute", () => {
     ]);
   });
 
+  it("maps visual marks against DISPLAY dims, not coded (rotated clip → no out-of-bounds 500)", async () => {
+    // Rotated phone clip: coded 1920×1080 but displays 1080×1920. The marks
+    // were drawn on the display frame, so they must scale by display dims.
+    probeMedia.mockResolvedValueOnce({
+      width: 1920,
+      height: 1080,
+      displayWidth: 1080,
+      displayHeight: 1920,
+      durationMs: 4000,
+      hasVideo: true,
+      hasAudio: false,
+    });
+    await sam31VideoNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/v.mp4" } } },
+        {
+          promptMode: "visual",
+          box: { x0: 0, y0: 0, x1: 0.5, y1: 0.5 },
+          points: [{ x: 0.5, y: 0.5, fg: true }],
+        },
+      ) as CtxArgs,
+    );
+    const arg = callSam31Video.mock.calls[0]![0];
+    // Display-space: 0.5×1080=540, 0.5×1920=960 (coded would give 960/540).
+    expect(arg.boxPrompts).toEqual([
+      { xMin: 0, yMin: 0, xMax: 540, yMax: 960, frameIndex: 0 },
+    ]);
+    expect(arg.pointPrompts).toEqual([
+      { x: 540, y: 960, label: 1, frameIndex: 0 },
+    ]);
+  });
+
+  it("falls back to coded dims when the probe has no display dims", async () => {
+    // Older probe shape (no displayWidth/Height) → coded 1920×1080 is used.
+    await sam31VideoNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/v.mp4" } } },
+        { promptMode: "visual", box: { x0: 0, y0: 0, x1: 0.5, y1: 0.5 } },
+      ) as CtxArgs,
+    );
+    expect(callSam31Video.mock.calls[0]![0].boxPrompts).toEqual([
+      { xMin: 0, yMin: 0, xMax: 960, yMax: 540, frameIndex: 0 },
+    ]);
+  });
+
   it("visual mode forwards foreground/background point prompts", async () => {
     await sam31VideoNodeSchema.execute!(
       ctx(

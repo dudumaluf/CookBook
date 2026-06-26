@@ -2,6 +2,28 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-26 — Fix: SAM 3.1 Video visual marks on rotated/anamorphic clips (the "Fal: Internal Server Error") + bigger mask editor
+
+Two linked fixes for the SAM 3.1 Video mask editor.
+
+**The 500.** Marking an object and running 500'd with "Fal: Internal Server Error" on rotated phone clips (and anamorphic video). Root cause: the editor captures marks on the **display** frame (`extractFrame` bakes in rotation + pixel-aspect), but `execute` scaled them to pixels using **coded** dimensions (`probeMedia` → `getCodedWidth/Height`). When coded ≠ display (e.g. a portrait clip coded 1920×1080 but displayed 1080×1920), the box lands outside Fal's display-space bounds and SAM crashes — text prompts have no coordinates, so they always worked. Fix: `probeMedia` now also returns `displayWidth`/`displayHeight` (rotation + pixel-aspect adjusted), and the node maps marks against those (falling back to coded for upright square-pixel clips). [`probe.ts`](src/lib/media/probe.ts), [`node-fal-sam31-video.tsx`](src/components/nodes/node-fal-sam31-video.tsx). NB: other `probeMedia` consumers still use coded `width/height`; they may want display dims for rotated clips later (out of scope here).
+
+**Tiny marking window.** The editor `Dialog` was capped by the component's default `sm:max-w-sm` (384px) — the old `max-w-[680px]` didn't override it (different breakpoint group in `tailwind-merge`). The mask editor now opens at `min(92vw, 1180px)` and the first-frame preview scales to fill the modal (up to 92vw × 66vh, tracking window resizes) at the frame's true display aspect, so marking is precise instead of cramped.
+
+**Tests (+2).** [`node-fal-sam31-video.test.ts`](tests/unit/nodes/node-fal-sam31-video.test.ts): a rotated clip (coded 1920×1080 / display 1080×1920) maps marks against display dims; older probe shapes fall back to coded.
+
+**Verification:** `npx tsc --noEmit` · `npm run lint` · targeted Vitest green. Logic + unit-tested; still wants a live confirm against a real rotated clip.
+
+## 2026-06-26 — Fix: SAM 3.1 Video visual marks crashed Fal (coded-vs-display coords) + bigger mask editor
+
+Marking an object in the SAM 3.1 Video node (box / foreground-background points) then running it returned **"Fal: Internal Server Error"** every time, while text prompts worked. Root cause: the mask editor captures marks on the **display** frame (the editor's `extractFrame` thumbnail bakes in rotation + pixel-aspect), but `execute` mapped those normalised marks to pixels using the **coded** buffer size from `probeMedia` (`getCodedWidth/Height`). For rotated phone clips coded≠display (e.g. coded 1920×1080 → displayed 1080×1920), so the box landed out of bounds in Fal's display space and the model crashed (a 500, not a 422 — the payload shape was correct all along).
+
+**Fix.** `probeMedia` now also returns **display** dimensions (`displayWidth`/`displayHeight`, rotation + pixel-aspect applied) alongside coded ([`probe.ts`](src/lib/media/probe.ts)); the SAM node maps visual marks against display dims (falling back to coded for upright square-pixel clips / older probe shapes) ([`node-fal-sam31-video.tsx`](src/components/nodes/node-fal-sam31-video.tsx)). The mask editor modal is now viewport-sized (`w-[92vw] sm:max-w-[1180px]`, frame scaled to ~⅔ viewport height) instead of capped at the dialog's default `sm:max-w-sm` — so the marking surface is large and shows the true display aspect. SAM upstream errors now include the HTTP status (`Fal (500)` = model crash vs `Fal (422)` = rejected payload) so a stuck job is legible ([`sam31-video-api.ts`](src/lib/fal/sam31-video-api.ts)).
+
+**Tests (+2).** [`node-fal-sam31-video.test.ts`](tests/unit/nodes/node-fal-sam31-video.test.ts): a rotated clip (coded 1920×1080 / display 1080×1920) maps marks by display dims (540/960, not coded 960/540), and falls back to coded when the probe has no display dims.
+
+**Verification:** SAM suites + `npx tsc --noEmit` + `npm run lint` green. Needs a live re-run against Fal in the browser to confirm end-to-end (the decode + Fal call can't be exercised in tests).
+
 ## 2026-06-26 — Composer node (Phase 2): per-layer masks (alpha + luma, invertible)
 
 Phase 2 of the Composer arc: any layer can now take a **mask** — a matte image that decides where the layer shows. Pick the matte from **another wired input** or a **pasted URL** in the layer's properties, read it as **alpha** (the matte's transparency) or **luma** (its brightness), and optionally **invert**. The mask previews live on the editor stage (CSS mask) and bakes exactly on Run.

@@ -16,8 +16,19 @@ import { ALL_FORMATS, BlobSource, Input, UrlSource } from "mediabunny";
 
 export interface MediaProbeResult {
   durationMs: number;
+  /** CODED dimensions — the raw decoded buffer, BEFORE rotation / pixel-aspect. */
   width?: number;
   height?: number;
+  /**
+   * DISPLAY dimensions — after rotation + pixel-aspect adjustment, i.e. what a
+   * player actually shows. For a rotated phone clip these are swapped vs.
+   * coded (e.g. coded 1920×1080 → display 1080×1920). Use these whenever a
+   * pixel coordinate must line up with the visible frame (e.g. mapping marks
+   * drawn on a `extractFrame` thumbnail). Falls back to coded for callers that
+   * predate this field.
+   */
+  displayWidth?: number;
+  displayHeight?: number;
   mimeType?: string;
   hasVideo: boolean;
   hasAudio: boolean;
@@ -47,10 +58,14 @@ export async function probeMedia(
 
     let width: number | undefined;
     let height: number | undefined;
+    let displayWidth: number | undefined;
+    let displayHeight: number | undefined;
     if (videoTrack) {
-      [width, height] = await Promise.all([
+      [width, height, displayWidth, displayHeight] = await Promise.all([
         videoTrack.getCodedWidth(),
         videoTrack.getCodedHeight(),
+        videoTrack.getDisplayWidth(),
+        videoTrack.getDisplayHeight(),
       ]);
     }
 
@@ -58,6 +73,8 @@ export async function probeMedia(
       durationMs: Math.round(durationSec * 1000),
       width,
       height,
+      displayWidth,
+      displayHeight,
       mimeType,
       hasVideo: videoTrack !== null,
       hasAudio: audioTrack !== null,
