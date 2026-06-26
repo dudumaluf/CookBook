@@ -282,7 +282,7 @@ function loadImageDims(url: string): Promise<{ w: number; h: number }> {
   });
 }
 
-function Sam31MaskEditor({
+export function Sam31MaskEditor({
   videoUrl,
   points,
   box,
@@ -372,9 +372,20 @@ function Sam31MaskEditor({
     if (tool !== "box") return;
     const p = normFromEvent(e);
     if (!p) return;
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    // Start the draft FIRST. Pointer capture (below) only keeps the drag
+    // tracking if the cursor briefly leaves the frame — but `setPointerCapture`
+    // can throw `InvalidStateError` inside a portaled overlay (the Base UI
+    // Dialog this editor lives in). It used to run *before* this state was set,
+    // so a throw silently aborted the whole draw and no box ever appeared
+    // (Include/Exclude points still worked — they don't capture). Best-effort +
+    // guarded now, on the stable frame element, so the box always draws.
     dragStart.current = { x: p.nx, y: p.ny };
     setDraftBox({ x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny });
+    try {
+      frameRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* capture is optional — the frame's own move/up handlers still fire */
+    }
   }
 
   function handlePointerMove(e: React.PointerEvent) {

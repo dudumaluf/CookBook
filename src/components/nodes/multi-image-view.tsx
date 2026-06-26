@@ -1,8 +1,10 @@
 "use client";
 
 import { LayoutGrid } from "lucide-react";
+import { useMemo } from "react";
 
 import { ImageContextMenu } from "@/components/nodes/image-context-menu";
+import type { PreviewModalItem } from "@/components/nodes/image-preview-modal";
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { MediaPreviewImage } from "@/components/nodes/media-preview";
 import { PreviewImage } from "@/components/nodes/preview-image";
@@ -79,6 +81,19 @@ export function MultiImageView({
   onPreviewIndexChange,
   testIdPrefix,
 }: MultiImageViewProps) {
+  // The whole batch as modal items, so the full-screen preview can walk
+  // every image with ‹ › / ← → instead of one-at-a-time. Built before the
+  // early returns so the hook order is stable.
+  const modalItems = useMemo<PreviewModalItem[]>(
+    () =>
+      imageUrls.map((url, i) => ({
+        url,
+        alt: `Generated ${i + 1} of ${imageUrls.length}`,
+        downloadName: `generated-${i + 1}`,
+      })),
+    [imageUrls],
+  );
+
   if (imageUrls.length === 0) return null;
 
   // Single-image batches don't need either affordance — render the
@@ -117,6 +132,9 @@ export function MultiImageView({
           downloadName={`generated-${safeIndex + 1}`}
           aspectRatio={aspectRatio}
           fit="contain"
+          items={modalItems}
+          index={safeIndex}
+          onIndexChange={onPreviewIndexChange}
         />
         {/* Bottom overlay strip — back-to-grid + iterator cursor.
          *  Sits inside the preview area so the node silhouette

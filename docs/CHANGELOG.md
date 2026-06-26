@@ -14,6 +14,24 @@ Two linked fixes for the SAM 3.1 Video mask editor.
 
 **Verification:** `npx tsc --noEmit` · `npm run lint` · targeted Vitest green. Logic + unit-tested; still wants a live confirm against a real rotated clip.
 
+## 2026-06-26 — Fix: SAM 3.1 mask editor couldn't draw a box (setPointerCapture threw in the portal)
+
+In the SAM 3.1 Video visual mask editor you could drop Include/Exclude points but **dragging a box did nothing**. The editor lives inside a Base UI `Dialog` (a portal), where `el.setPointerCapture(pointerId)` can throw `InvalidStateError`. The box handler called it *before* seeding the draft box, so the throw silently aborted the whole draw — `dragStart`/`draftBox` were never set, and `pointerup` bailed with nothing to commit. Points were unaffected because they use `onClick` (no capture), which is why marks worked but the box never appeared. Fix: seed the draft first, then make capture best-effort (try/catch) on the stable frame element ([`node-fal-sam31-video.tsx`](src/components/nodes/node-fal-sam31-video.tsx)). The drag still tracks via the frame's own move/up handlers regardless of capture.
+
+**Tests (+2).** [`sam31-mask-editor.test.tsx`](tests/component/nodes/sam31-mask-editor.test.tsx): a drag commits a box even when `setPointerCapture` throws (stands in for the real-browser portal failure), and a click-sized non-drag is ignored.
+
+## 2026-06-26 — Full-screen preview: arrow-key navigation across a node's batch
+
+Opening the full-screen image preview on one result and wanting to see the next meant: close the modal → click the next thumbnail / cursor → click to re-open. Now the modal walks the whole set in place. `ImagePreviewModal` ([`image-preview-modal.tsx`](src/components/nodes/image-preview-modal.tsx)) gained an optional `items: PreviewModalItem[]` (+ starting `index` + `onIndexChange`) form: when the batch has >1 item it shows ‹ › buttons, a `n / N` counter, and **`←` / `→` keyboard navigation** (wrap-around). The modal owns its cursor while open and notifies the parent via `onIndexChange`, so closing it leaves the node body focused on the last image you viewed.
+
+Wired into the two surfaces where "there's more to see in the node" applies:
+- **`MultiImageView`** single mode (Fal Image / Higgsfield batches) — the whole batch flows through `PreviewImage`'s new `items`/`index`/`onIndexChange` pass-through ([`preview-image.tsx`](src/components/nodes/preview-image.tsx), [`multi-image-view.tsx`](src/components/nodes/multi-image-view.tsx)).
+- **Image Grid** — multi-page grids page through the modal directly ([`node-image-grid.tsx`](src/components/nodes/node-image-grid.tsx)).
+
+The single-`url` form is unchanged (no nav chrome). Video previews remain inline with native controls — no multi-item video lightbox yet.
+
+**Tests (+7).** [`image-preview-modal.test.tsx`](tests/component/nodes/image-preview-modal.test.tsx): starting index + counter, next/prev buttons (+ wrap), `←`/`→` keys, arrows don't close, single-item batch shows no nav chrome.
+
 ## 2026-06-26 — Fix: SAM 3.1 Video visual marks crashed Fal (coded-vs-display coords) + bigger mask editor
 
 Marking an object in the SAM 3.1 Video node (box / foreground-background points) then running it returned **"Fal: Internal Server Error"** every time, while text prompts worked. Root cause: the mask editor captures marks on the **display** frame (the editor's `extractFrame` thumbnail bakes in rotation + pixel-aspect), but `execute` mapped those normalised marks to pixels using the **coded** buffer size from `probeMedia` (`getCodedWidth/Height`). For rotated phone clips coded≠display (e.g. coded 1920×1080 → displayed 1080×1920), so the box landed out of bounds in Fal's display space and the model crashed (a 500, not a 422 — the payload shape was correct all along).

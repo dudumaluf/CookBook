@@ -4,7 +4,10 @@ import { Grid3x3, Loader2 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 
 import { ImageContextMenu } from "@/components/nodes/image-context-menu";
-import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
+import {
+  ImagePreviewModal,
+  type PreviewModalItem,
+} from "@/components/nodes/image-preview-modal";
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
 import { DimensionBadge } from "@/components/nodes/media-preview";
 import { defineNode } from "@/lib/engine/define-node";
@@ -202,6 +205,18 @@ function ImageGridBody({
       .map((o) => o.value.url);
   }, [output]);
   const pageCount = pageUrls.length;
+  // Every page as a modal item so the full-screen preview can flip through
+  // multi-page grids with ‹ › / ← → without closing + reopening.
+  const modalItems = useMemo<PreviewModalItem[]>(
+    () =>
+      pageUrls.map((url, i) => ({
+        url,
+        alt: pageUrls.length > 1 ? `Image grid page ${i + 1}` : "Image grid",
+        downloadName: pageUrls.length > 1 ? `image-grid-${i + 1}` : "image-grid",
+        checkerboard: true,
+      })),
+    [pageUrls],
+  );
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
@@ -352,12 +367,9 @@ function ImageGridBody({
           </div>
           {previewOpen ? (
             <ImagePreviewModal
-              url={currentUrl}
-              alt={pageCount > 1 ? `Image grid page ${safePage + 1}` : "Image grid"}
-              downloadName={
-                pageCount > 1 ? `image-grid-${safePage + 1}` : "image-grid"
-              }
-              checkerboard
+              items={modalItems}
+              index={safePage}
+              onIndexChange={setPageIndex}
               onClose={() => setPreviewOpen(false)}
             />
           ) : null}

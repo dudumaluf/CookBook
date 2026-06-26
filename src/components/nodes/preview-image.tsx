@@ -3,7 +3,10 @@
 import { useState } from "react";
 
 import { ImageContextMenu } from "@/components/nodes/image-context-menu";
-import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
+import {
+  ImagePreviewModal,
+  type PreviewModalItem,
+} from "@/components/nodes/image-preview-modal";
 import { MediaPreviewImage } from "@/components/nodes/media-preview";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +44,17 @@ export interface PreviewImageProps {
   className?: string;
   /** `data-testid` on the clickable wrapper. */
   testId?: string;
+  /**
+   * Sibling images this preview belongs to. When provided (length > 1) the
+   * full-screen modal gains ‹ › / ← → navigation across the whole set so
+   * the user can walk a batch without closing + reopening. The thumbnail
+   * itself still renders `url`; `items[index]` should be that same image.
+   */
+  items?: PreviewModalItem[];
+  /** Index of THIS image within `items`. Seeds the modal cursor. */
+  index?: number;
+  /** Notified as the modal navigates, so the caller can sync its cursor. */
+  onIndexChange?: (next: number) => void;
 }
 
 export function PreviewImage({
@@ -52,6 +66,9 @@ export function PreviewImage({
   checkerboard = false,
   className,
   testId,
+  items,
+  index,
+  onIndexChange,
 }: PreviewImageProps) {
   const [open, setOpen] = useState(false);
 
@@ -93,6 +110,9 @@ export function PreviewImage({
           alt={alt}
           downloadName={downloadName ?? alt}
           checkerboard={checkerboard}
+          items={items}
+          index={index}
+          onIndexChange={onIndexChange}
           onClose={() => setOpen(false)}
         />
       ) : null}
