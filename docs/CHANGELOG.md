@@ -2,6 +2,28 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-26 — Fix: Seedance standard tier exposes 1080p + 4K in EVERY mode (incl. image-to-video)
+
+The Seedance node only offered `1080p` in **reference** mode on the standard tier — image-to-video (first-frame / first-last) was wrongly capped at 720p, and `4k` was missing entirely. Root cause: a `capsAt720 = tier !== "standard" || isImageMode` rule (in both the node UI and the server `buildSeedanceInput`) baked in a stale assumption that Seedance 2.0 image-to-video maxed at 720p. Confirmed against the **live Fal OpenAPI** that this is no longer true: `bytedance/seedance-2.0/{image-to-video,reference-to-video,text-to-video}` all take `480p · 720p · 1080p · 4k` on the **standard** tier; `fast` + `mini` are `480p · 720p` in every mode. (The Fal *docs* MCP still says "restricted to 480p, 720p" — it's out of date; the OpenAPI + the model page are authoritative.)
+
+**Fix.** `4k` added to `SEEDANCE_RESOLUTIONS` (so the zod request schema + every dropdown pick it up) ([`types.ts`](src/lib/fal/types.ts)). The cap is now purely tier-based — `capsAt720 = tier !== "standard"` — in both the server clamp ([`seedance-endpoint.ts`](src/lib/fal/seedance-endpoint.ts)) and the node's settings + body display ([`node-fal-seedance.tsx`](src/components/nodes/node-fal-seedance.tsx)). Standard now shows `480p/720p/1080p/4k` in **all** modes (incl. image-to-video); fast/mini still show only `480p/720p` and the server clamps `1080p`/`4k` → `720p` as a guard. The settings note now reads "{tier} renders at ≤ 720p — switch to standard for 1080p / 4K", and a one-liner flags that 1080p/4K cost more. Knowledge vocabulary + GLOSSARY updated.
+
+**Tests (±).** [`seedance-endpoint.test.ts`](tests/unit/fal/seedance-endpoint.test.ts): standard image-to-video KEEPS 1080p (was: clamped); standard keeps 4k (reference + image-to-video); fast/mini clamp 4k → 720p; fast image-to-video clamps 1080p. [`node-fal-seedance-refs.test.tsx`](tests/component/nodes/node-fal-seedance-refs.test.tsx): standard image-to-video now OFFERS 1080p + 4k (the inverted assertion); fast still clamps the dropdown to `480p/720p`.
+
+## 2026-06-26 — Video Slicer: "Trim to length" mode (single hard cut) + exact windows by default
+
+Slicing a ~13s video "to 12 seconds" came back as a single **13s** clip — and "slice" was the wrong shape anyway: the ask was a plain **trim** (one clip of N seconds), not windows. Two changes:
+
+**Trim mode (new).** A **Mode** select — *Split into windows* (original) or *Trim to length*: a single hard cut to the first N seconds (one clip, no windowing, no tail concept; the trim length isn't bound by the 15s window cap). In trim mode the "Min tail" param is hidden and the body reads "trim → Ns" / "Trimmed clip". `execute` builds a single `[0, min(N, duration)]` window directly, so `computeMediaWindows` (and its fold) is never consulted ([`node-video-slicer.tsx`](src/components/nodes/node-video-slicer.tsx)).
+
+**Exact windows by default.** Separately, *windows* mode now defaults `minTailSec` to **0** (was 2): a window is never LONGER than `windowSec`. The old default folded a sub-2s leftover UP into the previous window — that's what turned "12s" into a 13s clip. The shared `computeMediaWindows` is unchanged — the fold still works for opt-in callers (Audio Slicer + Continuity Builder + the seeded performance recipes pass `minTailSec: 2` / `minTailMs: 2000` explicitly, untouched).
+
+**Tests (+4).** [`node-video-slicer.test.ts`](tests/unit/nodes/node-video-slicer.test.ts): trim mode builds one `[0,12s)` window without calling `computeMediaWindows` and emits a single clip; trim clamps a 60s request to a 30s source; windows mode passes `minTailMs: 0` by default; `defaultConfig` is windows + minTailSec 0.
+
+## 2026-06-26 — Resize "Failed to fetch" verdict: client-side, not file size
+
+Re-confirmed (no code change) after the same-origin proxy shipped: the user's exact 16 MB Supabase image (`…4d1cc7a52fc75.png`) fetches **completely** — all 16,646,547 bytes — in a clean browser via both the direct path *and* `/api/proxy-media`, and via `curl`. The remaining `net::ERR_FAILED` is local to the user's Chrome profile (extension / privacy tool / stale service worker), not the app, the proxy, or the file size. Repro check: open the project in Incognito.
+
 ## 2026-06-26 — Fix: SAM 3.1 Video visual marks still 500'd — missing `object_id` on interactive prompts
 
 The real cause of the persistent **`Fal (500): Internal Server Error`** when marking the object (the coded-vs-display fix addressed a *different*, rotation-only case). SAM 3.1's Object Multiplex tracker groups point/box prompts **by object id**, and we sent them with **no `object_id` at all** — Fal accepts the payload at submit (so no 422) but the model crashes mid-run because the interactive prompts attach to no object. This is why it 500'd even on upright landscape footage with points. Confirmed against Fal's live `fal-ai/sam-3-1/video-rle` schema (`PointPrompt`/`BoxPrompt` both carry `object_id`; the documented example uses `object_id: 1`).

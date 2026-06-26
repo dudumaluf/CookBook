@@ -29,15 +29,17 @@ export const SEEDANCE_ASPECT_RATIOS = [
   "9:16",
 ] as const;
 
-export const SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p"] as const;
+export const SEEDANCE_RESOLUTIONS = ["480p", "720p", "1080p", "4k"] as const;
 
 /**
  * Seedance model tiers (ADR-0078) — the same `bytedance/seedance-2.0/*` family
  * at three speed / cost points:
- *   - "standard" — Seedance 2.0 (highest quality; up to 1080p)
+ *   - "standard" — Seedance 2.0 (highest quality; up to 4K, every mode)
  *   - "fast"     — `/fast/` tier (lower latency + cost; caps at 720p)
  *   - "mini"     — `/mini/` tier (cheapest + quickest; caps at 720p)
- * All three tiers expose reference-to-video AND image-to-video.
+ * All three tiers expose reference-to-video AND image-to-video. Only the
+ * standard tier renders above 720p (1080p / 4K) — and it does so in EVERY
+ * mode (text / reference / image-to-video); fast + mini are 720p-capped.
  */
 export const SEEDANCE_MODEL_TIERS = ["standard", "fast", "mini"] as const;
 export type SeedanceModelTier = (typeof SEEDANCE_MODEL_TIERS)[number];

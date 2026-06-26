@@ -168,10 +168,22 @@ describe("buildSeedanceInput", () => {
     ).toBe("720p");
   });
 
-  it("clamps 1080p to 720p for image-to-video (any tier)", () => {
+  it("keeps 1080p on standard image-to-video (every standard mode takes 1080p)", () => {
     expect(
       buildSeedanceInput(
         req({ startImageUrl: "https://x/s.png", resolution: "1080p" }),
+      ).resolution,
+    ).toBe("1080p");
+  });
+
+  it("clamps 1080p to 720p on fast image-to-video", () => {
+    expect(
+      buildSeedanceInput(
+        req({
+          model: "fast",
+          startImageUrl: "https://x/s.png",
+          resolution: "1080p",
+        }),
       ).resolution,
     ).toBe("720p");
   });
@@ -180,6 +192,24 @@ describe("buildSeedanceInput", () => {
     expect(
       buildSeedanceInput(req({ resolution: "1080p" })).resolution,
     ).toBe("1080p");
+  });
+
+  it("keeps 4k on the standard tier (reference + image-to-video)", () => {
+    expect(buildSeedanceInput(req({ resolution: "4k" })).resolution).toBe("4k");
+    expect(
+      buildSeedanceInput(
+        req({ startImageUrl: "https://x/s.png", resolution: "4k" }),
+      ).resolution,
+    ).toBe("4k");
+  });
+
+  it("clamps 4k down to 720p on the fast + mini tiers", () => {
+    expect(
+      buildSeedanceInput(req({ model: "fast", resolution: "4k" })).resolution,
+    ).toBe("720p");
+    expect(
+      buildSeedanceInput(req({ model: "mini", resolution: "4k" })).resolution,
+    ).toBe("720p");
   });
 
   it("passes generate_audio + seed through", () => {

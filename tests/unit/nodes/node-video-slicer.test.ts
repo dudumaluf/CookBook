@@ -51,6 +51,54 @@ describe("video-slicer node execute", () => {
     ).rejects.toThrow(/Wire a video/);
   });
 
+  it("requests exact windows by default (minTailMs 0 — never folds a tail UP past the window)", async () => {
+    await videoSlicerNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/perf.mp4" } } },
+        { windowSec: 12 },
+      ) as Cfg,
+    );
+    // The reported bug: slicing a ~13s clip "to 12s" returned one 13s clip
+    // because the 1s tail folded UP into window 1. Default minTailMs 0 keeps
+    // windows ≤ windowSec, so the slice is genuinely 12s.
+    expect(computeMediaWindows).toHaveBeenCalledWith({
+      totalMs: 30000,
+      windowMs: 12000,
+      minTailMs: 0,
+    });
+  });
+
+  it("trim mode hard-cuts to the first N seconds (single clip, never windows/folds)", async () => {
+    sliceVideo.mockResolvedValue([new Blob(["a"], { type: "video/mp4" })]);
+    const result = await videoSlicerNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/v.mp4" } } },
+        { mode: "trim", windowSec: 12 },
+      ) as Cfg,
+    );
+    // A single [0,12s) window built directly — computeMediaWindows (and its
+    // tail-fold) is never consulted, so a 13s source can't come back as 13s.
+    expect(computeMediaWindows).not.toHaveBeenCalled();
+    expect(sliceVideo.mock.calls[0]![1]).toEqual([
+      { index: 0, startMs: 0, endMs: 12000, durationMs: 12000 },
+    ]);
+    expect((result as { output: StandardizedOutput[] }).output).toHaveLength(1);
+  });
+
+  it("trim clamps the length to the source duration", async () => {
+    sliceVideo.mockResolvedValue([new Blob(["a"], { type: "video/mp4" })]);
+    await videoSlicerNodeSchema.execute!(
+      ctx(
+        { video: { type: "video", value: { url: "https://x/v.mp4" } } },
+        { mode: "trim", windowSec: 60 },
+      ) as Cfg,
+    );
+    // probe = 30s; asking to trim to 60s clamps to the 30s source.
+    expect(sliceVideo.mock.calls[0]![1]).toEqual([
+      { index: 0, startMs: 0, endMs: 30000, durationMs: 30000 },
+    ]);
+  });
+
   it("emits one video output per window, into the videos folder", async () => {
     const result = await videoSlicerNodeSchema.execute!(
       ctx({ video: { type: "video", value: { url: "https://x/perf.mp4" } } }) as Cfg,
@@ -98,6 +146,11 @@ describe("video-slicer node execute", () => {
 });
 
 describe("video-slicer schema", () => {
+  it("defaults to windows mode with minTailSec 0 (windows respect the requested length)", () => {
+    expect(videoSlicerNodeSchema.defaultConfig?.mode).toBe("windows");
+    expect(videoSlicerNodeSchema.defaultConfig?.minTailSec).toBe(0);
+  });
+
   it("defaults keepAudio on and exposes a keep-audio toggle", () => {
     expect(videoSlicerNodeSchema.defaultConfig?.keepAudio).toBe(true);
     expect(videoSlicerNodeSchema.configParams?.keepAudio).toEqual({

@@ -7,7 +7,12 @@ import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { downloadFromUrl, safeFilename } from "@/lib/library/download";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
-import { computeMediaWindows, probeMedia, sliceVideo } from "@/lib/media";
+import {
+  computeMediaWindows,
+  probeMedia,
+  sliceVideo,
+  type MediaWindow,
+} from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
@@ -16,22 +21,38 @@ import { MediaPreviewVideo } from "./media-preview";
 import { useExternalIndex } from "./use-external-index";
 
 /**
- * Video Slicer — split a video into sequential windows (motion references).
+ * Video Slicer — two modes:
+ *   • "windows" (default) — split a video into sequential ≤`windowSec` clips
+ *     (motion references). The modular counterpart of the Continuity Builder's
+ *     inline slicing: cut a reference performance into the SAME windows as the
+ *     song so each slice drives one chunk's motion (@Video1).
+ *   • "trim" — a single HARD CUT to the first `windowSec` seconds (one clip,
+ *     no windowing, no tail-fold). What you reach for when you just want to
+ *     shorten a clip to N seconds.
  *
- * The modular counterpart of the Continuity Builder's inline video slicing:
- * cut a reference performance into the SAME windows as the song, so each
- * slice drives one chunk's motion (@Video1). Keeps the source audio by
- * default; toggle "Keep audio" off for a silent motion-only reference.
- * Downscales to fit Seedance's ~720p reference cap.
+ * Keeps the source audio by default; toggle "Keep audio" off for a silent
+ * motion-only reference. Optionally downscales to fit Seedance's ~720p cap.
  *
  * Input:  video (single)
- * Output: video[] (one per window)
+ * Output: video[] (one per window; exactly one in trim mode)
  */
 
 const DEFAULT_WINDOW_SEC = 15;
-const DEFAULT_MIN_TAIL_SEC = 2;
+// 0 = exact windows: a slice is never LONGER than `windowSec` (so "slice to
+// 12s" yields a 12s slice + whatever remainder, not a folded 13s clip). Raise
+// it to fold a too-short final tail UP into the previous window — useful for
+// the Seedance performance pipeline (its min accepted clip is ~2s), which is
+// why the seeded recipes pass `minTailSec: 2` explicitly.
+const DEFAULT_MIN_TAIL_SEC = 0;
 
 export interface VideoSlicerNodeConfig {
+  /**
+   * "windows" (default) splits into sequential ≤`windowSec` clips. "trim" emits
+   * a SINGLE clip of the first `windowSec` seconds — a plain hard trim, no
+   * windowing, no tail-fold.
+   */
+  mode?: "windows" | "trim";
+  /** Window length (windows mode) OR trim length (trim mode), in seconds. */
   windowSec?: number;
   minTailSec?: number;
   /** Downscale cap for each slice (Seedance refs cap ~720p). */
@@ -96,8 +117,12 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
-        <span>{config.windowSec ?? DEFAULT_WINDOW_SEC}s windows</span>
-        {chunks.length > 0 ? (
+        <span>
+          {(config.mode ?? "windows") === "trim"
+            ? `trim → ${config.windowSec ?? DEFAULT_WINDOW_SEC}s`
+            : `${config.windowSec ?? DEFAULT_WINDOW_SEC}s windows`}
+        </span>
+        {chunks.length > 1 ? (
           <>
             <span className="text-muted-foreground/60">·</span>
             <span>{chunks.length} chunks</span>
@@ -139,7 +164,9 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
           />
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-muted-foreground">
-              Slice {safeCursor + 1}
+              {(config.mode ?? "windows") === "trim"
+                ? "Trimmed clip"
+                : `Slice ${safeCursor + 1}`}
             </span>
             <button
               type="button"
@@ -147,18 +174,21 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
               onPointerDown={(e) => e.stopPropagation()}
               className="ml-auto flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10"
             >
-              <Download className="h-3 w-3" /> This one
+              <Download className="h-3 w-3" />
+              {chunks.length > 1 ? "This one" : "Download"}
             </button>
-            <button
-              type="button"
-              disabled={downloadingAll}
-              onClick={() => void downloadAll()}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10 disabled:opacity-50"
-            >
-              <DownloadCloud className="h-3 w-3" />
-              {downloadingAll ? "Downloading…" : `All (${chunks.length})`}
-            </button>
+            {chunks.length > 1 ? (
+              <button
+                type="button"
+                disabled={downloadingAll}
+                onClick={() => void downloadAll()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[10.5px] text-foreground/80 hover:bg-foreground/10 disabled:opacity-50"
+              >
+                <DownloadCloud className="h-3 w-3" />
+                {downloadingAll ? "Downloading…" : `All (${chunks.length})`}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -175,39 +205,69 @@ function VideoSlicerSettings({
   config,
   updateConfig,
 }: NodeBodyProps<VideoSlicerNodeConfig>) {
+  const modeId = useId();
   const windowId = useId();
   const tailId = useId();
   const resId = useId();
+  const isTrim = (config.mode ?? "windows") === "trim";
   return (
     <div className="flex flex-col gap-3 text-xs">
       <div className="flex flex-col gap-1.5">
+        <label htmlFor={modeId} className="font-medium text-foreground/90">
+          Mode
+        </label>
+        <select
+          id={modeId}
+          value={config.mode ?? "windows"}
+          onChange={(e) =>
+            updateConfig({
+              mode: e.target.value as VideoSlicerNodeConfig["mode"],
+            })
+          }
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+        >
+          <option value="windows">Split into windows</option>
+          <option value="trim">Trim to length (one clip)</option>
+        </select>
+      </div>
+      <div className="flex flex-col gap-1.5">
         <label htmlFor={windowId} className="font-medium text-foreground/90">
-          Window length (s)
+          {isTrim ? "Trim to (s)" : "Window length (s)"}
+          {isTrim ? (
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              (keeps the first N seconds)
+            </span>
+          ) : null}
         </label>
         <input
           id={windowId}
           type="number"
-          min={2}
-          max={15}
+          min={isTrim ? 1 : 2}
+          {...(isTrim ? {} : { max: 15 })}
           value={config.windowSec ?? DEFAULT_WINDOW_SEC}
           onChange={(e) => updateConfig({ windowSec: Number(e.target.value) })}
           className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
         />
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={tailId} className="font-medium text-foreground/90">
-          Min tail (s)
-        </label>
-        <input
-          id={tailId}
-          type="number"
-          min={0}
-          max={15}
-          value={config.minTailSec ?? DEFAULT_MIN_TAIL_SEC}
-          onChange={(e) => updateConfig({ minTailSec: Number(e.target.value) })}
-          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
-        />
-      </div>
+      {isTrim ? null : (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={tailId} className="font-medium text-foreground/90">
+            Min tail (s)
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              (0 = exact windows; raise to fold a short last slice in)
+            </span>
+          </label>
+          <input
+            id={tailId}
+            type="number"
+            min={0}
+            max={15}
+            value={config.minTailSec ?? DEFAULT_MIN_TAIL_SEC}
+            onChange={(e) => updateConfig({ minTailSec: Number(e.target.value) })}
+            className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
+          />
+        </div>
+      )}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={resId} className="font-medium text-foreground/90">
           Downscale
@@ -252,7 +312,7 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
   category: "transform",
   title: "Video Slicer",
   description:
-    "Split a video into sequential windows. Emits an array of video chunks; keeps the source audio by default (toggle off for a silent motion-only reference). Downscales to fit Seedance's ~720p reference cap. Wire a Number into `index` to scrub the preview (one Number keeps every slicer + List on the same chunk).",
+    "Shorten or split a video. Mode = **Trim to length** for a single hard cut to the first N seconds (one clip — no windows, no tail), or **Split into windows** for sequential ≤N-second chunks (motion references). Keeps the source audio by default (toggle off for a silent motion-only reference). Optional downscale to fit Seedance's ~720p reference cap. Wire a Number into `index` to scrub the preview (windows mode).",
   icon: Scissors,
   inputs: [
     { id: "video", label: "video", dataType: "video" },
@@ -260,12 +320,14 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
   ],
   outputs: [{ id: "out", label: "out", dataType: "video", multiple: true }],
   configParams: {
+    mode: { control: "select", options: ["windows", "trim"], label: "mode" },
     maxHeight: { control: "select", options: ["720p", "480p", "source"], label: "downscale" },
-    windowSec: { control: "number", label: "window (s)" },
+    windowSec: { control: "number", label: "length (s)" },
     minTailSec: { control: "number", label: "min tail (s)" },
     keepAudio: { control: "toggle", label: "keep audio" },
   },
   defaultConfig: {
+    mode: "windows",
     windowSec: DEFAULT_WINDOW_SEC,
     minTailSec: DEFAULT_MIN_TAIL_SEC,
     maxHeight: "720p",
@@ -277,16 +339,26 @@ export const videoSlicerNodeSchema = defineNode<VideoSlicerNodeConfig>({
     if (!video?.url) {
       throw new Error("Wire a video into the `video` handle.");
     }
+    const mode = config.mode ?? "windows";
     const windowSec = config.windowSec ?? DEFAULT_WINDOW_SEC;
     const minTailSec = config.minTailSec ?? DEFAULT_MIN_TAIL_SEC;
     const maxHeight = resolveMaxHeight(config.maxHeight ?? "720p");
 
     const probe = await probeMedia(video.url);
-    const windows = computeMediaWindows({
-      totalMs: probe.durationMs,
-      windowMs: windowSec * 1000,
-      minTailMs: minTailSec * 1000,
-    });
+    // Trim mode: a single hard cut to the first `windowSec` seconds, clamped to
+    // the source length (no windowing, no tail-fold). Windows mode: split into
+    // sequential ≤`windowSec` clips.
+    let windows: readonly MediaWindow[];
+    if (mode === "trim") {
+      const endMs = Math.min(windowSec * 1000, probe.durationMs);
+      windows = [{ index: 0, startMs: 0, endMs, durationMs: endMs }];
+    } else {
+      windows = computeMediaWindows({
+        totalMs: probe.durationMs,
+        windowMs: windowSec * 1000,
+        minTailMs: minTailSec * 1000,
+      });
+    }
     if (windows.length === 0) {
       throw new Error("Could not read the video duration — is the file valid?");
     }

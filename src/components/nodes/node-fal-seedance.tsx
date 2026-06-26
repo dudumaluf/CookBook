@@ -284,13 +284,14 @@ function SeedanceVideoNodeBody({
       ? (parseAspectRatio(config.aspectRatio)?.cssAspect ?? "16 / 9")
       : "16 / 9";
 
-  // Show the resolution Fal will actually use: fast/mini + image-to-video cap
-  // at 720p (mirrors buildSeedanceInput's clamp), so a stored 1080p reads as
-  // 720p here rather than misrepresenting the output.
+  // Show the resolution Fal will actually use: only the standard tier renders
+  // above 720p (1080p / 4k, EVERY mode incl. image-to-video), so fast/mini
+  // clamp down (mirrors buildSeedanceInput) — a stored 1080p/4k reads as 720p
+  // there rather than misrepresenting the output.
   const effectiveResolution =
-    (resolveTier(config) !== "standard" ||
-      (config.mode ?? DEFAULT_MODE) !== "reference") &&
-    (config.resolution ?? DEFAULT_RESOLUTION) === "1080p"
+    resolveTier(config) !== "standard" &&
+    ((config.resolution ?? DEFAULT_RESOLUTION) === "1080p" ||
+      (config.resolution ?? DEFAULT_RESOLUTION) === "4k")
       ? "720p"
       : (config.resolution ?? DEFAULT_RESOLUTION);
 
@@ -457,16 +458,19 @@ function SeedanceVideoSettingsContent({
   const isImageMode = mode !== "reference";
   const tier = resolveTier(config);
 
-  // fast / mini render at ≤720p, and image-to-video caps at 720p on every tier
-  // — mirror buildSeedanceInput's clamp so the dropdown never offers a
-  // resolution Fal would silently downgrade. Display the clamped value while
-  // keeping any stored 1080p preference (restored on switch back to standard).
-  const capsAt720 = tier !== "standard" || isImageMode;
+  // Only the standard tier renders above 720p — and it does so in EVERY mode
+  // (incl. image-to-video: 1080p + 4k). fast / mini cap at 720p. Mirror
+  // buildSeedanceInput's clamp so the dropdown never offers a resolution Fal
+  // would silently downgrade, while keeping any stored 1080p/4k preference
+  // (restored on switch back to standard).
+  const capsAt720 = tier !== "standard";
   const selectedResolution = config.resolution ?? DEFAULT_RESOLUTION;
   const effectiveResolution =
-    capsAt720 && selectedResolution === "1080p" ? "720p" : selectedResolution;
+    capsAt720 && (selectedResolution === "1080p" || selectedResolution === "4k")
+      ? "720p"
+      : selectedResolution;
   const allowedResolutions = capsAt720
-    ? SEEDANCE_RESOLUTIONS.filter((r) => r !== "1080p")
+    ? SEEDANCE_RESOLUTIONS.filter((r) => r === "480p" || r === "720p")
     : SEEDANCE_RESOLUTIONS;
 
   return (
@@ -516,7 +520,7 @@ function SeedanceVideoSettingsContent({
           <p className="text-[10px] leading-snug text-muted-foreground">
             image-to-video: uses the wired{" "}
             {mode === "first-last" ? "images as start + end frame" : "image as the start frame"}
-            . Ignores video/audio refs; caps at 720p.
+            . Ignores video/audio refs.
           </p>
         ) : null}
       </div>
@@ -597,9 +601,12 @@ function SeedanceVideoSettingsContent({
         </select>
         {capsAt720 ? (
           <p className="text-[10px] leading-snug text-muted-foreground">
-            {tier !== "standard"
-              ? `${tier} renders at ≤ 720p.`
-              : "Image-to-video caps at 720p."}
+            {tier} renders at ≤ 720p. Switch to the standard tier for 1080p / 4K.
+          </p>
+        ) : selectedResolution === "4k" || selectedResolution === "1080p" ? (
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {selectedResolution === "4k" ? "4K" : "1080p"} is standard-tier only
+            and costs more — 720p is the balanced default.
           </p>
         ) : null}
       </div>
@@ -652,7 +659,7 @@ export const seedanceVideoNodeSchema = defineNode<SeedanceVideoNodeConfig>({
   category: "ai-video",
   title: "Seedance Video",
   description:
-    "Generate video with ByteDance Seedance 2.0. Pick a model tier in settings: standard (best quality, up to 1080p), fast (lower latency + cost, ≤720p), or mini (cheapest + quickest, ≤720p). All three tiers do reference + image-to-video. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
+    "Generate video with ByteDance Seedance 2.0. Pick a model tier in settings: standard (best quality, up to 4K — in every mode), fast (lower latency + cost, ≤720p), or mini (cheapest + quickest, ≤720p). All three tiers do reference + image-to-video. Reference mode: wire a prompt + reference images/videos/audio into the numbered sockets and reference them in the prompt as @Image1, @Video1, @Audio1 (the socket label shows its exact token). Up to 9 images / 3 videos / 3 audios; sockets grow as you wire. The @Image[] socket takes a whole image array at once (wire a Frames Extract's keyframes straight in → @Image1..@Image9). Or switch to image-to-video mode for literal first/last frame. Native synced audio + person-swap + lip-sync.",
   icon: Clapperboard,
   inputs: referenceInputs({}),
   // Handles follow the mode (ADR-0054): image-to-video shows literal

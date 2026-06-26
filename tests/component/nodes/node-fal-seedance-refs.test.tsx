@@ -125,7 +125,7 @@ describe("seedance settings — resolution respects the model tier + mode", () =
       (screen.getByLabelText("Resolution") as HTMLSelectElement).options,
     ).map((o) => o.value);
 
-  it("offers 1080p on the standard tier in reference mode", () => {
+  it("offers 1080p + 4k on the standard tier in reference mode", () => {
     render(
       <Settings
         nodeId="sd"
@@ -135,6 +135,7 @@ describe("seedance settings — resolution respects the model tier + mode", () =
       />,
     );
     expect(resolutionOptions()).toContain("1080p");
+    expect(resolutionOptions()).toContain("4k");
   });
 
   it("hides 1080p on the fast tier and shows the clamped 720p as selected", () => {
@@ -152,7 +153,7 @@ describe("seedance settings — resolution respects the model tier + mode", () =
     );
   });
 
-  it("hides 1080p in image-to-video mode even on the standard tier", () => {
+  it("offers 1080p + 4k on standard image-to-video (every standard mode)", () => {
     render(
       <Settings
         nodeId="sd"
@@ -161,6 +162,25 @@ describe("seedance settings — resolution respects the model tier + mode", () =
         selected={false}
       />,
     );
-    expect(resolutionOptions()).not.toContain("1080p");
+    expect(resolutionOptions()).toContain("1080p");
+    expect(resolutionOptions()).toContain("4k");
+    expect(
+      (screen.getByLabelText("Resolution") as HTMLSelectElement).value,
+    ).toBe("1080p");
+  });
+
+  it("clamps 4k down to 720p in the dropdown on the fast tier", () => {
+    render(
+      <Settings
+        nodeId="sd"
+        config={{ model: "fast", mode: "first-frame", resolution: "4k" }}
+        updateConfig={vi.fn()}
+        selected={false}
+      />,
+    );
+    expect(resolutionOptions()).toEqual(["480p", "720p"]);
+    expect(
+      (screen.getByLabelText("Resolution") as HTMLSelectElement).value,
+    ).toBe("720p");
   });
 });

@@ -73,12 +73,15 @@ export function buildSeedanceInput(
   }
   if (req.aspectRatio !== undefined) input.aspect_ratio = req.aspectRatio;
   if (req.resolution !== undefined) {
-    // The fast + mini tiers AND image-to-video all cap output at 720p (no
-    // 1080p) — clamp so a run never 422s mid-pipeline on an unsupported
-    // resolution. Only the standard tier's reference/text endpoints take 1080p.
-    const capsAt720 = tier !== "standard" || isImageToVideo;
+    // Only the standard tier renders above 720p, and it does so in EVERY mode
+    // (text / reference / image-to-video all take 1080p + 4k). The fast + mini
+    // tiers cap at 720p — clamp the high resolutions down so a run never 422s
+    // mid-pipeline on an unsupported value.
+    const capsAt720 = tier !== "standard";
     input.resolution =
-      capsAt720 && req.resolution === "1080p" ? "720p" : req.resolution;
+      capsAt720 && (req.resolution === "1080p" || req.resolution === "4k")
+        ? "720p"
+        : req.resolution;
   }
   if (req.generateAudio !== undefined) input.generate_audio = req.generateAudio;
   if (req.seed !== undefined) input.seed = req.seed;
