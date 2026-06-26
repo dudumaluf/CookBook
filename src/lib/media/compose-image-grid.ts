@@ -14,18 +14,11 @@
  *   - Different option surface. The grid needs aspect/fit/anchor
  *     controls that don't apply to concat (and vice versa for `fit`
  *     min/max/first which has no analogue in a uniform grid).
- *   - Same primitive (`loadBitmap`) is small enough to duplicate; not
- *     worth coupling the two files for a 5-line helper.
+ *   - `loadBitmap` is now the shared CORS-safe loader (ADR-0087), imported
+ *     rather than duplicated.
  */
 
-async function loadBitmap(url: string): Promise<ImageBitmap> {
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) {
-    throw new Error(`Failed to load image (${res.status}) — ${url}`);
-  }
-  const blob = await res.blob();
-  return await createImageBitmap(blob);
-}
+import { loadBitmap } from "./load-bitmap";
 
 /** How a source image maps into its (uniform) cell. */
 export type GridFit = "cover" | "contain" | "stretch";

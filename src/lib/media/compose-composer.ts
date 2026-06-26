@@ -3,9 +3,10 @@
  * (ADR-0085, masks ADR-0086). The browser-only counterpart to the pure model
  * in `src/types/composer.ts`.
  *
- * Same recipe as the rest of `src/lib/media/` (fetch → `createImageBitmap` →
- * `OffscreenCanvas` → `convertToBlob`) so cross-origin Supabase/CDN layers
- * never taint the canvas. The transform applied here is identical to the one
+ * Same recipe as the rest of `src/lib/media/` (`loadBitmap` — CORS-safe fetch
+ * → `createImageBitmap`; ADR-0087 — → `OffscreenCanvas` → `convertToBlob`) so
+ * cross-origin Supabase/CDN layers never taint the canvas. The transform
+ * applied here is identical to the one
  * the editor applies via CSS (`placeLayer` is the shared source of truth) and
  * blend modes go through `canvasBlendMode` — so what you arrange in the editor
  * is exactly what bakes out.
@@ -30,13 +31,7 @@ import {
   type PlacedLayer,
 } from "@/types/composer";
 
-async function loadBitmap(url: string): Promise<ImageBitmap> {
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) {
-    throw new Error(`Failed to load layer (${res.status}) — ${url}`);
-  }
-  return await createImageBitmap(await res.blob());
-}
+import { loadBitmap } from "./load-bitmap";
 
 export interface RenderCompositeInput {
   doc: ComposerDocument;

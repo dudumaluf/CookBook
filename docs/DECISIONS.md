@@ -3474,3 +3474,24 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Cost**: one extra scratch canvas + one full-canvas `getImageData` per *masked* layer. Fine for images; when video layers land (Phase 3) the matte should be cropped to the layer's bounding box to avoid a full-frame read per frame.
 
 
+## ADR-0087: Same-origin media proxy — a CORS-safe `loadBitmap` fallback so browser-side image ops stop dying on "Failed to fetch"
+
+- **Status**: Accepted (2026-06-26)
+
+- **Context**: The Resize Image node (and every other browser-side pixel op — the compositors, the Composer) loads its source via `fetch(url)` → `createImageBitmap` (we fetch the *bytes* instead of using an `<img crossOrigin>` so the `OffscreenCanvas` is never tainted and `convertToBlob` works). That `fetch` is subject to CORS. A user hit **"Failed to fetch"** resizing a 28 MP Supabase-hosted image while the very same URL *displayed* fine in the node's `<img>` preview. Root cause is the well-known **Supabase Storage CDN CORS-cache** behaviour: the `<img>` preview warms the CDN with a response that has **no `Access-Control-Allow-Origin`** (an `<img>` request carries no `Origin`), and a later cross-origin `fetch()` is served that cached, header-less response → the browser blocks it → `net::ERR_FAILED` → `TypeError: Failed to fetch`. It's asset/cache-specific (why some images work), and **external CDNs** (fal, CloudFront, Higgsfield) that haven't been re-hosted yet send no CORS at all, so they'd fail the same way.
+
+- **Decision**: Add a **same-origin media relay** and make the byte-loader fall back to it. Same-origin requests aren't subject to CORS at all, and a *server* `fetch` has no CORS concept — so routing the bytes through our own origin sidesteps the entire problem regardless of which CDN (or cache state) is at fault.
+  - **`GET /api/proxy-media?url=…`** ([`route.ts`](src/app/api/proxy-media/route.ts), **edge runtime**) validates → fetches → **streams** the upstream body back with its media content-type. Edge + streaming means a 25 MB source is never buffered into memory or capped by the serverless response-size limit.
+  - **One shared loader** ([`load-bitmap.ts`](src/lib/media/load-bitmap.ts)): `fetchMediaBlob(url)` tries the **direct** `fetch` first (fast path — same-origin + CORS-friendly hosts pay no extra hop), and on a CORS/network throw *or* a non-OK status falls back to `proxiedMediaUrl(url)` (`/api/proxy-media?url=…`). `loadBitmap(url)` = `createImageBitmap(await fetchMediaBlob(url))`. The four duplicated `loadBitmap` helpers (`resize`, `compose-image`, `compose-image-grid`, `compose-composer`) now import this one — the prior "small enough to duplicate" call no longer holds once the helper has real fallback logic.
+
+- **Why this shape**:
+  - **Direct-first, proxy-fallback** keeps the common case (already-CORS-safe / same-origin URLs) at zero added latency and only pays the relay hop when CORS actually bites. No config, no per-host special-casing in the client.
+  - **Edge + stream** over Node + buffer: the inputs are large images/video; buffering 25 MB through a serverless function risks the response-size cap, while an edge passthrough streams unbounded.
+  - **Unauthenticated, host-allow-listed.** The relay only forwards **already-public** bytes from a fixed set of media CDN apexes (`supabase.co`, `fal.media`, `fal.run`, `fal.ai`, `cloudfront.net`, `higgsfield.ai`; apex or sub-domain). The allowlist is the **SSRF guard** (no internal/loopback hosts reachable), and a `image|video|audio/*` **content-type gate** rejects HTML/JSON/text — which also neutralises any redirect-to-metadata attempt (cloud metadata answers text/JSON, never a media type). Requiring auth would force a Supabase JWT round-trip on *every* fallback image load and complicate the edge path, for no real gain on public bytes — so it's intentionally open within the allowlist. (If abuse ever matters, gate it behind `authedFetch` + `requireUser` later.)
+
+- **Consequences**:
+  - **Images are fixed everywhere at once** — resize, concat/crop, grid, and the Composer all share the loader, so the same CORS death can't resurface per-node.
+  - **Video is not yet routed through the proxy.** mediabunny reads video via `UrlSource` (range requests), which can hit the same CORS wall; wiring a Range-aware proxy source is a follow-up (the route already streams, but doesn't forward `Range` yet).
+  - **New always-on public route.** Surface area is one read-only GET, bounded by the allowlist + content-type gate; documented here so it isn't mistaken for an open relay.
+
+

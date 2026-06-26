@@ -2,22 +2,15 @@
  * Client-side image compositing (canvas) — shared foundation for the Image
  * Concat + Image Crop nodes (and, later, the Compositor).
  *
- * Browser-only: uses `fetch` → `createImageBitmap` → `OffscreenCanvas`. We
- * fetch the bytes and decode via `createImageBitmap` (instead of an <img>
- * with crossOrigin) so the canvas is never tainted and `convertToBlob`
- * always works, even for cross-origin Supabase / CDN URLs. Not unit-testable
- * in happy-dom — exercised through the nodes (mocked in tests, real in a
- * browser).
+ * Browser-only: uses `loadBitmap` (CORS-safe fetch → `createImageBitmap`;
+ * ADR-0087) → `OffscreenCanvas`. We fetch the bytes and decode via
+ * `createImageBitmap` (instead of an <img> with crossOrigin) so the canvas is
+ * never tainted and `convertToBlob` always works, even for cross-origin
+ * Supabase / CDN URLs. Not unit-testable in happy-dom — exercised through the
+ * nodes (mocked in tests, real in a browser).
  */
 
-async function loadBitmap(url: string): Promise<ImageBitmap> {
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) {
-    throw new Error(`Failed to load image (${res.status}) — ${url}`);
-  }
-  const blob = await res.blob();
-  return await createImageBitmap(blob);
-}
+import { loadBitmap } from "./load-bitmap";
 
 export type ConcatDirection = "row" | "column";
 export type ConcatFit = "min" | "max" | "first";

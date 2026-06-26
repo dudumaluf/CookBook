@@ -13,8 +13,10 @@
  *      Output is the scaled size (≤ box). Leave width OR height blank/0 to
  *      derive it from the other (the "make this 1920 wide, keep ratio" case).
  *
- * Image path: `fetch` → `createImageBitmap` → `OffscreenCanvas` (untainted,
- * so `convertToBlob` works for cross-origin Supabase/CDN URLs) → PNG Blob.
+ * Image path: `loadBitmap` (CORS-safe fetch — direct, then same-origin
+ * proxy fallback; ADR-0087) → `createImageBitmap` → `OffscreenCanvas`
+ * (untainted, so `convertToBlob` works for cross-origin Supabase/CDN URLs) →
+ * PNG Blob.
  * Video path: mediabunny `Conversion`, which natively resizes via
  * `video: { width, height, fit }` AND copies/transcodes the audio track for
  * free (no manual frame loop). Both are browser-only (WebCodecs / canvas);
@@ -32,6 +34,7 @@ import {
   UrlSource,
 } from "mediabunny";
 
+import { loadBitmap } from "./load-bitmap";
 import { probeMedia } from "./probe";
 
 export type ResizeMode = "contain" | "cover" | "stretch" | "scale";
@@ -116,14 +119,6 @@ export interface ResizeImageOptions {
    * Omit / empty for a transparent background (PNG alpha).
    */
   background?: string;
-}
-
-async function loadBitmap(url: string): Promise<ImageBitmap> {
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) {
-    throw new Error(`Failed to load image (${res.status}) — ${url}`);
-  }
-  return createImageBitmap(await res.blob());
 }
 
 /**

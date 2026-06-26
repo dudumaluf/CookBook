@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-26 — Fix: Resize Image (and all canvas ops) "Failed to fetch" — same-origin media proxy
+
+Resizing a Supabase-hosted image **failed with "Failed to fetch"** while the same image *displayed* fine in the node preview. Root cause: browser-side pixel ops load their source via `fetch(url)` → `createImageBitmap` (bytes, not `<img>`, so the canvas stays untainted), and that `fetch` is CORS-gated. Supabase's Storage CDN serves a **cached, `Access-Control-Allow-Origin`-less** response (warmed by the `<img>` preview, which sends no `Origin`), so a later cross-origin `fetch()` gets blocked → `net::ERR_FAILED`. External CDNs (fal, CloudFront, Higgsfield) send no CORS at all and would fail identically. ADR-0087.
+
+**Fix.** A same-origin relay — `GET /api/proxy-media?url=…` ([`route.ts`](src/app/api/proxy-media/route.ts), edge, streams the body) — plus one shared CORS-safe loader ([`load-bitmap.ts`](src/lib/media/load-bitmap.ts)): `fetchMediaBlob` tries the **direct** fetch first, then transparently falls back to the proxy on a CORS/network failure (the server has no CORS, so the bytes come back clean from our own origin). The four duplicated `loadBitmap` helpers (`resize`, `compose-image`, `compose-image-grid`, `compose-composer`) now import it — so Resize, Concat/Crop, Image Grid, **and** the Composer are all fixed at once. The relay is host-allow-listed (Supabase/fal/CloudFront/Higgsfield apexes — the SSRF guard) with an `image|video|audio/*` content-type gate (rejects HTML/JSON, neutralising redirect-to-metadata).
+
+**Known gaps.** Video (mediabunny `UrlSource` range reads) isn't routed through the proxy yet — a Range-aware follow-up. The relay is intentionally unauthenticated (read-only, already-public bytes within the allowlist).
+
+**Tests (+17).** [`load-bitmap.test.ts`](tests/unit/media/load-bitmap.test.ts): direct-OK skips the proxy; CORS-throw + non-OK both fall back; both-fail throws a clear error; aborts propagate; `loadBitmap` decodes via `createImageBitmap`. [`proxy-media-route.test.ts`](tests/unit/media/proxy-media-route.test.ts): host allowlist incl. suffix-confusion (`supabase.co.evil.com` rejected), missing/invalid/non-http `url`, media-type gate, 404 pass-through vs 502, streamed pass-through with content-type.
+
 ## 2026-06-26 — Fix: SAM 3.1 Video visual marks on rotated/anamorphic clips (the "Fal: Internal Server Error") + bigger mask editor
 
 Two linked fixes for the SAM 3.1 Video mask editor.

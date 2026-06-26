@@ -111,3 +111,5 @@ export {
   type ResizeImageOptions,
   type ResizeVideoOptions,
 } from "./resize";
+
+export { fetchMediaBlob, loadBitmap, proxiedMediaUrl } from "./load-bitmap";
