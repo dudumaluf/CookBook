@@ -1067,6 +1067,14 @@ export const sam31PointPromptSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0),
   label: z.union([z.literal(0), z.literal(1)]).optional(),
+  /**
+   * Which object this prompt refines. SAM's multi-object tracker groups
+   * interactive prompts by object id — points/boxes sharing an id refine the
+   * SAME object. Omitting it on EVERY prompt is what made the model crash
+   * (`Fal (500)`); `buildInput` defaults it to `1` so a single-object mask
+   * always has an object to attach to.
+   */
+  objectId: z.number().int().min(0).optional(),
   frameIndex: z.number().int().min(0).optional(),
 });
 export type Sam31PointPrompt = z.infer<typeof sam31PointPromptSchema>;
@@ -1077,6 +1085,8 @@ export const sam31BoxPromptSchema = z.object({
   yMin: z.number().int().min(0),
   xMax: z.number().int().min(0),
   yMax: z.number().int().min(0),
+  /** Object this box refines (see `sam31PointPromptSchema.objectId`). */
+  objectId: z.number().int().min(0).optional(),
   frameIndex: z.number().int().min(0).optional(),
 });
 export type Sam31BoxPrompt = z.infer<typeof sam31BoxPromptSchema>;

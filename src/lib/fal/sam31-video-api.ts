@@ -35,7 +35,17 @@ function annotate(err: Error, code: FalErrorCode): Error {
   return err;
 }
 
-function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
+/**
+ * Map our request to Fal's `fal-ai/sam-3-1/video-rle` input shape.
+ *
+ * **Every interactive prompt carries an `object_id` (default 1).** SAM 3.1's
+ * Object Multiplex tracker groups point/box prompts BY object id; sending
+ * them with no id (as we did originally) is accepted at submit but crashes
+ * the model mid-run (`Fal (500): Internal Server Error`) because the prompts
+ * attach to no object. v1 tracks a single object, so all marks default to
+ * object `1`; the `?? 1` lets a future multi-object UI assign real ids.
+ */
+export function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
   const input: Record<string, unknown> = { video_url: req.videoUrl };
   if (req.prompt !== undefined && req.prompt.length > 0) {
     input.prompt = req.prompt;
@@ -45,6 +55,7 @@ function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
       x: p.x,
       y: p.y,
       label: p.label ?? 1,
+      object_id: p.objectId ?? 1,
       frame_index: p.frameIndex ?? 0,
     }));
   }
@@ -54,6 +65,7 @@ function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
       y_min: b.yMin,
       x_max: b.xMax,
       y_max: b.yMax,
+      object_id: b.objectId ?? 1,
       frame_index: b.frameIndex ?? 0,
     }));
   }

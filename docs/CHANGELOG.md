@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-26 — Fix: SAM 3.1 Video visual marks still 500'd — missing `object_id` on interactive prompts
+
+The real cause of the persistent **`Fal (500): Internal Server Error`** when marking the object (the coded-vs-display fix addressed a *different*, rotation-only case). SAM 3.1's Object Multiplex tracker groups point/box prompts **by object id**, and we sent them with **no `object_id` at all** — Fal accepts the payload at submit (so no 422) but the model crashes mid-run because the interactive prompts attach to no object. This is why it 500'd even on upright landscape footage with points. Confirmed against Fal's live `fal-ai/sam-3-1/video-rle` schema (`PointPrompt`/`BoxPrompt` both carry `object_id`; the documented example uses `object_id: 1`).
+
+**Fix.** `buildInput` now tags every point/box prompt with `object_id` (default **1** — v1 tracks one object; `?? objectId` lets a future multi-object UI assign real ids) ([`sam31-video-api.ts`](src/lib/fal/sam31-video-api.ts)). `objectId` added to `sam31PointPromptSchema` / `sam31BoxPromptSchema` ([`types.ts`](src/lib/fal/types.ts)). A box + its refining points now share object 1, so they sharpen one mask instead of crashing.
+
+**Tests (+5).** [`sam31-video-build-input.test.ts`](tests/unit/fal/sam31-video-build-input.test.ts): points/boxes get `object_id: 1` + snake_cased fields; a box + points group onto the same object; an explicit `objectId` is honoured; mark-less requests omit the arrays. `buildInput` is now exported for this.
+
+**Verification:** SAM suites + `npx tsc --noEmit` green. Needs the live re-run in the browser to confirm the 500 is gone (the Fal call can't be exercised in tests) — but the payload now matches Fal's documented interactive-prompt shape.
+
 ## 2026-06-26 — Fix: Resize Image (and all canvas ops) "Failed to fetch" — same-origin media proxy
 
 Resizing a Supabase-hosted image **failed with "Failed to fetch"** while the same image *displayed* fine in the node preview. Root cause: browser-side pixel ops load their source via `fetch(url)` → `createImageBitmap` (bytes, not `<img>`, so the canvas stays untainted), and that `fetch` is CORS-gated. Supabase's Storage CDN serves a **cached, `Access-Control-Allow-Origin`-less** response (warmed by the `<img>` preview, which sends no `Origin`), so a later cross-origin `fetch()` gets blocked → `net::ERR_FAILED`. External CDNs (fal, CloudFront, Higgsfield) send no CORS at all and would fail identically. ADR-0087.
