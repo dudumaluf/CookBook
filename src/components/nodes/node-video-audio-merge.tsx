@@ -9,6 +9,8 @@ import { replaceVideoAudio } from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
+import { MediaPreviewVideo } from "./media-preview";
+
 /**
  * Video + Audio Merge — mux a video with a replacement audio track.
  *
@@ -44,14 +46,7 @@ function VideoAudioMergeBody({ nodeId }: NodeBodyProps) {
           <span>Muxing audio onto video…</span>
         </div>
       ) : url ? (
-        <video
-          src={url}
-          controls
-          playsInline
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
-        />
+        <MediaPreviewVideo key={url} url={url} className="bg-black" />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Clapperboard className="h-3 w-3" />

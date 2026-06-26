@@ -12,6 +12,7 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { MediaPreviewVideo } from "./media-preview";
 import { useExternalIndex } from "./use-external-index";
 
 /**
@@ -130,16 +131,11 @@ function VideoSlicerBody({ nodeId, config }: NodeBodyProps<VideoSlicerNodeConfig
         </div>
       ) : chunks.length > 0 ? (
         <div className="flex flex-col gap-1.5">
-          <video
+          <MediaPreviewVideo
             key={chunks[safeCursor]}
-            src={chunks[safeCursor]}
-            controls
+            url={chunks[safeCursor]!}
             loop
-            playsInline
-            preload="metadata"
-            onPointerDown={(e) => e.stopPropagation()}
-            className="block w-full rounded-md bg-black"
-            style={{ aspectRatio: "16 / 9" }}
+            className="bg-black"
           />
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-muted-foreground">

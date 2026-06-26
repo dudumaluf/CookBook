@@ -26,6 +26,8 @@ import type {
   VideoRef,
 } from "@/types/node";
 
+import { MediaPreviewVideo } from "./media-preview";
+
 /**
  * Continuity Builder — the sequential iterator (Slice D, the arc centerpiece).
  *
@@ -155,16 +157,13 @@ function ContinuityBuilderBody({
       ) : chunks.length > 0 ? (
         <div className="grid grid-cols-2 gap-1.5">
           {chunks.map((url, i) => (
-            <video
+            <MediaPreviewVideo
               key={`${url}-${i}`}
-              src={url}
+              url={url}
+              controls={false}
               muted
               loop
-              playsInline
-              preload="metadata"
-              onPointerDown={(e) => e.stopPropagation()}
-              className="block w-full rounded-md bg-black"
-              style={{ aspectRatio: "16 / 9" }}
+              className="bg-black"
             />
           ))}
         </div>

@@ -14,6 +14,8 @@ import {
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
+import { MediaPreviewVideo } from "./media-preview";
+
 /**
  * Video Pad — extend a video to a minimum duration by holding the
  * first/last frame. Some LLM video-understanding endpoints reject
@@ -78,17 +80,7 @@ function VideoPadBody({ nodeId, config }: NodeBodyProps<VideoPadNodeConfig>) {
           <span>Padding video…</span>
         </div>
       ) : url ? (
-        <video
-          key={url}
-          src={url}
-          controls
-          loop
-          playsInline
-          preload="metadata"
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
-        />
+        <MediaPreviewVideo key={url} url={url} loop className="bg-black" />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <StretchHorizontal className="h-3 w-3" />

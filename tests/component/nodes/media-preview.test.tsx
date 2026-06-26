@@ -89,6 +89,44 @@ describe("MediaPreview primitives", () => {
       expect(screen.getByTestId("img-broken").style.aspectRatio).toBe("4 / 3");
     });
 
+    it("reveals a W×H dimension chip after the image's natural size loads", () => {
+      render(
+        <MediaPreviewImage
+          url="https://example.com/cat.png"
+          alt="cat"
+          testId="img-dims"
+        />,
+      );
+      const img = screen.getByAltText("cat") as HTMLImageElement;
+      // happy-dom never really loads <img>, so fake the natural size.
+      Object.defineProperty(img, "naturalWidth", {
+        value: 1920,
+        configurable: true,
+      });
+      Object.defineProperty(img, "naturalHeight", {
+        value: 1080,
+        configurable: true,
+      });
+      fireEvent.load(img);
+      expect(screen.getByText("1920\u00d71080")).toBeTruthy();
+    });
+
+    it("omits the chip when showDimensions is false", () => {
+      render(
+        <MediaPreviewImage
+          url="https://example.com/cat.png"
+          alt="cat"
+          showDimensions={false}
+          testId="img-nodims"
+        />,
+      );
+      const img = screen.getByAltText("cat") as HTMLImageElement;
+      Object.defineProperty(img, "naturalWidth", { value: 800, configurable: true });
+      Object.defineProperty(img, "naturalHeight", { value: 600, configurable: true });
+      fireEvent.load(img);
+      expect(screen.queryByText("800\u00d7600")).toBeNull();
+    });
+
     it("stops pointer-down so the canvas doesn't drag the node when clicking the preview", () => {
       // We can't observe React's stopPropagation directly via DOM events, but
       // we can confirm the handler is wired by asserting the link still opens.
@@ -150,6 +188,21 @@ describe("MediaPreview primitives", () => {
       const video = document.querySelector("video") as HTMLVideoElement;
       expect(video.loop).toBe(true);
       expect(video.muted).toBe(true);
+    });
+
+    it("reveals a W×H dimension chip after metadata loads", () => {
+      render(<MediaPreviewVideo url="https://example.com/x.mp4" />);
+      const video = document.querySelector("video") as HTMLVideoElement;
+      Object.defineProperty(video, "videoWidth", {
+        value: 1280,
+        configurable: true,
+      });
+      Object.defineProperty(video, "videoHeight", {
+        value: 720,
+        configurable: true,
+      });
+      fireEvent.loadedMetadata(video);
+      expect(screen.getByText("1280\u00d7720")).toBeTruthy();
     });
   });
 

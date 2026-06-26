@@ -23,6 +23,7 @@ import { useRecipeCurrentVersion } from "@/lib/stores/recipe-watcher-store";
 import { Loader2 } from "lucide-react";
 
 import { CompositeUpdateBadge } from "./composite-update-badge";
+import { MediaPreviewImage, MediaPreviewVideo } from "./media-preview";
 
 /**
  * Composite node — Slice 6.6 (ADR-0039).
@@ -284,29 +285,10 @@ function pickPreview(
 
 function RecipePreview({ preview }: { preview: RecipePreviewKind }) {
   if (preview.type === "image") {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={preview.url}
-        alt="Recipe result"
-        className="w-full rounded-md bg-foreground/5 object-cover"
-        onError={(e) => {
-          (e.target as HTMLImageElement).style.display = "none";
-        }}
-      />
-    );
+    return <MediaPreviewImage url={preview.url} alt="Recipe result" href={null} />;
   }
   if (preview.type === "video") {
-    return (
-      <video
-        src={preview.url}
-        controls
-        loop
-        playsInline
-        onPointerDown={(e) => e.stopPropagation()}
-        className="w-full rounded-md bg-black"
-      />
-    );
+    return <MediaPreviewVideo url={preview.url} loop className="bg-black" />;
   }
   return (
     <p className="max-h-24 overflow-y-auto whitespace-pre-wrap rounded-md bg-foreground/[0.04] px-2 py-1.5 text-[11px] leading-snug text-foreground/85">

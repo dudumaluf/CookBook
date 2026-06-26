@@ -3374,3 +3374,103 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **The `mask` socket only appears in the dynamic `getInputs`** (model-dependent), so the assistant's static node catalog won't list it until it inspects a `gpt-image-2` node — acceptable; the socket still renders and runs.
 
 
+## ADR-0081: Hover dimension chip — own it in the shared preview primitives, and pull raw `<img>`/`<video>` result previews onto them
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user wanted every node that shows a visual result to reveal the media's pixel size (`W×H`) on hover, "somewhere small, on top of the image." `MediaPreviewImage` / `MediaPreviewVideo` (the "silhouette is sacred" primitives) already back most generator previews and `MediaPreviewImage` already measured `naturalWidth/Height` for its intrinsic-aspect fallback — but a sizable tail of nodes still hand-rolled raw `<img>`/`<video>` tags (the exact debt the primitives' own doc comment laments), so a one-file change wouldn't reach them.
+
+- **Decision**: Add a small **`DimensionBadge`** (exported from `media-preview.tsx`) and render it from both primitives by default (`showDimensions` prop, default `true`). The badge sits **top-left** and reveals on `group-hover` only. Then **migrate the raw single-result previews onto the primitives** where the swap is behaviour-equivalent (`node-video`, `-video-pad`, `-video-concat`, `-video-audio-merge`, `-audio-to-video`, `-video-slicer`, `-continuity-builder`, `node-composite`'s recipe preview), and for the few raw previews that stay (image input, frame-extract, image-grid, image-iterator) drop the badge inline against the dimensions they already track.
+  - **Top-left, not bottom**: clears the native `<video>` scrubber (bottom), the `IteratorCursor` chip (top-right), and the MultiImageView bottom strip — the one corner free across every surface. (A one-line move if the user prefers bottom.)
+  - **No flash**: the badge renders only once both dimensions are known (`<img onLoad>` / `<video onLoadedMetadata>`), and is keyed to the current `url` so a re-run never shows a stale size.
+
+- **Why this shape**: Owning the badge in the two primitives means it's free for every current and future node that uses them, and the migration shrinks the raw-tag debt instead of bolting a second copy of the logic onto each node. The compare overlay/slider and the editor/picker surfaces (crop editor, SAM mask editor, Higgsfield character picker, Soul ID avatar) are deliberately **left out** — a size chip there is noise, not signal.
+
+- **Consequences**: Migrated video bodies inherit the primitive's `object-contain` + aspect contract (a strict improvement — they letterbox instead of relying on default video fitting) and lose nothing (controls/loop forwarded). New result previews should reach for `MediaPreview*` / `PreviewImage` rather than a raw tag, and get the chip automatically.
+
+
+## ADR-0082: Resize Image / Resize Video — two type-specific nodes over one pure `resolveResize`; video via mediabunny `Conversion`
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user wanted to resize an image or video to an explicit pixel size "with all the modes that make sense — fit, stretch — and a way to up/down-scale to a size without changing the ratio." The engine uses **fixed typed handles** (`DataType`), and the codebase's established shape is media-type-specific nodes (Image Concat vs Video Concat, `transformImage` vs `pad-video`), not one node juggling an `image|video` union output.
+
+- **Decision**: Ship **two nodes** — `resize-image` (image→image) and `resize-video` (video→video) — sharing a single pure geometry helper `resolveResize(srcW, srcH, reqW, reqH, mode)` (`lib/media/resize.ts`), with **four modes**: `contain` (Fit — pad to exact size), `cover` (Fill — crop to exact size), `stretch` (exact size, ignore ratio), `scale` (keep ratio, **no padding** — output is the scaled size; a blank/0 axis is derived from the other). Image path = `OffscreenCanvas` (PNG, alpha so Fit can pad transparent or a `background` color). **Video path = mediabunny `Conversion`** with `video: { width, height, fit }` — which resizes natively AND copies/transcodes the audio track for free — mapping `stretch→fill`, `contain→contain`, `cover→cover`, and `scale` to pre-resolved dimensions + `fill`.
+  - **Why two nodes, not one**: a single node would need an `image|video` union output handle (the engine can't type that) or two always-half-empty outputs. Two clearly-named siblings sharing the math is the type-clean, convention-matching choice.
+  - **Why `Conversion`, not a frame loop**: `pad-video`/`track-crop` hand-roll a `VideoSampleSink`→canvas→encode loop because they composite per frame; a pure resize doesn't, and `Conversion`'s built-in `fit` + automatic audio handling is ~15 lines vs a manual loop that would *drop* audio (which resize must keep).
+
+- **Consequences**: Both result refs carry `width/height`, so the node preview renders at the correct aspect and the new dimension chip (ADR-0081) reads the true output size. `contain` pads transparent for images / black for video (mediabunny's `contain` fill isn't color-configurable — acceptable; the image path exposes a `background`). Format is PNG (image) / MP4 (video); per-format output control can be a later caps-style addition if needed.
+
+
+## ADR-0083: Content-addressed Storage — hash the bytes so the same image/video/audio is stored exactly once
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user wanted a hard guarantee that everything generated is durable in Supabase ("not only on fal.ai") and that **nothing is re-saved**: "same prompt? don't save. same image? don't save. same video? don't save — only when we generate something new." Investigation showed half of this already held: `generation-sync` (ADR-0035) already rehosts every AI image/video/audio off the provider CDN into our bucket on `done`, and the Gallery already de-dupes rows via a `content_hash` (ADR-0038). The gap was **storage-level**: `uploadImageAsset`/`uploadMediaAsset` minted a **random** object key (`<folder>/<random>/<filename>`, `upsert:false`) on *every* call, so identical bytes were re-uploaded as new objects on every transform run / rehost; and the Gallery's `content_hash` was a hash of the provider **URL string**, not the bytes. The upload helper's own comment had flagged the fix: *"switch to a content hash later if we want dedupe."*
+
+- **Decision**: **Content-address every Storage upload.** `uploadImageAsset` / `uploadMediaAsset` hash the file's bytes (SHA-256 via Web Crypto) and key the object `users/<uid>/<folder>/<sha256>.<ext>`. Identical bytes ⇒ identical key ⇒ the object is stored **once**; a duplicate upload returns a Storage **409 which we treat as success** (reuse the existing object, return its public URL). When Web Crypto is unavailable (non-secure context / bare test runner) we fall back to the **legacy random key** — correctness over dedup, never a weak-hash collision that could alias two different images onto one object. **No DB migration**: the Gallery's per-`(project,node,content_hash)` dedup (ADR-0038) is untouched and now simply sits *over* byte-deduped storage.
+
+- **Why this shape**: A single change at the storage layer makes "same media → don't re-save" true for **every** path at once — AI rehost (generation-sync), every transform/compose node (resize, frame-extract, grid, concat, …), and Library imports — rather than bolting a per-node guard onto each. It's the exact evolution the helper anticipated, and content-addressing is the standard idempotent-upload pattern.
+
+- **Consequences**:
+  - **Per-user namespace.** The key is scoped under `users/<uid>/` (RLS, ADR-0034), so the same bytes uploaded by two different users are two objects — correct for ownership; cross-user dedup is explicitly out of scope.
+  - **Pre-CAS objects stay valid.** Old random-key uploads keep working (their public URLs are already persisted); only *new* uploads are content-addressed. No backfill.
+  - **Gallery rows unchanged in count.** Two byte-identical AI generations under different provider URLs would still make two Gallery rows, but they now point at **one** storage object. Acceptable: AI rarely emits byte-identical output across runs (seed varies), and the execution cache already prevents re-running identical inputs.
+  - **Prompts were already covered.** `ai-text` generations dedupe on trimmed text content (ADR-0038) and the prompt feeding an image is stored as `prompt_text` — so "same prompt → don't save" already holds; no separate prompts table was added (would be speculative).
+
+
+## ADR-0084: Every result image is click-to-zoom — route the raw-`<img>` stragglers through `PreviewImage`
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user expects to open any image/video result in the full-screen modal ("view things bigger"), and reported the **Image input node** does nothing on click. `PreviewImage` → `ImagePreviewModal` (click-to-zoom + Download + right-click menu + the ADR-0081 dimension chip + checkerboard) already backed most *generated* result images, and Image Grid had its own inline modal — but a tail of nodes still rendered a raw `<img>` with no click affordance: the Image input node, Frame Extract, Image Iterator, and the List item preview.
+
+- **Decision**: Route every single-result **image** preview through `PreviewImage`, making click → modal universal. Migrated: Image input node, Frame Extract, Image Iterator, and List (image branch). For **video**, the platform-standard "view bigger" is the native `<video controls>` fullscreen button — every video preview already flows through `MediaPreviewVideo controls` (ADR-0081) — so the List video branch moved onto `MediaPreviewVideo` too; **no bespoke video lightbox** was built.
+
+- **Why this shape**: `PreviewImage` already encapsulates the whole affordance set, so pointing the raw-`<img>` stragglers at it is a **net deletion** of hand-rolled markup, not new surface area. Editor / picker / compare surfaces (crop editor, SAM mask editor, character picker, Soul ID avatar, A/B slider) stay raw **on purpose** — a zoom modal there fights the interaction (same exclusion list as ADR-0081).
+
+- **Consequences**: Clicking any result image opens the modal. The Image input node's corner ✕ clear button now rides as a **sibling overlay** above the `PreviewImage` button (a button-in-button is invalid HTML), and the node delegates its aspect ratio to `PreviewImage` (intrinsic-measured when the linked asset has no stored dimensions). Videos rely on native fullscreen; a unified in-app video lightbox, if ever wanted, is an additive change.
+
+
+## ADR-0085: Composer node — a layered visual compositor on the existing Canvas2D pipeline (no new compositing library), with a CSS-mirrors-canvas editor
+
+- **Status**: Accepted (2026-06-25)
+
+- **Context**: The user asked for a Photoshop-like node: an editor with **layers** of images (later videos) that can be moved / scaled / rotated visually, with **blend modes** and **masks** (alpha + luma), explicitly noting it should later double as a **video timeline**. This is a large, multi-surface feature (new node + a full-screen editor + a render path + persistence) with one pivotal build decision: how to render and manipulate layers. The stack already standardises on `OffscreenCanvas` + `createImageBitmap` + `drawImage` + `convertToBlob` for images (`src/lib/media/compose-image.ts`, whose header already named "the Compositor" as its eventual consumer) and mediabunny `VideoSampleSink → CanvasSource` for per-frame video (`track-recompose.ts`, `pad-video.ts`). There is **no** GPU/2D-scene library in `package.json` (no Konva/Fabric/Pixi/Three).
+
+- **Decision**: Build the Composer on the **existing Canvas2D + mediabunny pipeline; add no compositing library.** Two faithful halves:
+  - **Editor = DOM.** Each layer is an absolutely-positioned `<img>`/`<div>` transformed with CSS `translate/rotate` + `mix-blend-mode` + `opacity` on a scaled stage — buttery direct manipulation (drag to move, corner handles to scale uniformly, a top handle to rotate) with no per-frame canvas re-encode.
+  - **Export = Canvas.** `renderComposite` (`src/lib/media/compose-composer.ts`) draws the *same* layers onto an `OffscreenCanvas` with `ctx.translate/rotate` + `globalCompositeOperation` + `globalAlpha`, then `convertToBlob` → PNG → the content-addressed upload (ADR-0083).
+  - The two stay pixel-faithful because both consume one pure placement function (`placeLayer`, `src/types/composer.ts`) and the **blend-mode names line up 1:1** between CSS `mix-blend-mode` and canvas `globalCompositeOperation` (only `normal` differs — canvas spells it `source-over`, mapped by `canvasBlendMode`).
+
+- **Why this shape**: A GPU library would (a) fork the export path (pixel readback to reach the existing upload+CAS pipeline), (b) bloat the bundle, and (c) require per-mode shader/lib special-casing for blends + masks — all to re-implement what `compose-image.ts` already does. CSS↔canvas parity gives WYSIWYG for free. The node is **`reactive: true`** like Image Stack/Transform (ADR-0075): the body previews the composite live (local `blob:`, no upload) as you arrange; a Run bakes the durable copy. The document lives in `config.doc` (nested JSON), mirroring how `node-composite` stores a subgraph — hardened by a tolerant `sanitizeComposerDocument` reused by the node's default merge **and** the workflow-store v15 migration (forward-portable persistence).
+
+- **Editor surface**: full-screen `createPortal(document.body)` at `z-[80]` (above `ImagePreviewModal`'s `z-[70]`), escaping React Flow's CSS transform exactly like `ImagePreviewModal`. Keydown is captured + swallowed so canvas shortcuts (Delete / ⌘C) never fire underneath; the working doc is local state committed back **debounced** so dragging doesn't thrash the reactive re-render / persistence.
+
+- **Data-model seams for the roadmap** (so later phases are additive, not rewrites): `LayerMask { mode: "alpha" | "luma"; invert }` is in the shape but not yet rendered (**Phase 2**); `LayerSource.mediaType: "image" | "video"` reserves video layers rendered per-frame via the mediabunny `track-recompose` recipe (**Phase 3**); `LayerTiming { startMs, endMs, trimIn }` reserves the timeline (**Phase 4**). Phase 1 ships images only: input/solid/URL layers, transform, opacity, the 16 blend modes, z-order, canvas presets/background.
+
+- **Consequences**:
+  - **Layer sources.** Wiring an image into an auto-growing `layer-N` socket drops in a layer (tracked by `config.seenInputs` so deleting a layer isn't undone by the auto-add); solids and pasted URLs are added in the editor. A library-asset picker is deferred (the `asset` source kind is reserved).
+  - **Category = `compose`.** Like Image Stack/Concat, the Composer is a transform, **not** a paid generation, so its output is **not** a Gallery row — but it *is* uploaded durably to Supabase (content-addressed, ADR-0083), consistent with the other compose nodes.
+  - **Scale is uniform** (corner handle = distance-from-centre ratio) so layers never distort; non-uniform scale + free-rotate-of-individual-handles is a possible later refinement.
+  - **`renderComposite` isn't unit-tested in happy-dom** (no OffscreenCanvas) — covered through the node with mocks + the pure `placeLayer` / `compositeCacheKey` / `sanitizeComposerDocument` helpers, real in a browser. Matches every other `src/lib/media/` module.
+
+
+## ADR-0086: Composer masks (Phase 2) — a `destination-in` matte on a per-layer scratch, with CSS-mask previews
+
+- **Status**: Accepted (2026-06-26)
+
+- **Context**: ADR-0085 reserved `LayerMask { source; mode: "alpha" | "luma"; invert }` in the shape but didn't render it. Phase 2 turns it on: each layer can take a **matte** image (from another wired input or a pasted URL) that decides where the layer shows, read either from the matte's **alpha** channel or its **luminance**, optionally **inverted**. As with the rest of the Composer the export must be exact while the editor stays a buttery DOM surface (no per-edit canvas re-encode).
+
+- **Decision**: Render masks with the **same CSS-mirrors-canvas split** as the compositor itself.
+  - **Export = a per-layer scratch + matte (exact).** A masked layer is painted onto a full-canvas scratch `OffscreenCanvas`, then a **matte** (white pixels whose *alpha* is the computed coverage) is `globalCompositeOperation = "destination-in"`-ed into the scratch, then the masked scratch is composited onto the main canvas with the layer's opacity + blend. The matte is built by drawing the mask with the layer's **own** `placeLayer` transform (so it's pinned to the layer box, matching the editor's `mask-size: 100% 100%`), reading pixels once, and writing coverage from the pure `maskCoverage(r,g,b,a,mode,invert)` helper — `alpha` reads alpha verbatim; `luma` reads luminance premultiplied by the mask's alpha (so transparent matte regions never leak); `invert` flips it. Both modes funnel through one alpha matte so alpha/luma/invert share a single, correct code path.
+  - **Editor = CSS mask (faithful enough, live).** The stage layer element gets `mask-image` (+ `-webkit-` twin), `mask-size: 100% 100%`, `mask-mode: alpha | luminance`. Alpha is exact; luma rides `mask-mode: luminance`; **invert isn't expressible in plain CSS**, so the stage shows the un-inverted matte while the node-body **reactive preview** (which runs the real `renderComposite`) shows the exact, inverted result live. Honest, cheap, and never wrong where it counts (the bake).
+
+- **Why this shape**: `destination-in` with a prebuilt alpha matte is the canonical Canvas2D masking move and needs **no new library** — consistent with ADR-0085's "add no compositing library." Reading luminance/inverting in one pixel pass keeps `maskCoverage` pure and unit-testable in happy-dom (where `OffscreenCanvas` is absent), so the math is pinned even though `renderComposite` itself is browser-only. Tying the matte to the layer box (rather than a free, independently-transformed mask) is the simplest correct v1 and matches what the CSS preview can express; an independently-transformed mask is a later refinement.
+
+- **Consequences**:
+  - **Matte sources reuse layer-source resolution.** A mask's `source` is the same `LayerSource` union; `resolveMaskUrl` / `resolveMaskUrls` resolve it exactly like a layer (input handle → wired ref, or `url`). The asset source kind stays reserved (same deferral as layers).
+  - **Cache key + execute carry masks.** `compositeCacheKey(doc, urls, maskUrls?)` appends `~matteUrl:mode:invert` per masked visible layer (omitted otherwise, so mask-less docs key identically to before — 2-arg callers unaffected); the node resolves `maskUrls` alongside `urls` and threads both into `renderComposite` and the key.
+  - **Cost**: one extra scratch canvas + one full-canvas `getImageData` per *masked* layer. Fine for images; when video layers land (Phase 3) the matte should be cropped to the layer's bounding box to avoid a full-frame read per frame.
+
+

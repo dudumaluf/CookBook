@@ -78,6 +78,8 @@ const KIND_ALLOWED_KEYS: Record<string, ReadonlySet<string>> = {
     "outputFormat",
     "quality",
   ]),
+  "resize-image": new Set(["mode", "width", "height", "background"]),
+  "resize-video": new Set(["mode", "width", "height"]),
 };
 
 export function validateConfigPatch(

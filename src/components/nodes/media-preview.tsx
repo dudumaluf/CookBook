@@ -53,6 +53,40 @@ export const CHECKERBOARD_STYLE: CSSProperties = {
 const PREVIEW_BASE =
   "block w-full overflow-hidden rounded-md bg-foreground/[0.04]";
 
+/**
+ * Tiny pixel-dimension chip overlaid on a media preview, revealed only on
+ * hover so it never competes with the content at rest. Top-left corner by
+ * design — it clears the native video scrubber (bottom), the `IteratorCursor`
+ * (top-right), and the MultiImageView bottom strip.
+ *
+ * Renders nothing until both dimensions are known (image `onLoad` /
+ * video `onLoadedMetadata`), so there's no `0×0` flash. Drop it as an
+ * absolutely-positioned child inside any `group relative` media wrapper —
+ * the two shared primitives below do this for you; raw-`<img>`/`<video>`
+ * node bodies opt in by adding `group relative` + capturing dimensions.
+ */
+export function DimensionBadge({
+  width,
+  height,
+  className,
+}: {
+  width?: number | null;
+  height?: number | null;
+  className?: string;
+}) {
+  if (!width || !height) return null;
+  return (
+    <span
+      className={cn(
+        "pointer-events-none absolute left-1 top-1 z-10 select-none rounded bg-background/75 px-1 py-0.5 font-mono text-[9px] font-medium leading-none text-foreground/80 opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100",
+        className,
+      )}
+    >
+      {width}×{height}
+    </span>
+  );
+}
+
 interface MediaPreviewImageProps {
   /** URL of the image to render. */
   url: string;
@@ -85,6 +119,12 @@ interface MediaPreviewImageProps {
   className?: string;
   /** `data-testid` on the wrapper, for component tests. */
   testId?: string;
+  /**
+   * Reveal a `W×H` pixel-dimension chip on hover (top-left). Default true —
+   * every result preview should let the user read its size without leaving
+   * the canvas. Pass `false` for surfaces where it's noise (tiny pickers).
+   */
+  showDimensions?: boolean;
 }
 
 export function MediaPreviewImage({
@@ -96,6 +136,7 @@ export function MediaPreviewImage({
   checkerboard = false,
   className,
   testId,
+  showDimensions = true,
 }: MediaPreviewImageProps) {
   // Intrinsic-ratio fallback: when no explicit `aspectRatio` is given, the
   // box should hug the image's own proportions (a 9:16 cutout must read as
@@ -106,13 +147,16 @@ export function MediaPreviewImage({
   // config ratio so the running placeholder + result stay matched.
   const [measured, setMeasured] = useState<{
     url: string;
-    aspect: string;
+    w: number;
+    h: number;
   } | null>(null);
-  const intrinsicAspect = measured?.url === url ? measured.aspect : null;
+  const dims = measured?.url === url ? measured : null;
+  const intrinsicAspect =
+    aspectRatio == null && dims ? `${dims.w} / ${dims.h}` : null;
 
   const fitClass = fit === "contain" ? "object-contain" : "object-cover";
   const computedHref = href === null ? null : (href ?? url);
-  const wrapperClass = cn(PREVIEW_BASE, className);
+  const wrapperClass = cn(PREVIEW_BASE, "group relative", className);
   const style: CSSProperties = {
     aspectRatio: aspectRatio ?? intrinsicAspect ?? "1 / 1",
     ...(checkerboard ? CHECKERBOARD_STYLE : {}),
@@ -123,16 +167,13 @@ export function MediaPreviewImage({
       src={url}
       alt={alt ?? ""}
       className={cn("h-full w-full", fitClass)}
-      // Measure the natural ratio once loaded, but only when the caller
-      // didn't pin an explicit aspect (then the box hugs the content).
+      // Measure the natural dimensions once loaded — used for the hover
+      // dimension chip always, and for the intrinsic-ratio fallback only
+      // when the caller didn't pin an explicit `aspectRatio`.
       onLoad={(e) => {
-        if (aspectRatio != null) return;
         const img = e.currentTarget;
         if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-          setMeasured({
-            url,
-            aspect: `${img.naturalWidth} / ${img.naturalHeight}`,
-          });
+          setMeasured({ url, w: img.naturalWidth, h: img.naturalHeight });
         }
       }}
       // Bad URLs shouldn't blow out the layout — collapse the broken
@@ -142,6 +183,10 @@ export function MediaPreviewImage({
       }}
     />
   );
+
+  const badge = showDimensions ? (
+    <DimensionBadge width={dims?.w} height={dims?.h} />
+  ) : null;
 
   if (computedHref) {
     return (
@@ -157,6 +202,7 @@ export function MediaPreviewImage({
         data-testid={testId}
       >
         {inner}
+        {badge}
       </a>
     );
   }
@@ -164,6 +210,7 @@ export function MediaPreviewImage({
   return (
     <div className={wrapperClass} style={style} data-testid={testId}>
       {inner}
+      {badge}
     </div>
   );
 }
@@ -184,6 +231,12 @@ interface MediaPreviewVideoProps {
   muted?: boolean;
   className?: string;
   testId?: string;
+  /**
+   * Reveal a `W×H` pixel-dimension chip on hover (top-left, clear of the
+   * scrubber). Default true. Dimensions are read from the decoded video on
+   * `loadedmetadata`.
+   */
+  showDimensions?: boolean;
 }
 
 export function MediaPreviewVideo({
@@ -194,10 +247,17 @@ export function MediaPreviewVideo({
   muted = false,
   className,
   testId,
+  showDimensions = true,
 }: MediaPreviewVideoProps) {
+  const [dims, setDims] = useState<{
+    url: string;
+    w: number;
+    h: number;
+  } | null>(null);
+  const known = dims?.url === url ? dims : null;
   return (
     <div
-      className={cn(PREVIEW_BASE, className)}
+      className={cn(PREVIEW_BASE, "group relative", className)}
       style={{ aspectRatio: aspectRatio ?? "16 / 9" }}
       data-testid={testId}
     >
@@ -212,7 +272,16 @@ export function MediaPreviewVideo({
         playsInline
         preload="metadata"
         onPointerDown={(e) => e.stopPropagation()}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoWidth > 0 && v.videoHeight > 0) {
+            setDims({ url, w: v.videoWidth, h: v.videoHeight });
+          }
+        }}
       />
+      {showDimensions ? (
+        <DimensionBadge width={known?.w} height={known?.h} />
+      ) : null}
     </div>
   );
 }

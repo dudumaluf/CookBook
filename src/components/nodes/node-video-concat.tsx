@@ -19,6 +19,8 @@ import type {
   VideoRef,
 } from "@/types/node";
 
+import { MediaPreviewVideo } from "./media-preview";
+
 /**
  * Video Concat — joins clips into one continuous MP4 (Slice D.2).
  *
@@ -101,15 +103,7 @@ function VideoConcatBody({
           <span>Joining clips…</span>
         </div>
       ) : url ? (
-        <video
-          src={url}
-          controls
-          loop
-          playsInline
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
-        />
+        <MediaPreviewVideo key={url} url={url} loop className="bg-black" />
       ) : (
         <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
           <Combine className="h-3 w-3" />

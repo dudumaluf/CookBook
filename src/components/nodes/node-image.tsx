@@ -18,6 +18,8 @@ import { useAssetStore } from "@/lib/stores/asset-store";
 import { aspectFromImageDimensions } from "@/lib/utils/aspect-ratio";
 import type { NodeBodyProps } from "@/types/node";
 
+import { PreviewImage } from "./preview-image";
+
 /**
  * Image node config.
  *
@@ -57,24 +59,18 @@ function ImageNodeBody({
   const [urlDisclosed, setUrlDisclosed] = useState(false);
 
   // Slice 5.6.2 — render the preview at the image's true aspect ratio
-  // instead of forcing a square crop. Three signal sources, fastest-first:
-  //   1. linked asset's stored width / height (set on upload, no flicker).
-  //   2. fallback: <img onLoad> measures naturalDimensions and sets state.
-  //   3. ultimate fallback: 1:1 (matches the old square behavior).
-  const [imgNaturalDimensions, setImgNaturalDimensions] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
+  // instead of forcing a square crop. Use the linked asset's stored
+  // width / height when known (flicker-free); otherwise pass `null` and let
+  // PreviewImage measure the intrinsic ratio on load.
   const linkedDims =
     linkedAsset?.kind === "image" &&
     linkedAsset.width !== undefined &&
     linkedAsset.height !== undefined
       ? { width: linkedAsset.width, height: linkedAsset.height }
       : null;
-  const previewDims = linkedDims ?? imgNaturalDimensions;
-  const previewCssAspect = previewDims
-    ? aspectFromImageDimensions(previewDims.width, previewDims.height)
-    : "1 / 1";
+  const linkedAspect = linkedDims
+    ? aspectFromImageDimensions(linkedDims.width, linkedDims.height)
+    : null;
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -115,32 +111,16 @@ function ImageNodeBody({
     // gap is small to match the tightened chrome.
     <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       {hasImage ? (
-        <div
-          className="relative w-full overflow-hidden rounded-md bg-foreground/[0.04]"
-          data-testid="image-preview"
-          style={{ aspectRatio: previewCssAspect }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={effectiveUrl}
+        // Click → full-screen modal (PreviewImage owns it), right-click →
+        // download menu, hover → W×H chip. `testId` + `aspectRatio` ride
+        // on the aspect-bearing wrapper so the preview reads at the image's
+        // true ratio. The corner ✕ sits above as a sibling overlay.
+        <div className="group relative w-full">
+          <PreviewImage
+            url={effectiveUrl!}
             alt="Image source"
-            className="h-full w-full object-contain"
-            onLoad={(e) => {
-              // Measure-on-load for legacy assets that have no stored
-              // width / height. Skip when we already have linked dims to
-              // avoid stomping over a known-good signal.
-              if (linkedDims) return;
-              const img = e.currentTarget;
-              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-                setImgNaturalDimensions({
-                  width: img.naturalWidth,
-                  height: img.naturalHeight,
-                });
-              }
-            }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.opacity = "0";
-            }}
+            aspectRatio={linkedAspect}
+            testId="image-preview"
           />
           {!config.assetId && config.url ? (
             // Free-URL preview gets a corner ✕ so the user can clear back to
@@ -151,7 +131,7 @@ function ImageNodeBody({
               onClick={() => updateConfig({ url: "" })}
               onPointerDown={(e) => e.stopPropagation()}
               aria-label="Clear image"
-              className="absolute right-1.5 top-1.5 rounded-full bg-background/80 p-1 text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:text-foreground group-hover:opacity-100 [div:hover>&]:opacity-100"
+              className="absolute right-1.5 top-1.5 z-20 rounded-full bg-background/80 p-1 text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:text-foreground group-hover:opacity-100"
             >
               <X className="h-3 w-3" />
             </button>

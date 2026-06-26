@@ -103,7 +103,8 @@ describe("uploadImageAsset", () => {
     expect(supabaseClient.__mocks.upload).toHaveBeenCalledTimes(1);
     const [key, passedFile, opts] = supabaseClient.__mocks.upload.mock
       .calls[0]!;
-    expect(key).toMatch(/^images\/[0-9a-f]{8}\/Photo\.png$/);
+    // Content-addressed key: `images/<sha256>.<ext>` (ADR-0083).
+    expect(key).toMatch(/^images\/[0-9a-f]{64}\.png$/);
     expect(passedFile).toBe(file);
     expect(opts).toMatchObject({ contentType: "image/png", upsert: false });
     expect(out.bucket).toBe("cookbook-assets");
@@ -166,9 +167,37 @@ describe("uploadImageAsset", () => {
     const out = await uploadImageAsset(file);
     const [key] = supabaseClient.__mocks.upload.mock.calls[0]!;
     expect(key).toMatch(
-      /^users\/user-uuid-456\/images\/[0-9a-f]{8}\/scoped\.png$/,
+      /^users\/user-uuid-456\/images\/[0-9a-f]{64}\.png$/,
     );
     expect(out.key).toBe(key);
+  });
+
+  // ADR-0083 — content-addressed storage. Identical bytes always map to the
+  // same key (so "same image → don't re-save") regardless of filename;
+  // different bytes never collide.
+  it("content-addresses the key — identical bytes share a key, different bytes differ", async () => {
+    const a1 = new File(["same-bytes"], "a.png", { type: "image/png" });
+    const a2 = new File(["same-bytes"], "renamed.png", { type: "image/png" });
+    const diff = new File(["other-bytes"], "a.png", { type: "image/png" });
+    const k1 = (await uploadImageAsset(a1)).key;
+    const k2 = (await uploadImageAsset(a2)).key;
+    const k3 = (await uploadImageAsset(diff)).key;
+    expect(k1).toMatch(/^images\/[0-9a-f]{64}\.png$/);
+    expect(k2).toBe(k1); // same bytes → same object, filename ignored
+    expect(k3).not.toBe(k1); // different bytes → distinct object
+  });
+
+  it("treats an 'already exists' conflict as a successful dedup (no throw)", async () => {
+    // Re-uploading identical bytes → Storage 409. That's not a failure: the
+    // object is already there, so we reuse it and still return the URL.
+    supabaseClient.__mocks.upload.mockResolvedValueOnce({
+      data: null,
+      error: { message: "The resource already exists", statusCode: "409" },
+    });
+    const file = new File(["dup"], "dup.png", { type: "image/png" });
+    const out = await uploadImageAsset(file);
+    expect(out.url).toBe("https://cdn.supabase.test/cookbook-assets/x");
+    expect(out.key).toMatch(/^images\/[0-9a-f]{64}\.png$/);
   });
 });
 

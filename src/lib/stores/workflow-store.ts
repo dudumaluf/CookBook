@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { NodeInstance, WorkflowEdge } from "@/types/node";
+import { sanitizeComposerDocument } from "@/types/composer";
 import { runAllGraphMigrations } from "@/lib/engine/migrate-graph";
 import { nodeRegistry } from "@/lib/engine/registry";
 import { useAssetStore } from "@/lib/stores/asset-store";
@@ -303,7 +304,12 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
-      version: 14,
+      // v15: Composer node lands (ADR-0085). The migrate walk hardens its
+      // `config.doc` via `sanitizeComposerDocument` (clamps canvas +
+      // transforms, drops unknown blend modes / unrecoverable layers) and
+      // ensures `seenInputs` is an array. No legacy graphs reference it, so
+      // the bump only forces the idempotent sanitiser to run once.
+      version: 15,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole
@@ -378,6 +384,20 @@ export const useWorkflowStore = create<WorkflowState>()(
             if (typeof old.reasoning === "boolean") {
               next.reasoning = old.reasoning;
             }
+            n = { ...n, config: next };
+          }
+          if (n.kind === "composer") {
+            // v15 — coerce the Composer document into a valid shape (clamp
+            // canvas + transforms, drop unknown blend modes / unrecoverable
+            // layers). Idempotent + tolerant of partial / hand-edited payloads
+            // (ADR-0085). `portCount` / `seenInputs` are bookkeeping the node
+            // body re-derives, so we only need to harden `doc`.
+            const old = (n.config ?? {}) as Record<string, unknown>;
+            const next: Record<string, unknown> = {
+              ...old,
+              doc: sanitizeComposerDocument(old.doc),
+            };
+            if (!Array.isArray(next.seenInputs)) next.seenInputs = [];
             n = { ...n, config: next };
           }
           // v6 size sanitisation — applies to every node kind. Width / height

@@ -1,19 +1,23 @@
 /**
- * Upload an image file to Supabase Storage and return a `remote`-source
- * descriptor ready to attach to a new `ImageAsset`.
+ * Upload images / video / audio to Supabase Storage and return a
+ * `remote`-source descriptor ready to attach to a new asset.
  *
- * Object keys are content-addressed-ish: `images/<random>/<safe-filename>`.
- * The random prefix collision-proofs concurrent uploads of the same
- * filename; keeping the filename tail makes the bucket browsable in the
- * Supabase dashboard. Switch to a content hash later if we want dedupe.
+ * **Object keys are content-addressed** (ADR-0083):
+ * `users/<uid>/<folder>/<sha256>.<ext>`. Hashing the bytes means identical
+ * content always maps to the same key, so re-running a transform or
+ * rehosting the same generation twice stores the bytes exactly once — a
+ * duplicate upload comes back as a 409 we treat as success (the object is
+ * already there). This is the "same image / same video → don't re-save"
+ * guarantee, enforced at the storage layer for every upload path.
+ *
+ * When Web Crypto is unavailable (non-secure context / some test runners)
+ * we fall back to the legacy random key (`<folder>/<random>/<filename>`)
+ * via `buildObjectKey` — correctness over dedup, with no collision risk.
  *
  * The bucket is `public: true` so `getPublicUrl()` returns a CDN-cacheable
- * URL with no signed-URL ceremony — fine for the MVP, swap for signed URLs
- * when we add auth.
- *
- * The upload happens directly from the browser using the publishable
- * (anon) key. Bucket-scoped INSERT policy is what authorizes it; see
- * supabase migration `cookbook_assets_bucket`.
+ * URL with no signed-URL ceremony. Writes are scoped under
+ * `users/<auth.uid>/` so RLS authorizes them (ADR-0034); the upload happens
+ * directly from the browser using the publishable (anon) key.
  */
 
 import { getAssetsBucket, getSupabaseClient } from "@/lib/supabase/client";
@@ -67,6 +71,68 @@ function randomKey(): string {
 }
 
 /**
+ * SHA-256 (lowercase hex) of a blob's bytes via Web Crypto. Returns `null`
+ * when `crypto.subtle` is unavailable — only the case in a non-secure
+ * context or a bare test runner; the browser always has it on https /
+ * localhost. A null result makes the caller fall back to a random key
+ * (legacy behavior, no dedup) rather than risk a weak-hash collision that
+ * could alias two different images onto one object.
+ */
+async function contentHashHex(blob: Blob): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const digest = await subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/**
+ * Pick a file extension for the content-addressed key. Prefer the original
+ * filename's extension (so `.jpg` stays `.jpg`), then the MIME subtype,
+ * then the folder-specific fallback. Lowercased; `jpeg` is normalized to
+ * `jpg`.
+ */
+function extensionFor(filename: string, mime: string, fallback: string): string {
+  const fromName = /\.([a-zA-Z0-9]{1,8})$/.exec(filename.trim())?.[1];
+  if (fromName) return fromName.toLowerCase() === "jpeg" ? "jpg" : fromName.toLowerCase();
+  const fromMime = mime.split("/")[1]?.toLowerCase().replace(/^jpeg$/, "jpg");
+  return fromMime && /^[a-z0-9]{1,8}$/.test(fromMime) ? fromMime : fallback;
+}
+
+/** Build a content-addressed key: `users/<uid>/<folder>/<hash>.<ext>`. */
+function buildContentKey(
+  folder: "images" | "videos" | "audio",
+  hash: string,
+  ext: string,
+  userId?: string,
+): string {
+  const base = `${folder}/${hash}.${ext}`;
+  return userId ? `users/${userId}/${base}` : base;
+}
+
+/**
+ * True when a Storage upload failed only because the object already exists
+ * (`upsert: false` + a key collision). For content-addressed keys that's
+ * not an error — it means the exact same bytes are already stored, so we
+ * treat it as a successful dedup and reuse the existing object. Covers the
+ * couple of error shapes Supabase Storage has used across versions.
+ */
+function isAlreadyExistsError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as {
+    message?: unknown;
+    error?: unknown;
+    statusCode?: unknown;
+    status?: unknown;
+  };
+  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+  if (msg.includes("already exists") || msg.includes("duplicate")) return true;
+  if (e.error === "Duplicate") return true;
+  return e.statusCode === 409 || e.statusCode === "409" || e.status === 409;
+}
+
+/**
  * Build the canonical object key for an image upload.
  *
  * Slice 6.1 (ADR-0034) prepends a per-user folder so RLS can scope writes
@@ -112,22 +178,30 @@ export async function uploadImageAsset(
   // We tolerate `auth.getUser()` returning null (e.g. in tests / future
   // anonymous mode) by falling back to the legacy unscoped key. Real
   // production writes always have a user.
-  const { data: userData } = await supabase.auth.getUser();
-  const key = buildObjectKey(file.name, userData.user?.id);
+  const userId = (await supabase.auth.getUser()).data.user?.id;
 
-  // Capture pixel dimensions BEFORE the network round-trip so the
-  // resulting `ImageAsset` ships with `width / height` on day one
-  // (Slice 5.6.2). Failures resolve to `null` and the upload
-  // continues — "uploaded with no dimensions" is strictly better
-  // than "no upload at all because we couldn't measure".
-  const dimensions = await extractImageDimensions(file);
+  // Capture pixel dimensions + hash the bytes BEFORE the network
+  // round-trip. Dimensions ship `width / height` on the resulting
+  // `ImageAsset` (Slice 5.6.2); the hash content-addresses the key so
+  // identical bytes dedup (ADR-0083). Failures on dimensions resolve to
+  // `null` and the upload continues — "uploaded with no dimensions" beats
+  // "no upload at all".
+  const [dimensions, hash] = await Promise.all([
+    extractImageDimensions(file),
+    contentHashHex(file),
+  ]);
+  const key = hash
+    ? buildContentKey("images", hash, extensionFor(file.name, file.type, "png"), userId)
+    : buildObjectKey(file.name, userId); // legacy random key (no Web Crypto)
 
   const { error } = await supabase.storage.from(bucket).upload(key, file, {
     contentType: file.type || "application/octet-stream",
     cacheControl: "31536000", // 1y; objects are immutable per key
     upsert: false,
   });
-  if (error) {
+  // A 409 on a content-addressed key just means these exact bytes are
+  // already stored — reuse them (dedup) instead of failing.
+  if (error && !isAlreadyExistsError(error)) {
     throw new Error(error.message || "Supabase upload failed");
   }
 
@@ -215,15 +289,26 @@ export async function uploadMediaAsset(
 ): Promise<UploadedMediaDescriptor> {
   const supabase = getSupabaseClient();
   const bucket = getAssetsBucket();
-  const { data: userData } = await supabase.auth.getUser();
-  const key = buildMediaObjectKey(folder, file.name, userData.user?.id);
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+
+  // Content-address the key off the bytes so identical media dedups
+  // (ADR-0083); fall back to a random key when Web Crypto is unavailable.
+  const hash = await contentHashHex(file);
+  const key = hash
+    ? buildContentKey(
+        folder,
+        hash,
+        extensionFor(file.name, file.type, MEDIA_EXT_FALLBACK[folder]),
+        userId,
+      )
+    : buildMediaObjectKey(folder, file.name, userId);
 
   const { error } = await supabase.storage.from(bucket).upload(key, file, {
     contentType: file.type || "application/octet-stream",
     cacheControl: "31536000",
     upsert: false,
   });
-  if (error) {
+  if (error && !isAlreadyExistsError(error)) {
     throw new Error(error.message || "Supabase upload failed");
   }
 

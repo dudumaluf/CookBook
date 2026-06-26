@@ -14,6 +14,8 @@ import type {
 } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { MediaPreviewVideo } from "./media-preview";
+import { PreviewImage } from "./preview-image";
 import { useExternalIndex } from "./use-external-index";
 
 /**
@@ -325,28 +327,18 @@ function ListNodeBody({
  */
 function ListItemPreview({ item }: { item: StandardizedOutput }) {
   if (item.type === "image") {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={item.value.url}
-        alt="Selected"
-        onPointerDown={(e) => e.stopPropagation()}
-        className="mt-1 block w-full rounded-md bg-black"
-      />
-    );
+    // Click → full-screen modal + download menu (PreviewImage).
+    return <PreviewImage url={item.value.url} alt="Selected" className="mt-1 bg-black" />;
   }
   if (item.type === "video") {
+    // Native controls give fullscreen ("view bigger") + the W×H chip.
     return (
-      <video
+      <MediaPreviewVideo
         key={item.value.url}
-        src={item.value.url}
+        url={item.value.url}
         controls
         loop
-        playsInline
-        preload="metadata"
-        onPointerDown={(e) => e.stopPropagation()}
-        className="mt-1 block w-full rounded-md bg-black"
-        style={{ aspectRatio: "16 / 9" }}
+        className="mt-1"
       />
     );
   }

@@ -9,6 +9,8 @@ import { importMediaFiles } from "@/lib/library/import-files";
 import { useAssetStore } from "@/lib/stores/asset-store";
 import type { NodeBodyProps } from "@/types/node";
 
+import { MediaPreviewVideo } from "./media-preview";
+
 /**
  * Video input node (Slice C). Upload a clip from disk, drag a library video
  * asset, or paste a URL. Outputs `{ type: "video" }`. Reactive (pure config).
@@ -56,14 +58,11 @@ function VideoNodeBody({ config, updateConfig }: NodeBodyProps<VideoNodeConfig>)
   return (
     <div className="flex w-full min-w-[240px] flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
       {hasVideo ? (
-        <video
-          src={effectiveUrl}
-          controls
+        <MediaPreviewVideo
+          key={effectiveUrl}
+          url={effectiveUrl!}
           loop
-          playsInline
-          onPointerDown={(e) => e.stopPropagation()}
-          className="block w-full rounded-md bg-black"
-          style={{ aspectRatio: "16 / 9" }}
+          className="bg-black"
         />
       ) : (
         <button

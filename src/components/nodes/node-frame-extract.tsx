@@ -11,6 +11,8 @@ import { extractFrame, type FramePosition } from "@/lib/media";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import type { ImageRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
 
+import { PreviewImage } from "./preview-image";
+
 /**
  * Frame Extract — pull a specific frame of a video as an image.
  *
@@ -69,12 +71,11 @@ function FrameExtractBody({ nodeId, config }: NodeBodyProps<FrameExtractNodeConf
         </div>
       ) : url ? (
         <div className="flex flex-col gap-1.5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={url}
+          <PreviewImage
+            url={url}
             alt="Extracted frame"
-            onPointerDown={(e) => e.stopPropagation()}
-            className="block w-full rounded-md bg-black"
+            downloadName={`frame-${positionLabel(config)}`}
+            className="bg-black"
           />
           <button
             type="button"

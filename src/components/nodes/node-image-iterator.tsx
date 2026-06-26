@@ -23,6 +23,7 @@ import type { AssetGroupAsset } from "@/types/asset";
 import type { NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
+import { PreviewImage } from "./preview-image";
 
 /**
  * Image Iterator (Slice 5.6, ADR-0032) — a *view* over an `AssetGroup`
@@ -115,20 +116,15 @@ function ImageIteratorNodeBody({
   // Slice 5.6.2 — preview reflects the cursor item's true aspect ratio.
   // Linked-asset width/height (set on upload) gives a flicker-free
   // initial render; legacy assets fall back to <img onLoad> measurement.
-  const [imgNaturalDimensions, setImgNaturalDimensions] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
   const linkedDims =
     currentAsset?.kind === "image" &&
     currentAsset.width !== undefined &&
     currentAsset.height !== undefined
       ? { width: currentAsset.width, height: currentAsset.height }
       : null;
-  const previewDims = linkedDims ?? imgNaturalDimensions;
-  const previewCssAspect = previewDims
-    ? aspectFromImageDimensions(previewDims.width, previewDims.height)
-    : "1 / 1";
+  const linkedAspect = linkedDims
+    ? aspectFromImageDimensions(linkedDims.width, linkedDims.height)
+    : null;
 
   // Slice 5.6.1 — body-level drop handling. Library drags weren't
   // reliably bubbling up to canvas-flow's onDrop when the cursor was
@@ -200,40 +196,27 @@ function ImageIteratorNodeBody({
       ) : (
         <>
           {/* Aspect-ratio-aware thumbnail of the current cursor item.
-              Defaults to 1:1 when no dimensions are known yet. Falls
+              Click → full-screen modal (PreviewImage owns it). Falls
               through to the icon glyph if the asset is missing or its
               url 404s. */}
-          <div
-            data-testid="image-iterator-preview"
-            className="relative w-full overflow-hidden rounded-md bg-foreground/5"
-            style={{ aspectRatio: previewCssAspect }}
-          >
-            {currentUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={currentUrl}
-                alt={currentAsset?.name ?? "iterator current"}
-                className="h-full w-full object-cover"
-                onLoad={(e) => {
-                  if (linkedDims) return;
-                  const img = e.currentTarget;
-                  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-                    setImgNaturalDimensions({
-                      width: img.naturalWidth,
-                      height: img.naturalHeight,
-                    });
-                  }
-                }}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-muted-foreground/40">
-                <ImageIcon className="h-8 w-8" />
-              </div>
-            )}
-          </div>
+          {currentUrl ? (
+            <PreviewImage
+              url={currentUrl}
+              alt={currentAsset?.name ?? "iterator current"}
+              downloadName={currentAsset?.name}
+              fit="cover"
+              aspectRatio={linkedAspect}
+              testId="image-iterator-preview"
+            />
+          ) : (
+            <div
+              data-testid="image-iterator-preview"
+              className="flex w-full items-center justify-center overflow-hidden rounded-md bg-foreground/5 text-muted-foreground/40"
+              style={{ aspectRatio: linkedAspect ?? "1 / 1" }}
+            >
+              <ImageIcon className="h-8 w-8" />
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-2">
             <IteratorCursor

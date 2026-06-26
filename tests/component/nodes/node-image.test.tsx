@@ -207,6 +207,23 @@ describe("imageNodeSchema", () => {
       expect(screen.queryByLabelText("Image URL")).toBeNull();
     });
 
+    it("clicking the preview opens the full-screen modal", () => {
+      const Body = imageNodeSchema.Body;
+      render(
+        <Body
+          nodeId="image_1"
+          config={{ url: "https://x.com/1.jpg" }}
+          updateConfig={vi.fn()}
+          selected={false}
+        />,
+      );
+      // No modal at rest; clicking the preview surface opens it (the fix
+      // for "clicking the Image node did nothing").
+      expect(screen.queryByTestId("image-preview-modal")).toBeNull();
+      fireEvent.click(screen.getByTestId("image-preview"));
+      expect(screen.getByTestId("image-preview-modal")).toBeTruthy();
+    });
+
     it("Clear button on the corner wipes config.url back to the empty state", () => {
       const updateConfig = vi.fn();
       const Body = imageNodeSchema.Body;

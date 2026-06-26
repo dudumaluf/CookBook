@@ -6,6 +6,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { ImageContextMenu } from "@/components/nodes/image-context-menu";
 import { ImagePreviewModal } from "@/components/nodes/image-preview-modal";
 import { IteratorCursor } from "@/components/nodes/iterator-cursor";
+import { DimensionBadge } from "@/components/nodes/media-preview";
 import { defineNode } from "@/lib/engine/define-node";
 import {
   extractInputArrayByType,
@@ -204,6 +205,9 @@ function ImageGridBody({
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
+  const [dims, setDims] = useState<{ url: string; w: number; h: number } | null>(
+    null,
+  );
   const safePage = Math.min(Math.max(0, pageIndex), Math.max(0, pageCount - 1));
   const currentUrl = pageCount > 0 ? pageUrls[safePage]! : null;
 
@@ -311,6 +315,20 @@ function ImageGridBody({
                   src={currentUrl}
                   alt={pageCount > 1 ? `Grid page ${safePage + 1}` : "Grid"}
                   className="block w-full transition-transform duration-150 group-hover:scale-[1.01]"
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                      setDims({
+                        url: currentUrl,
+                        w: img.naturalWidth,
+                        h: img.naturalHeight,
+                      });
+                    }
+                  }}
+                />
+                <DimensionBadge
+                  width={dims?.url === currentUrl ? dims.w : undefined}
+                  height={dims?.url === currentUrl ? dims.h : undefined}
                 />
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-[11px] font-medium text-transparent transition-colors group-hover:bg-black/30 group-hover:text-white">
                   Click to preview

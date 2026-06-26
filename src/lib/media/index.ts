@@ -101,3 +101,13 @@ export {
   recomposeVideoFromTrack,
   type RecomposeVideoResult,
 } from "./track-recompose";
+
+export {
+  resolveResize,
+  resizeImage,
+  resizeVideo,
+  type ResizeMode,
+  type ResizeGeometry,
+  type ResizeImageOptions,
+  type ResizeVideoOptions,
+} from "./resize";
