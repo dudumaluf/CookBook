@@ -304,12 +304,17 @@ export const useWorkflowStore = create<WorkflowState>()(
       // drop. NOTE: this requires the asset-store to be rehydrated
       // BEFORE the workflow-store; AppShell's `useEffect` does exactly
       // that (asset-store first, then workflow-store).
+      // v16: Composer gains a timeline (ADR-0091) — `doc.durationMs`/`fps` +
+      // per-layer `timing {start,end,trimIn,fadeIn,fadeOut}`. All additive and
+      // funnelled through the SAME `sanitizeComposerDocument` walk below; the
+      // bump just re-runs the (idempotent) sanitiser so a v15 doc gains the new
+      // shape on load. Image-mode docs round-trip unchanged (no duration set).
       // v15: Composer node lands (ADR-0085). The migrate walk hardens its
       // `config.doc` via `sanitizeComposerDocument` (clamps canvas +
       // transforms, drops unknown blend modes / unrecoverable layers) and
       // ensures `seenInputs` is an array. No legacy graphs reference it, so
       // the bump only forces the idempotent sanitiser to run once.
-      version: 15,
+      version: 16,
       migrate: (persistedState) => {
         // Walk every node and patch any llm-text configs in place. Idempotent
         // and tolerant of partial shapes from any prior version. The whole

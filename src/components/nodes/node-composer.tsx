@@ -4,12 +4,14 @@ import { Layers2, Loader2, Maximize2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ComposerEditor } from "@/components/nodes/composer/composer-editor";
+import { MediaPreviewVideo } from "@/components/nodes/media-preview";
 import { PreviewImage } from "@/components/nodes/preview-image";
 import { defineNode } from "@/lib/engine/define-node";
-import { uploadImageAsset } from "@/lib/library/upload-asset";
+import { uploadImageAsset, uploadMediaAsset } from "@/lib/library/upload-asset";
 import {
   compositeCacheKey,
   renderComposite,
+  renderCompositeVideo,
 } from "@/lib/media/compose-composer";
 import {
   commitDurableRender,
@@ -19,11 +21,14 @@ import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import {
   clampCanvas,
+  clampDurationMs,
   createDefaultDocument,
   createLayer,
-  firstImageRef,
+  DEFAULT_TIMELINE_MS,
+  docDurationMs,
   firstMediaRef,
   isLayerDrawable,
+  isTimelineMode,
   resolveLayerMediaTypes,
   resolveLayerUrls,
   resolveMaskUrls,
@@ -36,6 +41,7 @@ import type {
   NodeBodyProps,
   NodeIO,
   StandardizedOutput,
+  VideoRef,
 } from "@/types/node";
 
 /**
@@ -115,8 +121,13 @@ function ComposerBody({
 
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
-  const resultUrl = firstImageRef(record?.output)?.url ?? null;
-  const updating = status === "running" && resultUrl != null;
+  const out = record?.output;
+  const single = Array.isArray(out) ? out[0] : out;
+  const videoUrl = single?.type === "video" ? single.value.url : null;
+  const imageUrl = single?.type === "image" ? single.value.url : null;
+  const updating = status === "running" && (videoUrl != null || imageUrl != null);
+  const timeline = isTimelineMode(doc);
+  const durSec = timeline ? docDurationMs(doc) / 1000 : 0;
 
   // Auto-grow sockets so there's always one free layer slot to wire into.
   const maxConnected = useWorkflowStore((s) => {
@@ -171,6 +182,23 @@ function ComposerBody({
         };
       }
     }
+    // Wiring a VIDEO flips the node into timeline mode (→ video output) sized
+    // to the longest fresh clip, so "whatever media we plug in" becomes a real
+    // motion render — not a still. Layers inherit the full-span default; the
+    // timeline UI (Slice D) refines per-clip placement/trim.
+    if ((doc.durationMs ?? 0) === 0) {
+      const longestVideoMs = fresh.reduce((m, h) => {
+        const ref = inputs[h];
+        return ref?.mediaType === "video" ? Math.max(m, ref.durationMs ?? 0) : m;
+      }, 0);
+      const wiredVideo = fresh.some((h) => inputs[h]?.mediaType === "video");
+      if (wiredVideo) {
+        next = {
+          ...next,
+          durationMs: clampDurationMs(longestVideoMs) || DEFAULT_TIMELINE_MS,
+        };
+      }
+    }
     updateConfig({
       doc: next,
       seenInputs: [...(config.seenInputs ?? []), ...fresh],
@@ -191,6 +219,12 @@ function ComposerBody({
         <span>
           {doc.width}×{doc.height}
         </span>
+        {timeline ? (
+          <>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="text-accent">{durSec.toFixed(1)}s</span>
+          </>
+        ) : null}
       </div>
 
       {status === "error" && record?.error ? (
@@ -200,10 +234,27 @@ function ComposerBody({
         >
           {record.error}
         </p>
-      ) : resultUrl ? (
+      ) : videoUrl ? (
+        <div className="relative">
+          <MediaPreviewVideo
+            url={videoUrl}
+            loop
+            testId="composer-result-video"
+            className="bg-black"
+          />
+          {updating ? (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-background/70 p-1 backdrop-blur-sm"
+            >
+              <Loader2 className="h-3 w-3 animate-spin text-accent" />
+            </span>
+          ) : null}
+        </div>
+      ) : imageUrl ? (
         <div className="relative">
           <PreviewImage
-            url={resultUrl}
+            url={imageUrl}
             alt="Composite"
             downloadName="composite"
             checkerboard
@@ -215,6 +266,11 @@ function ComposerBody({
               className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-background/70 p-1 backdrop-blur-sm"
             >
               <Loader2 className="h-3 w-3 animate-spin text-accent" />
+            </span>
+          ) : null}
+          {timeline ? (
+            <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-background/70 px-1.5 py-0.5 text-[9px] text-muted-foreground backdrop-blur-sm">
+              poster · Run to render video
             </span>
           ) : null}
         </div>
@@ -256,18 +312,27 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
   category: "compose",
   title: "Composer",
   description:
-    "A layered visual compositor (mini-Photoshop). Wire images OR videos into the auto-growing layer sockets — each wire drops in as a layer — then open the full-screen editor to move, scale, and rotate layers, set per-layer opacity, blend mode (16 modes), masks (alpha/luma), and z-order over a sized canvas. Video layers composite as a sampled frame today (full motion + a timeline are landing next). Reactive: the composite previews live as you arrange; a Run bakes a durable PNG to Supabase. Add solid-fill and pasted-URL layers in the editor too.",
+    "A layered visual compositor (mini-Photoshop / mini-After-Effects). Wire images OR videos into the auto-growing layer sockets — each wire drops in as a layer — then open the full-screen editor to move, scale, and rotate layers, set per-layer opacity, blend mode (16 modes), masks (alpha/luma), and z-order over a sized canvas. Wiring a VIDEO flips the node into timeline mode: `out` becomes a real MOTION video (every frame composited, not a still), sized to the longest clip. The timeline lets you sequence, trim, set duration, and fade layers in/out. Image-only docs flatten to a durable PNG. Reactive: the composite previews live as you arrange; a Run bakes the durable PNG/MP4 to Supabase. Add solid-fill and pasted-URL layers in the editor too.",
   icon: Layers2,
   inputs: layerInputs(MIN_PORTS),
   getInputs: (config) => layerInputs(config.portCount),
   outputs: [{ id: "out", label: "out", dataType: "image" }],
+  // `out` flips image↔video with the doc's timeline (ADR-0091): a timeline
+  // (durationMs > 0, set when a video is wired) renders a motion clip.
+  getOutputs: (config) => [
+    {
+      id: "out",
+      label: "out",
+      dataType: clampDurationMs(config.doc?.durationMs) > 0 ? "video" : "image",
+    },
+  ],
   defaultConfig: {
     doc: createDefaultDocument(),
     portCount: MIN_PORTS,
     seenInputs: [],
   },
   reactive: true,
-  execute: async ({ nodeId, config, inputs, preview }) => {
+  execute: async ({ nodeId, config, inputs, preview, signal }) => {
     const doc = sanitizeComposerDocument(config.doc);
 
     // Resolve every wired input handle → media ref (image OR video), then map
@@ -290,6 +355,44 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
 
     const key = compositeCacheKey(doc, urls, maskUrls, mediaTypes);
 
+    // TIMELINE mode → an MP4. The reactive preview stays cheap (a single poster
+    // frame for the node body); the full per-frame encode is Run-only.
+    if (isTimelineMode(doc)) {
+      if (preview) {
+        const url = await renderPreview(nodeId, key, () =>
+          renderComposite({ doc, urls, maskUrls, mediaTypes, atSec: 0 }),
+        );
+        return {
+          type: "image",
+          value: { url, mime: "image/png" },
+        } satisfies StandardizedOutput;
+      }
+      const result = await renderCompositeVideo({
+        doc,
+        urls,
+        maskUrls,
+        mediaTypes,
+        signal,
+      });
+      const file = new File([result.blob], "composite.mp4", {
+        type: "video/mp4",
+      });
+      const uploaded = await uploadMediaAsset(file, "videos");
+      commitDurableRender(nodeId, key, uploaded.url);
+      const ref: VideoRef = {
+        url: uploaded.url,
+        mime: "video/mp4",
+        width: result.width,
+        height: result.height,
+        durationMs: result.durationMs,
+      };
+      return {
+        output: { type: "video", value: ref },
+        usage: { model: "canvas compositor (timeline)" },
+      };
+    }
+
+    // IMAGE mode → flatten one PNG (the original path).
     if (preview) {
       const url = await renderPreview(nodeId, key, () =>
         renderComposite({ doc, urls, maskUrls, mediaTypes }),

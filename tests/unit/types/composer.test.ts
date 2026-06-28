@@ -4,14 +4,25 @@ import {
   BLEND_MODES,
   canvasBlendMode,
   clamp01,
+  clampDurationMs,
+  clampFps,
   clampScale,
   createDefaultDocument,
   createLayer,
   cssBlendMode,
+  DEFAULT_FPS,
+  docDurationMs,
+  docFps,
+  docFrameCount,
   firstImageRef,
   firstMediaRef,
   isLayerDrawable,
+  isTimelineMode,
+  layerActiveAt,
   layerBaseSize,
+  layerOpacityAt,
+  layerSourceTimeMs,
+  layerSpan,
   moveLayer,
   patchLayerTransform,
   placeLayer,
@@ -25,6 +36,7 @@ import {
   updateLayerById,
   type ComposerInputRef,
   type ComposerLayer,
+  type LayerTiming,
 } from "@/types/composer";
 
 const inputLayer = (handle: string): ComposerLayer =>
@@ -338,5 +350,175 @@ describe("media-kind resolution (Phase 3)", () => {
       [a.id]: "image",
       [b.id]: "video",
     });
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Timeline math (Phase 4)                                                    */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+const timed = (timing: LayerTiming, over: Partial<ComposerLayer> = {}) =>
+  ({ ...createLayer({ source: { kind: "solid", color: "#000" } }), timing, ...over });
+
+describe("fps / duration clamps", () => {
+  it("clampFps rounds into [1,60], defaults to 30 on garbage", () => {
+    expect(clampFps(30)).toBe(30);
+    expect(clampFps(23.976)).toBe(24);
+    expect(clampFps(0)).toBe(1);
+    expect(clampFps(120)).toBe(60);
+    expect(clampFps(Number.NaN)).toBe(DEFAULT_FPS);
+    expect(clampFps("x")).toBe(DEFAULT_FPS);
+    expect(clampFps(undefined)).toBe(DEFAULT_FPS);
+  });
+
+  it("clampDurationMs: 0/negative/garbage → 0 (image mode), caps at 10min", () => {
+    expect(clampDurationMs(5000)).toBe(5000);
+    expect(clampDurationMs(0)).toBe(0);
+    expect(clampDurationMs(-100)).toBe(0);
+    expect(clampDurationMs(Number.NaN)).toBe(0);
+    expect(clampDurationMs(undefined)).toBe(0);
+    expect(clampDurationMs(99_999_999)).toBe(600_000);
+  });
+});
+
+describe("doc timeline accessors", () => {
+  it("image-mode doc: durationMs 0, not timeline, no frames", () => {
+    const doc = createDefaultDocument();
+    expect(docDurationMs(doc)).toBe(0);
+    expect(isTimelineMode(doc)).toBe(false);
+    expect(docFrameCount(doc)).toBe(0);
+    expect(docFps(doc)).toBe(30);
+  });
+
+  it("timeline-mode doc: frame count = round(sec * fps), ≥ 1", () => {
+    const doc = { ...createDefaultDocument(), durationMs: 4000, fps: 30 };
+    expect(isTimelineMode(doc)).toBe(true);
+    expect(docFrameCount(doc)).toBe(120);
+    expect(docFrameCount({ ...doc, durationMs: 1 })).toBe(1); // never 0 in timeline mode
+  });
+});
+
+describe("layerSpan", () => {
+  it("a layer with no timing spans the whole document", () => {
+    const l = createLayer({ source: { kind: "solid", color: "#000" } });
+    expect(layerSpan(l, 5000)).toEqual({ startMs: 0, endMs: 5000 });
+  });
+
+  it("clamps a span into [0, docDur] and keeps start < end", () => {
+    expect(layerSpan(timed({ startMs: 1000, endMs: 3000 }), 5000)).toEqual({
+      startMs: 1000,
+      endMs: 3000,
+    });
+    // endMs past the doc clamps to docDur.
+    expect(layerSpan(timed({ startMs: 1000, endMs: 9000 }), 5000)).toEqual({
+      startMs: 1000,
+      endMs: 5000,
+    });
+    // start beyond doc collapses to a zero-ish span at the end (never active).
+    const past = layerSpan(timed({ startMs: 9000, endMs: 9500 }), 5000);
+    expect(past.startMs).toBe(5000);
+    expect(past.endMs).toBe(5000);
+  });
+});
+
+describe("layerActiveAt", () => {
+  const l = timed({ startMs: 1000, endMs: 3000 });
+  it("is half-open [start, end)", () => {
+    expect(layerActiveAt(l, 999, 5000)).toBe(false);
+    expect(layerActiveAt(l, 1000, 5000)).toBe(true);
+    expect(layerActiveAt(l, 2999, 5000)).toBe(true);
+    expect(layerActiveAt(l, 3000, 5000)).toBe(false);
+  });
+  it("hidden layers are never active", () => {
+    expect(layerActiveAt(timed({ startMs: 0, endMs: 5000 }, { visible: false }), 100, 5000)).toBe(
+      false,
+    );
+  });
+});
+
+describe("layerOpacityAt (fades)", () => {
+  it("no fades → base opacity inside the span, 0 outside", () => {
+    const l = timed({ startMs: 1000, endMs: 3000 }, { opacity: 0.8 });
+    expect(layerOpacityAt(l, 500, 5000)).toBe(0);
+    expect(layerOpacityAt(l, 2000, 5000)).toBeCloseTo(0.8, 5);
+  });
+
+  it("fade-in ramps linearly from 0 → base across fadeInMs", () => {
+    const l = timed({ startMs: 0, endMs: 4000, fadeInMs: 1000 }, { opacity: 1 });
+    expect(layerOpacityAt(l, 0, 4000)).toBeCloseTo(0, 5);
+    expect(layerOpacityAt(l, 500, 4000)).toBeCloseTo(0.5, 5);
+    expect(layerOpacityAt(l, 1000, 4000)).toBeCloseTo(1, 5);
+    expect(layerOpacityAt(l, 2000, 4000)).toBeCloseTo(1, 5);
+  });
+
+  it("fade-out ramps base → 0 across fadeOutMs at the tail", () => {
+    const l = timed({ startMs: 0, endMs: 4000, fadeOutMs: 1000 }, { opacity: 1 });
+    expect(layerOpacityAt(l, 3000, 4000)).toBeCloseTo(1, 5);
+    expect(layerOpacityAt(l, 3500, 4000)).toBeCloseTo(0.5, 5);
+    expect(layerOpacityAt(l, 3999, 4000)).toBeCloseTo(0.001, 3);
+  });
+
+  it("fades multiply the base opacity", () => {
+    const l = timed({ startMs: 0, endMs: 4000, fadeInMs: 1000 }, { opacity: 0.5 });
+    expect(layerOpacityAt(l, 500, 4000)).toBeCloseTo(0.25, 5);
+  });
+});
+
+describe("layerSourceTimeMs", () => {
+  it("maps output time → source time via start + trimIn", () => {
+    const l = timed({ startMs: 1000, endMs: 5000, trimInMs: 2000 });
+    // At the clip's start, we sample the trim-in point of the source.
+    expect(layerSourceTimeMs(l, 1000, 6000)).toBe(2000);
+    // 1.5s into the clip → 1.5s past the trim-in point.
+    expect(layerSourceTimeMs(l, 2500, 6000)).toBe(3500);
+  });
+  it("a layer with no timing samples in lockstep with the output", () => {
+    const l = createLayer({ source: { kind: "input", inputHandle: "v" } });
+    expect(layerSourceTimeMs(l, 1234, 5000)).toBe(1234);
+  });
+});
+
+describe("sanitize: timeline fields", () => {
+  it("keeps a valid duration + fps, drops them for image-mode docs", () => {
+    const withTimeline = sanitizeComposerDocument({
+      layers: [],
+      durationMs: 5000,
+      fps: 24,
+    });
+    expect(withTimeline.durationMs).toBe(5000);
+    expect(withTimeline.fps).toBe(24);
+
+    const imageMode = sanitizeComposerDocument({ layers: [] });
+    expect(imageMode.durationMs).toBeUndefined();
+    expect(imageMode.fps).toBeUndefined();
+  });
+
+  it("coerces a garbage duration to image mode and clamps fps", () => {
+    const doc = sanitizeComposerDocument({ layers: [], durationMs: -5, fps: 999 });
+    expect(doc.durationMs).toBeUndefined();
+    expect(doc.fps).toBe(60);
+  });
+
+  it("sanitizes per-layer timing (valid kept, garbage dropped → full span)", () => {
+    const doc = sanitizeComposerDocument({
+      layers: [
+        {
+          source: { kind: "solid", color: "#000" },
+          timing: { startMs: 1000, endMs: 3000, fadeInMs: 500, trimInMs: 0 },
+        },
+        {
+          source: { kind: "solid", color: "#111" },
+          timing: { startMs: 3000, endMs: 1000 }, // end <= start → dropped
+        },
+      ],
+    });
+    expect(doc.layers[0]?.timing).toEqual({
+      startMs: 1000,
+      endMs: 3000,
+      fadeInMs: 500,
+    });
+    // trimInMs:0 is dropped (minimal), and the invalid second timing → undefined.
+    expect(doc.layers[0]?.timing?.trimInMs).toBeUndefined();
+    expect(doc.layers[1]?.timing).toBeUndefined();
   });
 });

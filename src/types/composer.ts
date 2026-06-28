@@ -156,11 +156,22 @@ export interface LayerMask {
   invert: boolean;
 }
 
-/** Reserved for Phase 4 (timeline). Not yet rendered. */
+/**
+ * A layer's placement on the timeline (Phase 4). `startMs..endMs` is where the
+ * clip lives on the OUTPUT timeline (its on-screen lifetime); `trimInMs` is the
+ * in-point WITHIN the source (video only) so you can start partway through a
+ * clip. `fadeInMs`/`fadeOutMs` ramp opacity at the head/tail. A layer with no
+ * `timing` spans the whole document.
+ */
 export interface LayerTiming {
   startMs: number;
   endMs: number;
+  /** In-point within the source media (video). Default 0 (start of clip). */
   trimInMs?: number;
+  /** Opacity ramp-up at the clip head (ms). Default 0. */
+  fadeInMs?: number;
+  /** Opacity ramp-down at the clip tail (ms). Default 0. */
+  fadeOutMs?: number;
 }
 
 export interface ComposerLayer {
@@ -186,6 +197,15 @@ export interface ComposerDocument {
   /** CSS color, or null for a transparent canvas. */
   background: string | null;
   layers: ComposerLayer[];
+  /**
+   * Timeline length in ms. `0`/absent = IMAGE mode (flatten one frame → PNG,
+   * the original behaviour). `> 0` = TIMELINE mode (composite every frame
+   * across this span → a video). Wiring a video auto-sets this; the user can
+   * also set it explicitly (e.g. a still slideshow with fades).
+   */
+  durationMs?: number;
+  /** Output frame rate for TIMELINE mode. Default 30. */
+  fps?: number;
 }
 
 export const COMPOSER_DOCUMENT_VERSION = 1 as const;
@@ -193,6 +213,14 @@ export const MIN_CANVAS = 16;
 export const MAX_CANVAS = 8192;
 export const DEFAULT_CANVAS_WIDTH = 1024;
 export const DEFAULT_CANVAS_HEIGHT = 1024;
+
+export const DEFAULT_FPS = 30;
+export const MIN_FPS = 1;
+export const MAX_FPS = 60;
+/** Hard cap on timeline length (10 min) — guards a runaway per-frame encode. */
+export const MAX_DURATION_MS = 600_000;
+/** Fallback timeline length when video mode is entered with no video to size it. */
+export const DEFAULT_TIMELINE_MS = 5_000;
 
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Numeric clamps                                                             */
@@ -211,6 +239,18 @@ export function clampScale(n: number): number {
 export function clampCanvas(n: number, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   return Math.max(MIN_CANVAS, Math.min(MAX_CANVAS, Math.round(n)));
+}
+
+/** Coerce any value to a legal output fps (defaults to 30). */
+export function clampFps(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n)) return DEFAULT_FPS;
+  return Math.max(MIN_FPS, Math.min(MAX_FPS, Math.round(n)));
+}
+
+/** Coerce any value to a legal timeline length in ms. `0` = image mode. */
+export function clampDurationMs(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(MAX_DURATION_MS, Math.round(n));
 }
 
 function normRotation(n: number): number {
@@ -337,6 +377,103 @@ export function placeLayer(
     h: base.h * scale,
     rad: (normRotation(layer.transform.rotationDeg) * Math.PI) / 180,
   };
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* Timeline math (pure — unit tested)                                         */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/** Output frame rate for a doc (defaults to 30). */
+export function docFps(doc: ComposerDocument): number {
+  return clampFps(doc.fps);
+}
+
+/** Timeline length (ms). `0` = image mode (flatten one frame). */
+export function docDurationMs(doc: ComposerDocument): number {
+  return clampDurationMs(doc.durationMs);
+}
+
+/** True when the doc has a timeline (→ video output) vs. a single flatten (→ image). */
+export function isTimelineMode(doc: ComposerDocument): boolean {
+  return docDurationMs(doc) > 0;
+}
+
+/** Number of output frames a doc encodes to (≥ 1 in timeline mode). */
+export function docFrameCount(doc: ComposerDocument): number {
+  const dur = docDurationMs(doc);
+  if (dur <= 0) return 0;
+  return Math.max(1, Math.round((dur / 1000) * docFps(doc)));
+}
+
+/**
+ * A layer's `[startMs, endMs)` span on the OUTPUT timeline. A layer with no
+ * `timing` spans the whole document. Clamped to `[0, docDur]` with `start <
+ * end` (min 1ms). Only meaningful in timeline mode (`docDur > 0`).
+ */
+export function layerSpan(
+  layer: ComposerLayer,
+  docDur: number,
+): { startMs: number; endMs: number } {
+  const t = layer.timing;
+  if (!t) return { startMs: 0, endMs: docDur };
+  const start = Number.isFinite(t.startMs) ? Math.max(0, Math.min(t.startMs, docDur)) : 0;
+  const rawEnd = Number.isFinite(t.endMs) ? t.endMs : docDur;
+  const end = Math.min(docDur, Math.max(start + 1, rawEnd));
+  return { startMs: start, endMs: end };
+}
+
+/** Is the layer on-screen at output time `tMs`? (Respects `visible`.) */
+export function layerActiveAt(
+  layer: ComposerLayer,
+  tMs: number,
+  docDur: number,
+): boolean {
+  if (!layer.visible) return false;
+  const { startMs, endMs } = layerSpan(layer, docDur);
+  return tMs >= startMs && tMs < endMs;
+}
+
+/**
+ * Fade-multiplied opacity at output time `tMs` — base `layer.opacity` ramped by
+ * `fadeInMs`/`fadeOutMs` at the head/tail of its span. `0` when off-screen.
+ */
+export function layerOpacityAt(
+  layer: ComposerLayer,
+  tMs: number,
+  docDur: number,
+): number {
+  if (!layerActiveAt(layer, tMs, docDur)) return 0;
+  const base = clamp01(layer.opacity);
+  const { startMs, endMs } = layerSpan(layer, docDur);
+  const t = layer.timing;
+  let factor = 1;
+  const fadeIn = t?.fadeInMs && t.fadeInMs > 0 ? t.fadeInMs : 0;
+  const fadeOut = t?.fadeOutMs && t.fadeOutMs > 0 ? t.fadeOutMs : 0;
+  if (fadeIn > 0 && tMs < startMs + fadeIn) {
+    factor = Math.min(factor, (tMs - startMs) / fadeIn);
+  }
+  if (fadeOut > 0 && tMs > endMs - fadeOut) {
+    factor = Math.min(factor, (endMs - tMs) / fadeOut);
+  }
+  return clamp01(base * Math.max(0, factor));
+}
+
+/**
+ * The SOURCE time (ms) to sample for a video layer at output time `tMs`:
+ * `trimInMs + (tMs - start)`. The caller clamps to the source's real duration
+ * (hold the last frame past the end). Irrelevant for image/solid layers.
+ */
+export function layerSourceTimeMs(
+  layer: ComposerLayer,
+  tMs: number,
+  docDur: number,
+): number {
+  const { startMs } = layerSpan(layer, docDur);
+  const trimIn =
+    layer.timing?.trimInMs && layer.timing.trimInMs > 0
+      ? layer.timing.trimInMs
+      : 0;
+  return Math.max(0, trimIn + (tMs - startMs));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -510,12 +647,40 @@ function sanitizeMask(raw: unknown): LayerMask | undefined {
   };
 }
 
+/**
+ * Coerce a persisted `timing` into a valid `LayerTiming`, or `undefined` (→ the
+ * layer spans the whole document). Needs a sane `start < end`; trims/fades are
+ * additive and dropped when zero/invalid so a clean doc stays minimal.
+ */
+function sanitizeTiming(raw: unknown): LayerTiming | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0
+      ? Math.round(v)
+      : undefined;
+  const startMs = num(r.startMs);
+  const endMs = num(r.endMs);
+  if (startMs === undefined || endMs === undefined || endMs <= startMs) {
+    return undefined;
+  }
+  const timing: LayerTiming = { startMs, endMs };
+  const trimIn = num(r.trimInMs);
+  if (trimIn !== undefined && trimIn > 0) timing.trimInMs = trimIn;
+  const fadeIn = num(r.fadeInMs);
+  if (fadeIn !== undefined && fadeIn > 0) timing.fadeInMs = fadeIn;
+  const fadeOut = num(r.fadeOutMs);
+  if (fadeOut !== undefined && fadeOut > 0) timing.fadeOutMs = fadeOut;
+  return timing;
+}
+
 function sanitizeLayer(raw: unknown): ComposerLayer | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const source = sanitizeSource(r.source);
   if (!source) return null;
   const mask = sanitizeMask(r.mask);
+  const timing = sanitizeTiming(r.timing);
   return {
     id: typeof r.id === "string" && r.id.length > 0 ? r.id : createLayerId(),
     name: asString(r.name, defaultLayerName(source)),
@@ -527,6 +692,7 @@ function sanitizeLayer(raw: unknown): ComposerLayer | null {
     transform: sanitizeTransform(r.transform),
     source,
     ...(mask ? { mask } : {}),
+    ...(timing ? { timing } : {}),
   };
 }
 
@@ -542,6 +708,8 @@ export function sanitizeComposerDocument(raw: unknown): ComposerDocument {
   const layers = Array.isArray(r.layers)
     ? r.layers.map(sanitizeLayer).filter((l): l is ComposerLayer => l !== null)
     : [];
+  const durationMs = clampDurationMs(r.durationMs);
+  const hasFps = typeof r.fps === "number" && Number.isFinite(r.fps);
   return {
     version: COMPOSER_DOCUMENT_VERSION,
     width: clampCanvas(
@@ -557,6 +725,10 @@ export function sanitizeComposerDocument(raw: unknown): ComposerDocument {
         ? r.background
         : null,
     layers,
+    // Timeline fields are additive: omitted for image-mode docs so existing
+    // payloads round-trip unchanged; present once a duration is set.
+    ...(durationMs > 0 ? { durationMs } : {}),
+    ...(hasFps ? { fps: clampFps(r.fps) } : {}),
   };
 }
 

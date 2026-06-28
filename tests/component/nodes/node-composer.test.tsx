@@ -70,7 +70,12 @@ describe("Composer node body", () => {
             status: "success",
             output: {
               type: "video",
-              value: { url: "https://x/clip.mp4", width: 1920, height: 1080 },
+              value: {
+                url: "https://x/clip.mp4",
+                width: 1920,
+                height: 1080,
+                durationMs: 3000,
+              },
             },
           },
         ],
@@ -100,10 +105,13 @@ describe("Composer node body", () => {
     );
 
     // The auto-add-on-wire effect drops the video in as an input layer tagged
-    // with mediaType "video" (so the renderer samples a frame, not decode-as-still).
+    // with mediaType "video" (so the renderer samples a frame, not decode-as-still)
+    // AND flips the doc into timeline mode sized to the clip (3s) — so `out`
+    // becomes a real motion video, not a still.
     expect(updateConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         doc: expect.objectContaining({
+          durationMs: 3000,
           layers: expect.arrayContaining([
             expect.objectContaining({
               source: expect.objectContaining({
