@@ -7,8 +7,11 @@ import { createPortal } from "react-dom";
 import { ComposerLayersPanel } from "@/components/nodes/composer/composer-layers-panel";
 import { ComposerPropertiesPanel } from "@/components/nodes/composer/composer-properties-panel";
 import { ComposerStage } from "@/components/nodes/composer/composer-stage";
+import { ComposerTimeline } from "@/components/nodes/composer/composer-timeline";
 import {
   createLayer,
+  docDurationMs,
+  isTimelineMode,
   moveLayer,
   patchLayerTransform,
   updateLayerById,
@@ -51,6 +54,15 @@ export function ComposerEditor({
     initialDoc.layers[initialDoc.layers.length - 1]?.id ?? null,
   );
 
+  // Transport (only meaningful in timeline mode). The editor owns the master
+  // clock; the stage + timeline both read `playheadMs`. While playing we advance
+  // it off wall-clock via rAF and loop at the doc duration — a preview, not the
+  // frame-exact Run render (ADR-0091).
+  const timeline = isTimelineMode(doc);
+  const durMs = docDurationMs(doc);
+  const [playheadMs, setPlayheadMs] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
   const docRef = useRef(doc);
   const onChangeRef = useRef(onChange);
   // Keep "latest" refs current in an effect — writing refs during render is
@@ -73,6 +85,37 @@ export function ComposerEditor({
     onChangeRef.current(docRef.current); // flush pending edits
     onClose();
   }, [onClose]);
+
+  // Clamp at READ time so a just-shortened duration never paints the playhead
+  // past the end (avoids a setState-in-effect cascade). The rAF loop wraps with
+  // `% durMs`, so the stored value only ever overshoots while paused.
+  const clampedPlayheadMs =
+    durMs > 0 ? Math.min(playheadMs, durMs) : playheadMs;
+
+  // Master playback clock. Advances the playhead off wall-clock and loops; the
+  // stage seeks/plays its <video> layers to match.
+  useEffect(() => {
+    if (!playing || durMs <= 0) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = now - last;
+      last = now;
+      setPlayheadMs((p) => {
+        const next = p + dt;
+        return next >= durMs ? next % durMs : next;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, durMs]);
+
+  const togglePlay = useCallback(() => setPlaying((p) => !p), []);
+  const scrub = useCallback((ms: number) => {
+    setPlaying(false);
+    setPlayheadMs(ms);
+  }, []);
 
   // Lock body scroll while the editor is open.
   useEffect(() => {
@@ -138,6 +181,12 @@ export function ComposerEditor({
         return;
       }
       if (inField) return;
+      if (e.key === " " && isTimelineMode(docRef.current)) {
+        e.preventDefault();
+        e.stopPropagation();
+        setPlaying((p) => !p);
+        return;
+      }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
         e.preventDefault();
         e.stopPropagation();
@@ -231,6 +280,8 @@ export function ComposerEditor({
             doc={doc}
             inputs={inputs}
             selectedId={selectedId}
+            playheadMs={clampedPlayheadMs}
+            playing={playing}
             onSelect={setSelectedId}
             onTransform={patchTransform}
           />
@@ -247,6 +298,21 @@ export function ComposerEditor({
           />
         </aside>
       </div>
+
+      {timeline ? (
+        <ComposerTimeline
+          doc={doc}
+          inputs={inputs}
+          playheadMs={clampedPlayheadMs}
+          playing={playing}
+          selectedId={selectedId}
+          onScrub={scrub}
+          onTogglePlay={togglePlay}
+          onSelect={setSelectedId}
+          onPatchLayer={patchLayer}
+          onPatchDoc={patchDoc}
+        />
+      ) : null}
     </div>,
     document.body,
   );

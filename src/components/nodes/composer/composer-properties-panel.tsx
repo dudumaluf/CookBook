@@ -5,6 +5,16 @@ import { RotateCcw } from "lucide-react";
 import {
   BLEND_MODES,
   clampCanvas,
+  clampDurationMs,
+  clampFps,
+  docDurationMs,
+  docFps,
+  isTimelineMode,
+  layerSpan,
+  resolveLayerMediaType,
+  setFade,
+  trimClipEnd,
+  trimClipStart,
   type BlendMode,
   type ComposerDocument,
   type ComposerInputRef,
@@ -148,6 +158,31 @@ export function ComposerPropertiesPanel({
         </label>
       </section>
 
+      {/* Timeline section (only when the doc is in video/timeline mode) */}
+      {isTimelineMode(doc) ? (
+        <section className="border-b border-border/40 p-3">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Timeline
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField
+              label="Duration"
+              suffix="s"
+              step={0.1}
+              value={docDurationMs(doc) / 1000}
+              onCommit={(n) =>
+                onPatchDoc({ durationMs: clampDurationMs(n * 1000) || 1 })
+              }
+            />
+            <NumberField
+              label="FPS"
+              value={docFps(doc)}
+              onCommit={(n) => onPatchDoc({ fps: clampFps(n) })}
+            />
+          </div>
+        </section>
+      ) : null}
+
       {/* Layer section */}
       {selected ? (
         <section className="p-3">
@@ -272,6 +307,17 @@ export function ComposerPropertiesPanel({
             </label>
           </div>
 
+          {isTimelineMode(doc) ? (
+            <LayerTimingControls
+              layer={selected}
+              docDur={docDurationMs(doc)}
+              isVideo={resolveLayerMediaType(selected, inputs) === "video"}
+              onPatchTiming={(timing) =>
+                onPatchLayer(selected.id, { timing })
+              }
+            />
+          ) : null}
+
           <MaskControls
             layer={selected}
             wiredHandles={wiredHandles}
@@ -283,6 +329,59 @@ export function ComposerPropertiesPanel({
           Select a layer to edit its transform, opacity, and blend mode.
         </p>
       )}
+    </div>
+  );
+}
+
+function LayerTimingControls({
+  layer,
+  docDur,
+  isVideo,
+  onPatchTiming,
+}: {
+  layer: ComposerLayer;
+  docDur: number;
+  isVideo: boolean;
+  onPatchTiming: (timing: ComposerLayer["timing"]) => void;
+}) {
+  const span = layerSpan(layer, docDur);
+  const fadeIn = layer.timing?.fadeInMs ?? 0;
+  const fadeOut = layer.timing?.fadeOutMs ?? 0;
+  return (
+    <div className="mt-3 border-t border-border/30 pt-3">
+      <h4 className={`${LABEL_CLS} mb-2`}>Timing</h4>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="Start"
+          suffix="s"
+          step={0.1}
+          value={span.startMs / 1000}
+          onCommit={(n) =>
+            onPatchTiming(trimClipStart(layer, n * 1000, docDur, isVideo))
+          }
+        />
+        <NumberField
+          label="End"
+          suffix="s"
+          step={0.1}
+          value={span.endMs / 1000}
+          onCommit={(n) => onPatchTiming(trimClipEnd(layer, n * 1000, docDur))}
+        />
+        <NumberField
+          label="Fade in"
+          suffix="s"
+          step={0.1}
+          value={fadeIn / 1000}
+          onCommit={(n) => onPatchTiming(setFade(layer, "in", n * 1000, docDur))}
+        />
+        <NumberField
+          label="Fade out"
+          suffix="s"
+          step={0.1}
+          value={fadeOut / 1000}
+          onCommit={(n) => onPatchTiming(setFade(layer, "out", n * 1000, docDur))}
+        />
+      </div>
     </div>
   );
 }

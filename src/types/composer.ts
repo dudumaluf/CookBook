@@ -476,6 +476,97 @@ export function layerSourceTimeMs(
   return Math.max(0, trimIn + (tMs - startMs));
 }
 
+/* ── Timeline editing mutators (pure — the timeline UI's drag logic) ── */
+
+/** Materialise a layer's timing as explicit ms (defaults to the full span). */
+export function ensureTiming(layer: ComposerLayer, docDur: number): LayerTiming {
+  const { startMs, endMs } = layerSpan(layer, docDur);
+  const t = layer.timing;
+  const out: LayerTiming = { startMs, endMs };
+  if (t?.trimInMs && t.trimInMs > 0) out.trimInMs = t.trimInMs;
+  if (t?.fadeInMs && t.fadeInMs > 0) out.fadeInMs = t.fadeInMs;
+  if (t?.fadeOutMs && t.fadeOutMs > 0) out.fadeOutMs = t.fadeOutMs;
+  return out;
+}
+
+/** Keep `fadeIn`/`fadeOut` ≥ 0 and their sum ≤ the clip duration; drop zeros. */
+function clampFadesTo(t: LayerTiming): LayerTiming {
+  const dur = Math.max(1, t.endMs - t.startMs);
+  const out: LayerTiming = { ...t };
+  const fin = out.fadeInMs && out.fadeInMs > 0 ? Math.min(out.fadeInMs, dur) : 0;
+  let fout = out.fadeOutMs && out.fadeOutMs > 0 ? Math.min(out.fadeOutMs, dur) : 0;
+  if (fin + fout > dur) fout = Math.max(0, dur - fin);
+  if (fin > 0) out.fadeInMs = fin;
+  else delete out.fadeInMs;
+  if (fout > 0) out.fadeOutMs = fout;
+  else delete out.fadeOutMs;
+  return out;
+}
+
+/** Move the whole clip by `deltaMs`, keeping duration, clamped into `[0, docDur]`. */
+export function moveClip(
+  layer: ComposerLayer,
+  deltaMs: number,
+  docDur: number,
+): LayerTiming {
+  const t = ensureTiming(layer, docDur);
+  const dur = t.endMs - t.startMs;
+  const start = Math.max(
+    0,
+    Math.min(docDur - dur, Math.round(t.startMs + deltaMs)),
+  );
+  return { ...t, startMs: start, endMs: start + dur };
+}
+
+/**
+ * Trim the clip's HEAD to `newStartMs`. For video this advances the source
+ * in-point by the same delta (a ripple-free head trim — the source content
+ * stays pinned to the absolute timeline, only earlier frames are hidden).
+ */
+export function trimClipStart(
+  layer: ComposerLayer,
+  newStartMs: number,
+  docDur: number,
+  isVideo: boolean,
+): LayerTiming {
+  const t = ensureTiming(layer, docDur);
+  const start = Math.max(0, Math.min(t.endMs - 1, Math.round(newStartMs)));
+  const delta = start - t.startMs;
+  const out: LayerTiming = { ...t, startMs: start };
+  if (isVideo) {
+    const trimIn = Math.max(0, (t.trimInMs ?? 0) + delta);
+    if (trimIn > 0) out.trimInMs = trimIn;
+    else delete out.trimInMs;
+  }
+  return clampFadesTo(out);
+}
+
+/** Trim the clip's TAIL to `newEndMs` (duration only; ≥ 1ms, ≤ docDur). */
+export function trimClipEnd(
+  layer: ComposerLayer,
+  newEndMs: number,
+  docDur: number,
+): LayerTiming {
+  const t = ensureTiming(layer, docDur);
+  const end = Math.min(docDur, Math.max(t.startMs + 1, Math.round(newEndMs)));
+  return clampFadesTo({ ...t, endMs: end });
+}
+
+/** Set the fade-in or fade-out (ms), clamped to the clip duration. */
+export function setFade(
+  layer: ComposerLayer,
+  which: "in" | "out",
+  fadeMs: number,
+  docDur: number,
+): LayerTiming {
+  const t = ensureTiming(layer, docDur);
+  const out: LayerTiming = { ...t };
+  const v = Math.max(0, Math.round(fadeMs));
+  if (which === "in") out.fadeInMs = v;
+  else out.fadeOutMs = v;
+  return clampFadesTo(out);
+}
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Source resolution (pure — unit tested)                                     */
 /* ────────────────────────────────────────────────────────────────────────── */

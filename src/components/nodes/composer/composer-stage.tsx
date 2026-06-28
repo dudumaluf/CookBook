@@ -6,6 +6,10 @@ import { CHECKERBOARD_STYLE } from "@/components/nodes/media-preview";
 import {
   clampScale,
   cssBlendMode,
+  docDurationMs,
+  layerActiveAt,
+  layerOpacityAt,
+  layerSourceTimeMs,
   placeLayer,
   resolveLayerMediaType,
   resolveLayerUrl,
@@ -29,6 +33,10 @@ interface ComposerStageProps {
   doc: ComposerDocument;
   inputs: Record<string, ComposerInputRef>;
   selectedId: string | null;
+  /** Master clock (ms) for timeline mode; layers honour their span + fades. */
+  playheadMs?: number;
+  /** When true, active <video> layers play; otherwise they seek + hold. */
+  playing?: boolean;
   onSelect: (id: string | null) => void;
   onTransform: (id: string, patch: Partial<LayerTransform>) => void;
 }
@@ -61,12 +69,17 @@ export function ComposerStage({
   doc,
   inputs,
   selectedId,
+  playheadMs = 0,
+  playing = false,
   onSelect,
   onTransform,
 }: ComposerStageProps) {
   const [containerRef, box] = useElementSize();
   const stageRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<Gesture | null>(null);
+  const videoEls = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const durMs = docDurationMs(doc);
+  const timeline = durMs > 0;
   // Natural pixel sizes of loaded layer bitmaps, keyed by layer id. Until a
   // layer loads we fall back to the canvas size (so it shows full-bleed).
   const [natural, setNatural] = useState<Record<string, { w: number; h: number }>>({});
@@ -137,6 +150,36 @@ export function ComposerStage({
       window.removeEventListener("pointerup", onUp);
     };
   }, [toCanvas, onTransform, doc.width, doc.height]);
+
+  // Sync <video> layers to the master clock. Paused → seek + hold the source
+  // frame for the playhead; playing → let it run, re-seeking only on big drift
+  // (multi-clip sync is best-effort preview; Run is frame-exact — ADR-0091).
+  useEffect(() => {
+    if (!timeline) {
+      videoEls.current.forEach((el) => safePause(el));
+      return;
+    }
+    for (const layer of doc.layers) {
+      const el = videoEls.current.get(layer.id);
+      if (!el) continue;
+      if (!layer.visible || !layerActiveAt(layer, playheadMs, durMs)) {
+        safePause(el);
+        continue;
+      }
+      const srcSec = layerSourceTimeMs(layer, playheadMs, durMs) / 1000;
+      if (playing) {
+        if (el.paused) {
+          safeSeek(el, srcSec);
+          safePlay(el);
+        } else if (Math.abs((el.currentTime || 0) - srcSec) > 0.34) {
+          safeSeek(el, srcSec);
+        }
+      } else {
+        safePause(el);
+        safeSeek(el, srcSec);
+      }
+    }
+  }, [playheadMs, playing, timeline, durMs, doc.layers]);
 
   const startMove = useCallback(
     (e: React.PointerEvent, layer: ComposerLayer) => {
@@ -216,6 +259,12 @@ export function ComposerStage({
         >
           {doc.layers.map((layer) => {
             if (!layer.visible) return null;
+            // Timeline mode: a layer only paints inside its span, and its
+            // opacity is ramped by fades (ADR-0091). Still mode shows everything.
+            if (timeline && !layerActiveAt(layer, playheadMs, durMs)) return null;
+            const effOpacity = timeline
+              ? layerOpacityAt(layer, playheadMs, durMs)
+              : layer.opacity;
             const src = srcSize(layer);
             const placed = placeLayer(layer, src.w, src.h, doc.width, doc.height);
             const url =
@@ -229,7 +278,7 @@ export function ComposerStage({
               width: placed.w * scale,
               height: placed.h * scale,
               transform: `translate(-50%, -50%) rotate(${layer.transform.rotationDeg}deg)`,
-              opacity: layer.opacity,
+              opacity: effOpacity,
               mixBlendMode: cssBlendMode(
                 layer.blendMode,
               ) as React.CSSProperties["mixBlendMode"],
@@ -268,16 +317,21 @@ export function ComposerStage({
                   ? prev
                   : { ...prev, [layer.id]: { w, h } },
               );
-            // Video layers preview their poster frame live (a muted, paused
-            // <video>); transport + playback land in Slice 3.
+            // Video layers play in sync with the master clock (timeline mode)
+            // or hold their playhead frame when paused (ADR-0091). The sync
+            // effect drives currentTime/play/pause via the registered ref.
             if (resolveLayerMediaType(layer, inputs) === "video") {
               return (
                 <video
                   key={layer.id}
+                  ref={(el) => {
+                    if (el) videoEls.current.set(layer.id, el);
+                    else videoEls.current.delete(layer.id);
+                  }}
                   src={url}
                   muted
                   playsInline
-                  preload="metadata"
+                  preload="auto"
                   draggable={false}
                   style={style}
                   onPointerDown={(e) => startMove(e, layer)}
@@ -324,6 +378,30 @@ export function ComposerStage({
       ) : null}
     </div>
   );
+}
+
+/* ── <video> control helpers (guarded — happy-dom lacks real playback) ── */
+function safePlay(el: HTMLVideoElement) {
+  try {
+    const p = el.play?.();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch {
+    /* no-op */
+  }
+}
+function safePause(el: HTMLVideoElement) {
+  try {
+    if (!el.paused) el.pause?.();
+  } catch {
+    /* no-op */
+  }
+}
+function safeSeek(el: HTMLVideoElement, sec: number) {
+  try {
+    if (Number.isFinite(sec)) el.currentTime = sec;
+  } catch {
+    /* no-op */
+  }
 }
 
 interface SelectionOverlayProps {

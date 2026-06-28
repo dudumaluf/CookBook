@@ -14,6 +14,7 @@ import {
   docDurationMs,
   docFps,
   docFrameCount,
+  ensureTiming,
   firstImageRef,
   firstMediaRef,
   isLayerDrawable,
@@ -23,7 +24,11 @@ import {
   layerOpacityAt,
   layerSourceTimeMs,
   layerSpan,
+  moveClip,
   moveLayer,
+  setFade,
+  trimClipEnd,
+  trimClipStart,
   patchLayerTransform,
   placeLayer,
   resolveLayerMediaType,
@@ -520,5 +525,56 @@ describe("sanitize: timeline fields", () => {
     // trimInMs:0 is dropped (minimal), and the invalid second timing → undefined.
     expect(doc.layers[0]?.timing?.trimInMs).toBeUndefined();
     expect(doc.layers[1]?.timing).toBeUndefined();
+  });
+});
+
+describe("timeline editing mutators", () => {
+  it("ensureTiming materialises the full span for an untimed layer", () => {
+    const l = createLayer({ source: { kind: "solid", color: "#000" } });
+    expect(ensureTiming(l, 5000)).toEqual({ startMs: 0, endMs: 5000 });
+  });
+
+  it("moveClip shifts start+end, keeps duration, clamps inside the doc", () => {
+    const l = timed({ startMs: 1000, endMs: 3000 });
+    expect(moveClip(l, 500, 5000)).toMatchObject({ startMs: 1500, endMs: 3500 });
+    // Can't move past the end — duration (2000) is preserved at the clamp.
+    expect(moveClip(l, 9000, 5000)).toMatchObject({ startMs: 3000, endMs: 5000 });
+    // Can't move before 0.
+    expect(moveClip(l, -9000, 5000)).toMatchObject({ startMs: 0, endMs: 2000 });
+  });
+
+  it("trimClipStart (video) advances the source in-point by the same delta", () => {
+    const l = timed({ startMs: 1000, endMs: 4000, trimInMs: 500 });
+    const out = trimClipStart(l, 1500, 5000, /* isVideo */ true);
+    expect(out.startMs).toBe(1500);
+    expect(out.endMs).toBe(4000);
+    expect(out.trimInMs).toBe(1000); // 500 + (1500 - 1000)
+  });
+
+  it("trimClipStart (image) moves start but never a trimIn", () => {
+    const l = timed({ startMs: 1000, endMs: 4000 });
+    const out = trimClipStart(l, 1500, 5000, /* isVideo */ false);
+    expect(out.startMs).toBe(1500);
+    expect(out.trimInMs).toBeUndefined();
+  });
+
+  it("trimClipEnd changes duration only, clamped to [start+1, docDur]", () => {
+    const l = timed({ startMs: 1000, endMs: 4000 });
+    expect(trimClipEnd(l, 3000, 5000).endMs).toBe(3000);
+    expect(trimClipEnd(l, 9000, 5000).endMs).toBe(5000); // clamp to doc
+    expect(trimClipEnd(l, 500, 5000).endMs).toBe(1001); // never collapse past start
+  });
+
+  it("setFade clamps fades so in+out never exceed the clip duration", () => {
+    const l = timed({ startMs: 0, endMs: 2000 });
+    expect(setFade(l, "in", 500, 5000).fadeInMs).toBe(500);
+    // A fade longer than the clip is clamped to the duration.
+    expect(setFade(l, "in", 9000, 5000).fadeInMs).toBe(2000);
+    // Adding an out-fade when in already fills the clip shrinks out to fit.
+    const both = setFade(timed({ startMs: 0, endMs: 2000, fadeInMs: 1500 }), "out", 1500, 5000);
+    expect(both.fadeInMs).toBe(1500);
+    expect(both.fadeOutMs).toBe(500);
+    // Zeroing a fade drops the field.
+    expect(setFade(timed({ startMs: 0, endMs: 2000, fadeInMs: 400 }), "in", 0, 5000).fadeInMs).toBeUndefined();
   });
 });
