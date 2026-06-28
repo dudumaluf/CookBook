@@ -18,12 +18,13 @@ import { Sam31MaskEditor } from "@/components/nodes/node-fal-sam31-video";
  * Regression test for the box-drawing bug: the mask editor lives inside a
  * Base UI Dialog (a portal), where `setPointerCapture` can throw
  * `InvalidStateError`. The handler used to call it BEFORE seeding the draft
- * box, so a throw silently aborted the draw — points worked (no capture) but
- * the box never appeared. The fix seeds the draft first and guards capture.
+ * box, so a throw silently aborted the draw and the box never appeared. The
+ * fix seeds the draft first and guards capture.
  *
  * happy-dom doesn't implement pointer capture, so we install a THROWING
  * `setPointerCapture` on the frame element to stand in for the real-browser
- * failure, then assert the box still commits.
+ * failure, then assert the box still commits. (The editor is box-only — Fal's
+ * SAM 3.1 video model 500s on point prompts; see ADR-0090.)
  */
 
 // Minimal Image stand-in so `loadImageDims` resolves (happy-dom doesn't fire
@@ -67,16 +68,11 @@ describe("Sam31MaskEditor — box drawing", () => {
   it("commits a box from a drag even when setPointerCapture throws (portal)", async () => {
     const onChange = vi.fn();
     render(
-      <Sam31MaskEditor
-        videoUrl="https://x/v.mp4"
-        points={[]}
-        box={null}
-        onChange={onChange}
-      />,
+      <Sam31MaskEditor videoUrl="https://x/v.mp4" box={null} onChange={onChange} />,
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: /Mark object visually/i }),
+      screen.getByRole("button", { name: /Draw a box around the object/i }),
     );
     const frameDiv = await openEditorAndGetFrame();
 
@@ -103,15 +99,10 @@ describe("Sam31MaskEditor — box drawing", () => {
   it("ignores a click-sized (non-drag) box", async () => {
     const onChange = vi.fn();
     render(
-      <Sam31MaskEditor
-        videoUrl="https://x/v.mp4"
-        points={[]}
-        box={null}
-        onChange={onChange}
-      />,
+      <Sam31MaskEditor videoUrl="https://x/v.mp4" box={null} onChange={onChange} />,
     );
     fireEvent.click(
-      screen.getByRole("button", { name: /Mark object visually/i }),
+      screen.getByRole("button", { name: /Draw a box around the object/i }),
     );
     const frameDiv = await openEditorAndGetFrame();
 

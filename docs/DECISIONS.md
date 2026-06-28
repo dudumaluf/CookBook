@@ -3536,3 +3536,34 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **`atSec` is plumbed through `renderComposite` + `compositeCacheKey` now but always 0** until the timeline drives it — reserved so Slices 3–4 don't re-touch the render signature.
 
 
+## ADR-0090: SAM 3.1 Video is box + text only — Fal's model crashes on point prompts (supersedes ADR-0088's "point prompts work / `frame_index` is harmless")
+
+- **Status**: Accepted (2026-06-28)
+
+- **Context**: After ADR-0088 pointed the node at `fal-ai/sam-3-1/video` (the rendered-video endpoint), the user *still* hit `Fal (500): Internal Server Error` (surfaced as a route 502) when they opened the mask editor, dropped a box **and** include/exclude points on the first frame, and ran. The node had always sent whatever the editor produced — a text prompt **and** a box **and** point prompts, each tagged `object_id` + `frame_index: 0`. Rather than guess a fifth time, I probed the **live** endpoint (FAL_KEY from `.env.local`) with a 15-call matrix against Fal's own example clip, reading the queued-job *result* body (where the model's real error lives — the submit always 200s `IN_QUEUE`):
+
+  | payload | result |
+  | --- | --- |
+  | text only | ✅ rendered mask video |
+  | box only (`object_id`) | ✅ |
+  | text + box | ✅ |
+  | box + points (any ids, ± `frame_index`) | ❌ `"SAM3.1 does not support point prompts and box prompts on the same frame. Frame 0 has both. Please use either points or boxes per frame."` |
+  | points only — `object_id`, `obj_id`, both, none, even in-bounds `(10,10)` | ❌ `"Internal Server Error"` (the opaque 500) |
+  | text + points | ❌ `"When points are provided, obj_id must be provided."` (a *third*, inconsistent error) |
+  | `/video-rle` points-only | ❌ `"Internal Server Error"` too |
+
+  So: **box prompts and text prompts work (alone or together); point prompts crash the SAM 3.1 video model on BOTH endpoints, regardless of id field or coordinates; box + points is explicitly rejected.** Point prompts are simply not usable on Fal's SAM 3.1 video today. The OpenAPI even hints at why — `/video`'s input refs `PointPromptBase`/`BoxPromptBase` (`x/y/label/object_id`, `x_min/…/object_id`), and the `frame_index`-bearing `PointPrompt`/`BoxPrompt` "Other types" aren't what `/video` consumes — so the `frame_index` ADR-0088 called "harmless" was a phantom field all along.
+
+- **Decision**: Make SAM 3.1 Video **box + text only**.
+  - **Editor draws a box** — removed the Include/Exclude point tools, the `tool` switcher, point rendering, and the `points` config field. The big modal preview (ADR-0088's display-aspect frame) stays; drag draws a box, drag again replaces it, Undo/Clear act on the box.
+  - **`buildInput` never forwards `point_prompts`** (and drops `frame_index`) — the crash can't be re-triggered even by a stray caller, since the drop is enforced at the Fal boundary, not just in the node. Box prompts keep `object_id` (default 1, ADR-0088's real fix).
+  - **A text prompt may still accompany the box** (verified ✅) — kept as an optional sharpening signal; the `prompt` input/field still overrides the default.
+  - `pointPrompts` stays in the request zod schema/types (backward-compatible; a future `/video-rle`-with-RLE-decode path *might* revive points if Fal fixes them) but is inert.
+
+- **Why this shape**: A box is the reliable single-object seed the crop/recompose workflow actually needs, and it renders a mask video directly — no RLE-decode rework. Keeping a crashing feature (or leaving dead Include/Exclude buttons) is the opposite of "works as expected", so points come out cleanly and the limitation is documented rather than worked around. The alternative — chase point support via `/video-rle` + a client-side RLE→matte renderer — is a real project, deferred until Fal's point prompts work at all (they don't, even on `-rle`).
+
+- **Consequences**:
+  - No more first-frame **refinement points** — a single box (optionally + text) is the whole visual vocabulary. For a fiddly subject, tighten the box or lean on the text prompt / detection threshold.
+  - **Lesson banked (again, harder than ADR-0088)**: for opaque Fal `500`s, read the *queued-job result body*, not the submit response — that's where the model's real `value_error` surfaces. A handful of cents of live probing beat another round of blind guessing.
+
+

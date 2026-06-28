@@ -41,26 +41,27 @@ function annotate(err: Error, code: FalErrorCode): Error {
 /**
  * Map our request to Fal's `fal-ai/sam-3-1/video` input shape.
  *
- * **Every interactive prompt carries an `object_id` (default 1).** SAM 3.1's
- * Object Multiplex tracker groups point/box prompts BY object id; sending
- * them with no id (as we did originally) is accepted at submit but crashes
- * the model mid-run (`Fal (500): Internal Server Error`) because the prompts
- * attach to no object. v1 tracks a single object, so all marks default to
- * object `1`; the `?? 1` lets a future multi-object UI assign real ids.
+ * **Visual targeting is BOX-only.** We verified against the live endpoint
+ * (15 probe calls, 2026-06) that `fal-ai/sam-3-1/video` reliably crashes
+ * (`Fal (500): Internal Server Error`) on ANY `point_prompts` — both
+ * endpoints (`/video` + `/video-rle`), every id field (`object_id`,
+ * `obj_id`), even in-bounds coords — and explicitly rejects a box + points
+ * on the same frame ("SAM3.1 does not support point prompts and box prompts
+ * on the same frame"). Box prompts and text prompts (alone or together)
+ * complete fine. So we forward ONLY `box_prompts` + `prompt`; point prompts
+ * are dropped at this boundary so a stray caller can't re-trigger the crash.
+ * See ADR-0090.
+ *
+ * **Box prompts carry an `object_id` (default 1)** — SAM's Object Multiplex
+ * tracker groups boxes by object id; the `?? 1` lets a future multi-object UI
+ * assign real ids. `frame_index` is NOT a `/video` field (it lives on the
+ * `/video-rle` `PointPrompt`/`BoxPrompt`, not the `…Base` shapes `/video`
+ * consumes), so we no longer send it.
  */
 export function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
   const input: Record<string, unknown> = { video_url: req.videoUrl };
   if (req.prompt !== undefined && req.prompt.length > 0) {
     input.prompt = req.prompt;
-  }
-  if (req.pointPrompts && req.pointPrompts.length > 0) {
-    input.point_prompts = req.pointPrompts.map((p) => ({
-      x: p.x,
-      y: p.y,
-      label: p.label ?? 1,
-      object_id: p.objectId ?? 1,
-      frame_index: p.frameIndex ?? 0,
-    }));
   }
   if (req.boxPrompts && req.boxPrompts.length > 0) {
     input.box_prompts = req.boxPrompts.map((b) => ({
@@ -69,7 +70,6 @@ export function buildInput(req: Sam31VideoRequest): Record<string, unknown> {
       x_max: b.xMax,
       y_max: b.yMax,
       object_id: b.objectId ?? 1,
-      frame_index: b.frameIndex ?? 0,
     }));
   }
   if (req.applyMask !== undefined) input.apply_mask = req.applyMask;

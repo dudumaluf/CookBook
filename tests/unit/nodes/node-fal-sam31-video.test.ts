@@ -13,7 +13,7 @@ vi.mock("@/lib/media", () => ({ probeMedia, extractFrame }));
 
 import {
   sam31VideoNodeSchema,
-  sam31VisualPromptsToPixels,
+  sam31BoxToPixels,
 } from "@/components/nodes/node-fal-sam31-video";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
@@ -50,51 +50,22 @@ beforeEach(() => {
   });
 });
 
-describe("sam31VisualPromptsToPixels", () => {
-  it("scales normalised points to pixels with fg/bg labels", () => {
-    const { pointPrompts, boxPrompts } = sam31VisualPromptsToPixels(
-      [
-        { x: 0.5, y: 0.5, fg: true },
-        { x: 0, y: 0, fg: false },
-      ],
-      null,
-      200,
-      100,
-    );
-    expect(boxPrompts).toBeUndefined();
-    expect(pointPrompts).toEqual([
-      { x: 100, y: 50, label: 1, frameIndex: 0 },
-      { x: 0, y: 0, label: 0, frameIndex: 0 },
-    ]);
-  });
-
+describe("sam31BoxToPixels", () => {
   it("normalises box corners to a pixel min/max box", () => {
-    const { boxPrompts } = sam31VisualPromptsToPixels(
-      undefined,
-      { x0: 0.6, y0: 0.8, x1: 0.1, y1: 0.2 },
-      200,
-      100,
-    );
-    expect(boxPrompts).toEqual([
-      { xMin: 20, yMin: 20, xMax: 120, yMax: 80, frameIndex: 0 },
-    ]);
+    expect(
+      sam31BoxToPixels({ x0: 0.6, y0: 0.8, x1: 0.1, y1: 0.2 }, 200, 100),
+    ).toEqual({ xMin: 20, yMin: 20, xMax: 120, yMax: 80 });
   });
 
   it("drops a degenerate (sub-2px) box", () => {
-    const { boxPrompts } = sam31VisualPromptsToPixels(
-      undefined,
-      { x0: 0.5, y0: 0.5, x1: 0.503, y1: 0.5 },
-      200,
-      100,
-    );
-    expect(boxPrompts).toBeUndefined();
+    expect(
+      sam31BoxToPixels({ x0: 0.5, y0: 0.5, x1: 0.503, y1: 0.5 }, 200, 100),
+    ).toBeUndefined();
   });
 
-  it("returns nothing when there are no marks", () => {
-    expect(sam31VisualPromptsToPixels([], null, 200, 100)).toEqual({
-      pointPrompts: undefined,
-      boxPrompts: undefined,
-    });
+  it("returns undefined when there is no box", () => {
+    expect(sam31BoxToPixels(null, 200, 100)).toBeUndefined();
+    expect(sam31BoxToPixels(undefined, 200, 100)).toBeUndefined();
   });
 });
 
@@ -161,7 +132,7 @@ describe("sam31-video node execute", () => {
     );
   });
 
-  it("visual mode probes the video and forwards pixel box prompts (no text default)", async () => {
+  it("visual mode probes the video and forwards a pixel box prompt (no text default, no points, no frame_index)", async () => {
     await sam31VideoNodeSchema.execute!(
       ctx(
         { video: { type: "video", value: { url: "https://x/v.mp4" } } },
@@ -174,14 +145,15 @@ describe("sam31-video node execute", () => {
     expect(probeMedia).toHaveBeenCalledWith("https://x/v.mp4");
     const arg = callSam31Video.mock.calls[0]![0];
     expect(arg.prompt).toBeUndefined();
+    expect(arg.pointPrompts).toBeUndefined();
     expect(arg.boxPrompts).toEqual([
-      { xMin: 480, yMin: 540, xMax: 1440, yMax: 1079, frameIndex: 0 },
+      { xMin: 480, yMin: 540, xMax: 1440, yMax: 1079 },
     ]);
   });
 
-  it("maps visual marks against DISPLAY dims, not coded (rotated clip → no out-of-bounds 500)", async () => {
-    // Rotated phone clip: coded 1920×1080 but displays 1080×1920. The marks
-    // were drawn on the display frame, so they must scale by display dims.
+  it("maps the box against DISPLAY dims, not coded (rotated clip → no out-of-bounds 500)", async () => {
+    // Rotated phone clip: coded 1920×1080 but displays 1080×1920. The box was
+    // drawn on the display frame, so it must scale by display dims.
     probeMedia.mockResolvedValueOnce({
       width: 1920,
       height: 1080,
@@ -197,18 +169,12 @@ describe("sam31-video node execute", () => {
         {
           promptMode: "visual",
           box: { x0: 0, y0: 0, x1: 0.5, y1: 0.5 },
-          points: [{ x: 0.5, y: 0.5, fg: true }],
         },
       ) as CtxArgs,
     );
     const arg = callSam31Video.mock.calls[0]![0];
     // Display-space: 0.5×1080=540, 0.5×1920=960 (coded would give 960/540).
-    expect(arg.boxPrompts).toEqual([
-      { xMin: 0, yMin: 0, xMax: 540, yMax: 960, frameIndex: 0 },
-    ]);
-    expect(arg.pointPrompts).toEqual([
-      { x: 540, y: 960, label: 1, frameIndex: 0 },
-    ]);
+    expect(arg.boxPrompts).toEqual([{ xMin: 0, yMin: 0, xMax: 540, yMax: 960 }]);
   });
 
   it("falls back to coded dims when the probe has no display dims", async () => {
@@ -220,31 +186,11 @@ describe("sam31-video node execute", () => {
       ) as CtxArgs,
     );
     expect(callSam31Video.mock.calls[0]![0].boxPrompts).toEqual([
-      { xMin: 0, yMin: 0, xMax: 960, yMax: 540, frameIndex: 0 },
+      { xMin: 0, yMin: 0, xMax: 960, yMax: 540 },
     ]);
   });
 
-  it("visual mode forwards foreground/background point prompts", async () => {
-    await sam31VideoNodeSchema.execute!(
-      ctx(
-        { video: { type: "video", value: { url: "https://x/v.mp4" } } },
-        {
-          promptMode: "visual",
-          points: [
-            { x: 0.5, y: 0.5, fg: true },
-            { x: 0.1, y: 0.1, fg: false },
-          ],
-        },
-      ) as CtxArgs,
-    );
-    const arg = callSam31Video.mock.calls[0]![0];
-    expect(arg.pointPrompts).toEqual([
-      { x: 960, y: 540, label: 1, frameIndex: 0 },
-      { x: 192, y: 108, label: 0, frameIndex: 0 },
-    ]);
-  });
-
-  it("visual mode throws when there are no marks and no prompt", async () => {
+  it("visual mode throws when there is no box and no prompt", async () => {
     await expect(
       sam31VideoNodeSchema.execute!(
         ctx(
@@ -252,7 +198,7 @@ describe("sam31-video node execute", () => {
           { promptMode: "visual" },
         ) as CtxArgs,
       ),
-    ).rejects.toThrow(/Mark the object/);
+    ).rejects.toThrow(/Draw a box/);
   });
 
   it("is a non-reactive ai-video node: video+prompt in, video out", () => {

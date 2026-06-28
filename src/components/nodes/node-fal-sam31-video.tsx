@@ -3,9 +3,7 @@
 import {
   Eraser,
   Loader2,
-  MousePointerClick,
   Scan,
-  Square,
   Target,
   Undo2,
   Video as VideoIcon,
@@ -29,7 +27,6 @@ import {
   SAM31_VIDEO_DETECTION_MAX,
   SAM31_VIDEO_DETECTION_MIN,
   type Sam31BoxPrompt,
-  type Sam31PointPrompt,
 } from "@/lib/fal/types";
 import { uploadVideoFromUrl } from "@/lib/library/upload-asset";
 import { extractFrame, probeMedia } from "@/lib/media";
@@ -59,24 +56,21 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
  *     `apply_mask` is on). Feed it + the source into Object Track Crop to get
  *     a stabilised crop, then Track Recompose to paste an edit back.
  *
- * Two ways to target the object (combinable — using both sharpens the mask):
+ * Two ways to target the object (combinable — text + box sharpens the mask):
  *   - **Describe** (text prompt) — name what to track.
- *   - **Mark visually** — open the mask editor, drop a box around the object
- *     and/or foreground/background points on the first frame. SAM tracks the
- *     marked object forward across the clip.
+ *   - **Mark visually** — open the mask editor and draw a box around the
+ *     object on the first frame. SAM tracks the boxed object forward.
+ *
+ * **Box-only visual marking (no points).** We verified live (ADR-0090) that
+ * Fal's SAM 3.1 video model 500s on point prompts and rejects box + points on
+ * one frame; a box (alone or with text) is the reliable interactive signal, so
+ * the editor draws a box and we never send point prompts.
  *
  * Non-reactive — costs money ($0.01 / 16 frames). Async submit + poll like the
  * other Fal video nodes; the per-frame segmentation survives tab backgrounding.
  * The mask is re-hosted into our bucket so it outlives Fal's CDN TTL (the
  * crop + recompose nodes decode it client-side, possibly much later).
  */
-
-/** A foreground/background click on the first frame, in normalised 0..1. */
-export interface Sam31MaskPoint {
-  x: number;
-  y: number;
-  fg: boolean;
-}
 
 /** A bounding box on the first frame, in normalised 0..1 (any two corners). */
 export interface Sam31MaskBox {
@@ -91,10 +85,8 @@ type Sam31PromptMode = "text" | "visual";
 interface Sam31VideoNodeConfig {
   /** What to track. Used when no `prompt` input is wired. */
   prompt?: string;
-  /** Whether to target by text or by visual marks. */
+  /** Whether to target by text or by a visual box. */
   promptMode?: Sam31PromptMode;
-  /** Visual foreground/background points (normalised). */
-  points?: Sam31MaskPoint[];
   /** Visual bounding box (normalised). */
   box?: Sam31MaskBox | null;
   /** Isolate the object on black (true) vs. overlay on the clip (false). */
@@ -106,40 +98,27 @@ interface Sam31VideoNodeConfig {
 const DEFAULT_PROMPT = "person";
 
 /* ────────────────────────────────────────────────────────────────────── */
-/* Pure: normalised marks → pixel prompts (exported for unit tests)        */
+/* Pure: a normalised box mark → a pixel box prompt (exported for tests)   */
 /* ────────────────────────────────────────────────────────────────────── */
 
-export function sam31VisualPromptsToPixels(
-  points: Sam31MaskPoint[] | undefined,
+/**
+ * Scale a normalised (0..1) box to a pixel box prompt. Returns `undefined` for
+ * a missing or degenerate (sub-2px) box so a stray click-drag never ships.
+ */
+export function sam31BoxToPixels(
   box: Sam31MaskBox | null | undefined,
   width: number,
   height: number,
-): { pointPrompts?: Sam31PointPrompt[]; boxPrompts?: Sam31BoxPrompt[] } {
+): Sam31BoxPrompt | undefined {
+  if (!box) return undefined;
   const px = (n: number) => Math.max(0, Math.min(width - 1, Math.round(n * width)));
   const py = (n: number) => Math.max(0, Math.min(height - 1, Math.round(n * height)));
-
-  const pointPrompts =
-    points && points.length > 0
-      ? points.map((p) => ({
-          x: px(p.x),
-          y: py(p.y),
-          label: (p.fg ? 1 : 0) as 0 | 1,
-          frameIndex: 0,
-        }))
-      : undefined;
-
-  let boxPrompts: Sam31BoxPrompt[] | undefined;
-  if (box) {
-    const xMin = px(Math.min(box.x0, box.x1));
-    const xMax = px(Math.max(box.x0, box.x1));
-    const yMin = py(Math.min(box.y0, box.y1));
-    const yMax = py(Math.max(box.y0, box.y1));
-    // Drop degenerate boxes (a stray click-drag of a couple pixels).
-    if (xMax - xMin >= 2 && yMax - yMin >= 2) {
-      boxPrompts = [{ xMin, yMin, xMax, yMax, frameIndex: 0 }];
-    }
-  }
-  return { pointPrompts, boxPrompts };
+  const xMin = px(Math.min(box.x0, box.x1));
+  const xMax = px(Math.max(box.x0, box.x1));
+  const yMin = py(Math.min(box.y0, box.y1));
+  const yMax = py(Math.max(box.y0, box.y1));
+  if (xMax - xMin < 2 || yMax - yMin < 2) return undefined;
+  return { xMin, yMin, xMax, yMax };
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
@@ -191,12 +170,11 @@ function Sam31VideoBody({ nodeId, config }: NodeBodyProps<Sam31VideoNodeConfig>)
   const video = videoRefFromOutput(activeOutput);
 
   const mode = config.promptMode ?? "text";
-  const markCount = (config.points?.length ?? 0) + (config.box ? 1 : 0);
   const targetLabel =
     mode === "visual"
-      ? markCount > 0
-        ? `${markCount} visual mark${markCount === 1 ? "" : "s"}`
-        : "no marks yet"
+      ? config.box
+        ? "boxed object"
+        : "no box yet"
       : config.prompt?.trim() || DEFAULT_PROMPT;
 
   return (
@@ -259,10 +237,8 @@ function Sam31VideoBody({ nodeId, config }: NodeBodyProps<Sam31VideoNodeConfig>)
 }
 
 /* ────────────────────────────────────────────────────────────────────── */
-/* Mask editor (modal) — first-frame box + foreground/background points    */
+/* Mask editor (modal) — draw a box around the object on the first frame   */
 /* ────────────────────────────────────────────────────────────────────── */
-
-type MaskTool = "fg" | "bg" | "box";
 
 // The marking surface fills the modal: up to this many px wide, capped to a
 // share of the viewport so it scales up on big screens (precise marking) and
@@ -284,20 +260,14 @@ function loadImageDims(url: string): Promise<{ w: number; h: number }> {
 
 export function Sam31MaskEditor({
   videoUrl,
-  points,
   box,
   onChange,
 }: {
   videoUrl: string | null;
-  points: Sam31MaskPoint[];
   box: Sam31MaskBox | null;
-  onChange: (next: {
-    points?: Sam31MaskPoint[];
-    box?: Sam31MaskBox | null;
-  }) => void;
+  onChange: (next: { box?: Sam31MaskBox | null }) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [tool, setTool] = useState<MaskTool>("box");
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -369,16 +339,14 @@ export function Sam31MaskEditor({
   }
 
   function handlePointerDown(e: React.PointerEvent) {
-    if (tool !== "box") return;
     const p = normFromEvent(e);
     if (!p) return;
     // Start the draft FIRST. Pointer capture (below) only keeps the drag
     // tracking if the cursor briefly leaves the frame — but `setPointerCapture`
     // can throw `InvalidStateError` inside a portaled overlay (the Base UI
     // Dialog this editor lives in). It used to run *before* this state was set,
-    // so a throw silently aborted the whole draw and no box ever appeared
-    // (Include/Exclude points still worked — they don't capture). Best-effort +
-    // guarded now, on the stable frame element, so the box always draws.
+    // so a throw silently aborted the whole draw and no box ever appeared.
+    // Best-effort + guarded now, on the stable frame element, so it always draws.
     dragStart.current = { x: p.nx, y: p.ny };
     setDraftBox({ x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny });
     try {
@@ -389,7 +357,7 @@ export function Sam31MaskEditor({
   }
 
   function handlePointerMove(e: React.PointerEvent) {
-    if (tool !== "box" || !dragStart.current) return;
+    if (!dragStart.current) return;
     const p = normFromEvent(e);
     if (!p) return;
     setDraftBox({
@@ -401,7 +369,7 @@ export function Sam31MaskEditor({
   }
 
   function handlePointerUp() {
-    if (tool !== "box" || !dragStart.current || !draftBox) {
+    if (!dragStart.current || !draftBox) {
       dragStart.current = null;
       return;
     }
@@ -419,20 +387,9 @@ export function Sam31MaskEditor({
     });
   }
 
-  function handleClick(e: React.MouseEvent) {
-    if (tool === "box") return;
-    const p = normFromEvent(e);
-    if (!p) return;
-    onChange({ points: [...points, { x: p.nx, y: p.ny, fg: tool === "fg" }] });
-  }
-
   function undo() {
     if (draftBox) {
       setDraftBox(null);
-      return;
-    }
-    if (points.length > 0) {
-      onChange({ points: points.slice(0, -1) });
       return;
     }
     if (box) onChange({ box: null });
@@ -440,11 +397,10 @@ export function Sam31MaskEditor({
 
   function clearAll() {
     setDraftBox(null);
-    onChange({ points: [], box: null });
+    onChange({ box: null });
   }
 
   const renderBox = draftBox ?? box;
-  const markCount = points.length + (box ? 1 : 0);
 
   return (
     <>
@@ -457,7 +413,7 @@ export function Sam31MaskEditor({
         className="h-7 w-full justify-start gap-1.5 text-xs"
       >
         <Target className="h-3.5 w-3.5" />
-        {markCount > 0 ? `Edit visual mask (${markCount})` : "Mark object visually…"}
+        {box ? "Edit object box" : "Draw a box around the object…"}
       </Button>
       {!videoUrl ? (
         <p className="text-[10px] leading-snug text-muted-foreground">
@@ -468,38 +424,23 @@ export function Sam31MaskEditor({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="w-[92vw] sm:max-w-[1180px]">
           <DialogHeader>
-            <DialogTitle>Mark the object</DialogTitle>
+            <DialogTitle>Box the object</DialogTitle>
             <DialogDescription>
-              Draw a box around the object, then drop foreground/background
-              points to refine. SAM tracks it forward from the first frame.
+              Drag a box around the object on the first frame. SAM tracks the
+              boxed object forward across the clip.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex items-center gap-1.5">
-            <ToolButton
-              active={tool === "box"}
-              onClick={() => setTool("box")}
-              icon={<Square className="h-3.5 w-3.5" />}
-              label="Box"
-            />
-            <ToolButton
-              active={tool === "fg"}
-              onClick={() => setTool("fg")}
-              icon={<MousePointerClick className="h-3.5 w-3.5 text-green-500" />}
-              label="Include"
-            />
-            <ToolButton
-              active={tool === "bg"}
-              onClick={() => setTool("bg")}
-              icon={<MousePointerClick className="h-3.5 w-3.5 text-red-500" />}
-              label="Exclude"
-            />
+            <span className="text-[11px] text-muted-foreground">
+              Drag to draw · drag again to replace
+            </span>
             <div className="ml-auto flex items-center gap-1.5">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={undo}
-                disabled={markCount === 0 && !draftBox}
+                disabled={!box && !draftBox}
                 className="h-7 gap-1.5 text-xs"
               >
                 <Undo2 className="h-3.5 w-3.5" /> Undo
@@ -508,7 +449,7 @@ export function Sam31MaskEditor({
                 variant="ghost"
                 size="sm"
                 onClick={clearAll}
-                disabled={markCount === 0 && !draftBox}
+                disabled={!box && !draftBox}
                 className="h-7 gap-1.5 text-xs"
               >
                 <Eraser className="h-3.5 w-3.5" /> Clear
@@ -537,7 +478,6 @@ export function Sam31MaskEditor({
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onClick={handleClick}
                 style={{ width: displayW, height: displayH }}
                 className="relative cursor-crosshair touch-none select-none overflow-hidden rounded-md border bg-black"
               >
@@ -570,24 +510,14 @@ export function Sam31MaskEditor({
                       );
                     })()
                   : null}
-                {points.map((p, i) => (
-                  <div
-                    key={i}
-                    style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
-                    className={cn(
-                      "pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow",
-                      p.fg ? "bg-green-500" : "bg-red-500",
-                    )}
-                  />
-                ))}
               </div>
             ) : null}
           </div>
 
           <p className="text-[11px] leading-snug text-muted-foreground">
-            {markCount === 0
-              ? "Tip: a box alone often works. Add Include points on parts it misses, Exclude points on areas to drop."
-              : `${box ? "1 box" : "no box"} · ${points.length} point${points.length === 1 ? "" : "s"}`}
+            {box
+              ? "Boxed. Drag a new box to replace it, or Clear to start over."
+              : "Tip: box the whole object with a little margin. A text prompt can sharpen it further."}
           </p>
 
           <DialogFooter>
@@ -596,30 +526,6 @@ export function Sam31MaskEditor({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-function ToolButton({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <Button
-      variant={active ? "secondary" : "ghost"}
-      size="sm"
-      onClick={onClick}
-      className={cn("h-7 gap-1.5 text-xs", active && "ring-1 ring-accent")}
-    >
-      {icon}
-      {label}
-    </Button>
   );
 }
 
@@ -667,12 +573,12 @@ function Sam31VideoSettings({
         <div className="flex flex-col gap-1.5">
           <Sam31MaskEditor
             videoUrl={videoUrl}
-            points={config.points ?? []}
             box={config.box ?? null}
             onChange={(next) => updateConfig(next)}
           />
           <p className="text-[10px] leading-snug text-muted-foreground">
-            Box + points combine. A text prompt below (if set) is sent too.
+            Draw a box around the object. A text prompt below (if set) is sent
+            too.
           </p>
         </div>
       ) : null}
@@ -755,7 +661,6 @@ function hasOverrides(config: Sam31VideoNodeConfig): boolean {
   return (
     config.promptMode === "visual" ||
     (config.prompt !== undefined && config.prompt.trim().length > 0) ||
-    (config.points?.length ?? 0) > 0 ||
     !!config.box ||
     config.applyMask === false ||
     (config.detectionThreshold !== undefined &&
@@ -772,7 +677,7 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
   category: "ai-video",
   title: "SAM 3.1 Video",
   description:
-    "Promptable video segmentation + tracking (SAM 3.1 via Fal, ~$0.01/16 frames). Wire a source video, then target the object either by a text prompt ('person') OR visually — open the mask editor to draw a box and drop foreground/background points on the first frame (combinable). `out` is a mask video that follows the object across the clip (isolated on black by default). Feed `out` + the source into Object Track Crop for a stabilised crop, then Track Recompose to paste an edit back. A wired `prompt` input overrides the settings field.",
+    "Promptable video segmentation + tracking (SAM 3.1 via Fal, ~$0.01/16 frames). Wire a source video, then target the object by a text prompt ('person') and/or visually — open the mask editor to draw a box around it on the first frame (a text prompt can be combined with the box). `out` is a mask video that follows the object across the clip (isolated on black by default). Feed `out` + the source into Object Track Crop for a stabilised crop, then Track Recompose to paste an edit back. A wired `prompt` input overrides the settings field. (Point prompts aren't supported by Fal's SAM 3.1 video model — use a box.)",
   icon: Scan,
   inputs: [
     { id: "video", label: "video", dataType: "video" },
@@ -805,12 +710,11 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
     const wiredPrompt = extractInputByType(inputs, "prompt", "text")?.trim();
     const mode = config.promptMode ?? "text";
 
-    let pointPrompts: Sam31PointPrompt[] | undefined;
     let boxPrompts: Sam31BoxPrompt[] | undefined;
     if (mode === "visual") {
       const probe = await probeMedia(video.url);
-      // Marks are captured on the DISPLAY frame (the editor's `extractFrame`
-      // thumbnail bakes in rotation + pixel-aspect), so they must be mapped
+      // The box is drawn on the DISPLAY frame (the editor's `extractFrame`
+      // thumbnail bakes in rotation + pixel-aspect), so it must be mapped
       // against display dimensions — NOT the coded buffer size. For a rotated
       // phone clip coded≠display (e.g. coded 1920×1080 → display 1080×1920);
       // mapping against coded coords lands the box out of Fal's display-space
@@ -820,24 +724,19 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
       const frameH = probe.displayHeight ?? probe.height;
       if (!frameW || !frameH) {
         throw new Error(
-          "Couldn't read the video size to place the visual mask — switch to a text prompt.",
+          "Couldn't read the video size to place the box — switch to a text prompt.",
         );
       }
-      ({ pointPrompts, boxPrompts } = sam31VisualPromptsToPixels(
-        config.points,
-        config.box,
-        frameW,
-        frameH,
-      ));
+      const box = sam31BoxToPixels(config.box, frameW, frameH);
+      boxPrompts = box ? [box] : undefined;
     }
 
-    const hasVisual =
-      (pointPrompts?.length ?? 0) > 0 || (boxPrompts?.length ?? 0) > 0;
+    const hasVisual = (boxPrompts?.length ?? 0) > 0;
     const explicitPrompt =
       wiredPrompt && wiredPrompt.length > 0
         ? wiredPrompt
         : config.prompt?.trim();
-    // Text mode falls back to "person"; visual mode lets the marks stand alone.
+    // Text mode falls back to "person"; visual mode lets the box stand alone.
     const prompt =
       explicitPrompt && explicitPrompt.length > 0
         ? explicitPrompt
@@ -847,14 +746,13 @@ export const sam31VideoNodeSchema = defineNode<Sam31VideoNodeConfig>({
 
     if (!hasVisual && !prompt) {
       throw new Error(
-        "Mark the object in the mask editor (a box or point), or add a text prompt.",
+        "Draw a box around the object in the mask editor, or add a text prompt.",
       );
     }
 
     const result = await callSam31Video({
       videoUrl: video.url,
       prompt,
-      pointPrompts,
       boxPrompts,
       applyMask: config.applyMask ?? true,
       detectionThreshold: config.detectionThreshold,

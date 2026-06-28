@@ -87,7 +87,7 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
     );
   });
 
-  it("accepts and forwards visual point + box prompts", async () => {
+  it("accepts and forwards a visual box prompt", async () => {
     submitSam31Video.mockResolvedValueOnce({
       requestId: "req-3",
       endpoint: "fal-ai/sam-3-1/video",
@@ -95,28 +95,24 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
     const res = await SUBMIT(
       makeRequest({
         videoUrl: "https://x/v.mp4",
-        pointPrompts: [{ x: 100, y: 50, label: 1, frameIndex: 0 }],
-        boxPrompts: [{ xMin: 10, yMin: 20, xMax: 200, yMax: 180, frameIndex: 0 }],
+        boxPrompts: [{ xMin: 10, yMin: 20, xMax: 200, yMax: 180 }],
       }) as never,
     );
     expect(res.status).toBe(200);
     expect(submitSam31Video).toHaveBeenCalledWith(
       expect.objectContaining({
-        pointPrompts: [{ x: 100, y: 50, label: 1, frameIndex: 0 }],
-        boxPrompts: [
-          { xMin: 10, yMin: 20, xMax: 200, yMax: 180, frameIndex: 0 },
-        ],
+        boxPrompts: [{ xMin: 10, yMin: 20, xMax: 200, yMax: 180 }],
       }),
       expect.anything(),
       expect.anything(),
     );
   });
 
-  it("returns 400 on a negative point coordinate", async () => {
+  it("returns 400 on a negative box coordinate", async () => {
     const res = await SUBMIT(
       makeRequest({
         videoUrl: "https://x/v.mp4",
-        pointPrompts: [{ x: -5, y: 10 }],
+        boxPrompts: [{ xMin: -5, yMin: 10, xMax: 100, yMax: 100 }],
       }) as never,
     );
     expect(res.status).toBe(400);
