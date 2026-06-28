@@ -1042,17 +1042,25 @@ export type DwposeStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & DwposeSuccessResponse);
 
-/* ─────────────── SAM 3.1 Video RLE (video → tracked mask video) ─────────────── */
+/* ─────────────── SAM 3.1 Video (video → tracked mask video) ─────────────── */
 
 /**
- * Fal `fal-ai/sam-3-1/video-rle` — promptable video segmentation that tracks
- * the prompted object across the clip and renders it as a mask video. We
- * default `apply_mask: true` so the output isolates the object (bright on
- * dark), which is exactly what the Object Track Crop / Track Recompose nodes
- * need to track + matte. Long-running per-frame job → async-queue (submit +
- * poll), same shape as DWPose. Pricing: $0.01 per 16 frames.
+ * Fal `fal-ai/sam-3-1/video` — promptable video segmentation that tracks the
+ * prompted object across the clip and RENDERS it as a mask video. We default
+ * `apply_mask: true` so the output isolates the object (bright on dark), which
+ * is exactly what the Object Track Crop / Track Recompose nodes decode to
+ * track + matte. Long-running per-frame job → async-queue (submit + poll),
+ * same shape as DWPose. Pricing: $0.01 per 16 frames.
+ *
+ * NOT the sibling `/video-rle` endpoint. The two have an identical-looking
+ * OpenAPI — `/video-rle`'s output schema is a stale copy that still advertises
+ * a `video` File — but at RUNTIME `/video-rle` returns run-length-encoded mask
+ * arrays + per-frame boxes (`{ rle, boxes, scores, boundingbox_frames_zip,
+ * metadata }`) and NO rendered video. We were on `/video-rle` and the result
+ * poll 502'd with "no video URL (output keys: rle, …)". `/video` returns the
+ * real segmented clip the whole crop/recompose pipeline consumes. See ADR-0088.
  */
-export const SAM31_VIDEO_ENDPOINT = "fal-ai/sam-3-1/video-rle";
+export const SAM31_VIDEO_ENDPOINT = "fal-ai/sam-3-1/video";
 
 export const SAM31_VIDEO_DETECTION_DEFAULT = 0.5;
 export const SAM31_VIDEO_DETECTION_MIN = 0.01;

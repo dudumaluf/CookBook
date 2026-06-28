@@ -49,7 +49,7 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
   it("accepts a minimal request (video only)", async () => {
     submitSam31Video.mockResolvedValueOnce({
       requestId: "req-1",
-      endpoint: "fal-ai/sam-3-1/video-rle",
+      endpoint: "fal-ai/sam-3-1/video",
     });
     const res = await SUBMIT(
       makeRequest({ videoUrl: "https://x/v.mp4" }) as never,
@@ -62,7 +62,7 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
   it("submits a full request with prompt + applyMask + threshold", async () => {
     submitSam31Video.mockResolvedValueOnce({
       requestId: "req-2",
-      endpoint: "fal-ai/sam-3-1/video-rle",
+      endpoint: "fal-ai/sam-3-1/video",
     });
     const res = await SUBMIT(
       makeRequest({
@@ -90,7 +90,7 @@ describe("POST /api/fal/sam-3-1-video (submit)", () => {
   it("accepts and forwards visual point + box prompts", async () => {
     submitSam31Video.mockResolvedValueOnce({
       requestId: "req-3",
-      endpoint: "fal-ai/sam-3-1/video-rle",
+      endpoint: "fal-ai/sam-3-1/video",
     });
     const res = await SUBMIT(
       makeRequest({
@@ -138,7 +138,7 @@ describe("POST /api/fal/sam-3-1-video/status (poll)", () => {
     getSam31VideoResult.mockResolvedValueOnce({ status: "pending" });
     const res = await STATUS(
       makeRequest({
-        endpoint: "fal-ai/sam-3-1/video-rle",
+        endpoint: "fal-ai/sam-3-1/video",
         requestId: "r1",
       }) as never,
     );
@@ -150,16 +150,16 @@ describe("POST /api/fal/sam-3-1-video/status (poll)", () => {
       status: "done",
       videoUrl: "https://fal/mask.mp4",
       mime: "video/mp4",
-      model: "fal-ai/sam-3-1/video-rle",
+      model: "fal-ai/sam-3-1/video",
     });
     const res = await STATUS(
       makeRequest({
-        endpoint: "fal-ai/sam-3-1/video-rle",
+        endpoint: "fal-ai/sam-3-1/video",
         requestId: "r1",
       }) as never,
     );
     const body = await res.json();
     expect(body.videoUrl).toBe("https://fal/mask.mp4");
-    expect(body.model).toBe("fal-ai/sam-3-1/video-rle");
+    expect(body.model).toBe("fal-ai/sam-3-1/video");
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * `buildInput` maps our SAM 3.1 Video request to Fal's `video-rle` wire shape.
+ * `buildInput` maps our SAM 3.1 Video request to Fal's `/video` wire shape.
  * The load-bearing assertion here is the **`object_id`** on every interactive
  * prompt: SAM's Object Multiplex tracker groups point/box prompts by object,
  * and omitting it crashed the model mid-run (`Fal (500): Internal Server

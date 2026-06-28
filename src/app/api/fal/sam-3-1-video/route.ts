@@ -7,7 +7,7 @@ import {
   type FalErrorResponse,
 } from "@/lib/fal/types";
 
-/** POST /api/fal/sam-3-1-video — submit a SAM 3.1 Video RLE segmentation job. */
+/** POST /api/fal/sam-3-1-video — submit a SAM 3.1 Video segmentation job. */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;

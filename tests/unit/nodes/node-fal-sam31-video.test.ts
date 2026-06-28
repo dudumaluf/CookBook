@@ -38,7 +38,7 @@ beforeEach(() => {
   callSam31Video.mockResolvedValue({
     videoUrl: "https://fal/mask.mp4",
     mime: "video/mp4",
-    model: "fal-ai/sam-3-1/video-rle",
+    model: "fal-ai/sam-3-1/video",
   });
   uploadVideoFromUrl.mockResolvedValue({ url: "https://cdn/mask.mp4" });
   probeMedia.mockResolvedValue({

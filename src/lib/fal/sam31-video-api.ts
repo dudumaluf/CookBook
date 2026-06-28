@@ -13,8 +13,11 @@ import {
 } from "./types";
 
 /**
- * Server-only SAM 3.1 Video RLE wrapper — promptable video segmentation that
+ * Server-only SAM 3.1 Video wrapper — promptable video segmentation that
  * tracks the prompted object across the clip and renders it as a mask video.
+ * Targets `fal-ai/sam-3-1/video` (the RENDERED-video endpoint), NOT its
+ * `/video-rle` sibling — see `SAM31_VIDEO_ENDPOINT` for why that one only
+ * returns RLE arrays and 502'd our poll.
  *
  * Same async-queue pattern as DWPose: submit returns a request id, the client
  * polls until the mask video is ready. The per-frame segmentation is
@@ -36,7 +39,7 @@ function annotate(err: Error, code: FalErrorCode): Error {
 }
 
 /**
- * Map our request to Fal's `fal-ai/sam-3-1/video-rle` input shape.
+ * Map our request to Fal's `fal-ai/sam-3-1/video` input shape.
  *
  * **Every interactive prompt carries an `object_id` (default 1).** SAM 3.1's
  * Object Multiplex tracker groups point/box prompts BY object id; sending

@@ -3347,6 +3347,8 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 
 - **Update (2026-06-25)**: After the first real run, two changes. (1) **Visual masking** — text prompts alone are often ambiguous ("which person?"), so the node now also targets the object **visually**: a modal mask editor pulls the clip's first frame (`extractFrame`) and accepts a **box** + **foreground/background points**, combinable with the text prompt (all three are independent SAM signals and stack). Marks are stored **normalised** in node config and converted to Fal's integer-pixel `point_prompts` / `box_prompts` at run time by the pure `sam31VisualPromptsToPixels` (the node reads the video's dimensions with `probeMedia`); `frame_index` 0 + single object in v1, consistent with the rest of the workflow. (2) **Output-parse fix** — Fal documents the `video` output inconsistently (OpenAPI `File` object vs. a bare string URL in the example); the result parser now accepts both (plus `video_url`/`url` fallbacks) and lists the output keys on a genuine miss.
 
+- **Correction (2026-06-27, see ADR-0088)**: The premise above that **`fal-ai/sam-3-1/video-rle` "renders it as a mask video"** is **wrong** — that's the bug that kept this workflow dead. `/video-rle` returns RLE mask arrays + per-frame boxes (`{ rle, boxes, scores, … }`), **never** a `video`, so the result poll always 502'd with "no video URL". The node now targets the sibling **`fal-ai/sam-3-1/video`**, which renders the segmented mask video this 3-node workflow was designed around. Everything else in this ADR (geometry, shared constants, recompose-recomputes-from-mask) stands.
+
 
 ## ADR-0080: GPT Image 2 as a sixth Fal Image model — edit-only with required refs, an optional mask socket, and per-model scalar caps
 
@@ -3493,5 +3495,23 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Images are fixed everywhere at once** — resize, concat/crop, grid, and the Composer all share the loader, so the same CORS death can't resurface per-node.
   - **Video is not yet routed through the proxy.** mediabunny reads video via `UrlSource` (range requests), which can hit the same CORS wall; wiring a Range-aware proxy source is a follow-up (the route already streams, but doesn't forward `Range` yet).
   - **New always-on public route.** Surface area is one read-only GET, bounded by the allowlist + content-type gate; documented here so it isn't mistaken for an open relay.
+
+
+## ADR-0088: SAM 3.1 Video targets `fal-ai/sam-3-1/video`, not `/video-rle` — the RLE sibling returns mask arrays, never a rendered video
+
+- **Status**: Accepted (2026-06-27)
+
+- **Context**: The mask-tracked crop/recompose workflow (ADR-0079) was built on the assumption that **`fal-ai/sam-3-1/video-rle`** renders a tracked **mask video** (the SAM node re-hosts that video; Object Track Crop decodes it frame-by-frame to build the object track). It never worked end-to-end. The final, reproducible failure: a real run **succeeded at Fal** but the result-poll route 502'd with **`SAM 3.1 Video returned no video URL (output keys: rle, boundingbox_frames_zip, metadata, scores, boxes)`**. The `-rle` endpoint returns **run-length-encoded mask arrays + per-frame boxes + scores** — *no* `video` field. We were misled by Fal's OpenAPI: the `/video-rle` spec's output schema is a **stale copy** of the `/video` schema (both titled `SAM31VideoOutput`, both advertising a `video` File), so trusting the spec (ADR-0079's "output-parse fix" even hardened the parser around that phantom `video` field) hid the mismatch until a live run exposed the real shape. The earlier `object_id`/coordinate fixes were real and necessary, but orthogonal — they made the *submit* succeed; the *output* was always the wrong type.
+
+- **Decision**: Point `SAM31_VIDEO_ENDPOINT` at **`fal-ai/sam-3-1/video`** — the endpoint that **renders** the segmented clip (`{ video: File, boundingbox_frames_zip: File? }`). Confirmed against the live Fal OpenAPI:
+  - `/video`'s **input** is identical to what `buildInput` already sends — `video_url`, `prompt`, `point_prompts` (`x/y/label/object_id`), `box_prompts` (`x_min/y_min/x_max/y_max/object_id`), `apply_mask`, `detection_threshold`, `max_num_objects` (plus a `video_output_type` we leave at its `X264 (.mp4)` default). So the marking → pixel-prompt → `object_id` plumbing is unchanged.
+  - `/video`'s **output** `{ video }` is exactly what `extractVideoUrl` already parses and what the whole Object Track Crop → Track Recompose pipeline consumes. **Zero pipeline change** — only the endpoint string moved.
+  - The only schema delta is `frame_index`: `/video-rle` models it on each prompt, `/video` doesn't. It's harmless (extra fields aren't forbidden; every mark is on frame 0 anyway), so `buildInput` is left as-is.
+
+- **Why this shape**: It's the minimum correct change — one constant — and it makes ADR-0079's design real instead of redesigning it. The alternative (keep `/video-rle` and consume `boxes`/`rle` directly: decode RLE to a matte, build the track from the returned boxes) is a *larger* rework that changes the SAM→crop contract from "mask video" to "track JSON"; it's a viable future optimization (the boxes are arguably a cleaner track source than luma-thresholding an object-on-black clip) but unnecessary now.
+
+- **Consequences**:
+  - The crop's `bboxFromMaskData` keys off **luma > 0.15** of the `apply_mask: true` "object isolated on black" clip. Fine for typical subjects; a very dark object could under-segment. If that bites, switch to consuming `/video-rle`'s `boxes` for the track (noted above) rather than re-tuning the threshold blindly.
+  - **Lesson banked**: Fal `/x` vs `/x-rle` (and similar `-*` variants) can ship **identical-looking but stale OpenAPI** — verify the *runtime* output shape, not just the spec, before building a pipeline on it.
 
 
