@@ -9,17 +9,21 @@ import {
   createLayer,
   cssBlendMode,
   firstImageRef,
+  firstMediaRef,
   isLayerDrawable,
   layerBaseSize,
   moveLayer,
   patchLayerTransform,
   placeLayer,
+  resolveLayerMediaType,
+  resolveLayerMediaTypes,
   resolveLayerUrl,
   resolveLayerUrls,
   resolveMaskUrl,
   resolveMaskUrls,
   sanitizeComposerDocument,
   updateLayerById,
+  type ComposerInputRef,
   type ComposerLayer,
 } from "@/types/composer";
 
@@ -100,7 +104,9 @@ describe("placeLayer", () => {
 });
 
 describe("source resolution", () => {
-  const inputs = { "layer-0": { url: "https://x/a.png" } };
+  const inputs: Record<string, ComposerInputRef> = {
+    "layer-0": { url: "https://x/a.png", mediaType: "image" },
+  };
 
   it("resolves input layers from the wired ref", () => {
     expect(resolveLayerUrl(inputLayer("layer-0"), inputs)).toBe("https://x/a.png");
@@ -137,9 +143,9 @@ describe("source resolution", () => {
 });
 
 describe("mask resolution", () => {
-  const inputs = {
-    "layer-0": { url: "https://x/a.png" },
-    "layer-1": { url: "https://x/matte.png" },
+  const inputs: Record<string, ComposerInputRef> = {
+    "layer-0": { url: "https://x/a.png", mediaType: "image" },
+    "layer-1": { url: "https://x/matte.png", mediaType: "image" },
   };
 
   it("resolveMaskUrl: undefined when no mask, else resolves the matte source", () => {
@@ -271,5 +277,66 @@ describe("factories + firstImageRef", () => {
     expect(firstImageRef([{ type: "image", value: { url: "v" } }])?.url).toBe("v");
     expect(firstImageRef({ type: "text", value: "hi" })).toBeUndefined();
     expect(firstImageRef(undefined)).toBeUndefined();
+  });
+
+  it("firstMediaRef tags images and videos with their media kind", () => {
+    const img = firstMediaRef({ type: "image", value: { url: "i", width: 4 } });
+    expect(img).toEqual({
+      url: "i",
+      mediaType: "image",
+      width: 4,
+      height: undefined,
+      mime: undefined,
+    });
+
+    const vid = firstMediaRef({
+      type: "video",
+      value: { url: "v", width: 1920, height: 1080, durationMs: 5000 },
+    });
+    expect(vid?.mediaType).toBe("video");
+    expect(vid?.durationMs).toBe(5000);
+
+    // Non-media + array unwrap.
+    expect(firstMediaRef({ type: "text", value: "hi" })).toBeUndefined();
+    expect(
+      firstMediaRef([{ type: "video", value: { url: "first" } }])?.url,
+    ).toBe("first");
+  });
+});
+
+describe("media-kind resolution (Phase 3)", () => {
+  it("input layers take the LIVE wired ref's kind over a stale source hint", () => {
+    const inputs: Record<string, ComposerInputRef> = {
+      "layer-0": { url: "https://x/clip.mp4", mediaType: "video" },
+    };
+    // Source still says "image" (e.g. wired image, then rewired to a video).
+    const layer = createLayer({
+      source: { kind: "input", inputHandle: "layer-0", mediaType: "image" },
+    });
+    expect(resolveLayerMediaType(layer, inputs)).toBe("video");
+  });
+
+  it("url/asset layers use the source's own mediaType; solids are image", () => {
+    const vidUrl = createLayer({
+      source: { kind: "url", url: "https://x/c.mp4", mediaType: "video" },
+    });
+    expect(resolveLayerMediaType(vidUrl, {})).toBe("video");
+
+    const solid = createLayer({ source: { kind: "solid", color: "#000" } });
+    expect(resolveLayerMediaType(solid, {})).toBe("image");
+  });
+
+  it("resolveLayerMediaTypes maps every layer id", () => {
+    const inputs: Record<string, ComposerInputRef> = {
+      "layer-0": { url: "https://x/a.png", mediaType: "image" },
+      "layer-1": { url: "https://x/c.mp4", mediaType: "video" },
+    };
+    const a = inputLayer("layer-0");
+    const b = inputLayer("layer-1");
+    const doc = { ...createDefaultDocument(), layers: [a, b] };
+    expect(resolveLayerMediaTypes(doc, inputs)).toEqual({
+      [a.id]: "image",
+      [b.id]: "video",
+    });
   });
 });

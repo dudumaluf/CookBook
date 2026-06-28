@@ -13,10 +13,10 @@ import {
   patchLayerTransform,
   updateLayerById,
   type ComposerDocument,
+  type ComposerInputRef,
   type ComposerLayer,
   type LayerTransform,
 } from "@/types/composer";
-import type { ImageRef } from "@/types/node";
 
 /**
  * Composer editor — the full-screen layered compositor surface (ADR-0085).
@@ -31,7 +31,7 @@ import type { ImageRef } from "@/types/node";
 
 interface ComposerEditorProps {
   doc: ComposerDocument;
-  inputs: Record<string, ImageRef>;
+  inputs: Record<string, ComposerInputRef>;
   onChange: (doc: ComposerDocument) => void;
   onClose: () => void;
 }

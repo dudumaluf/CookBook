@@ -114,8 +114,27 @@ export interface LayerSource {
   url?: string;
   /** kind === "solid": CSS color of the fill. */
   color?: string;
-  /** Editor/export hint. Phase 1 handles "image"; "video" lands in Phase 3. */
+  /**
+   * Editor/export hint. "image" composites a still bitmap; "video" samples a
+   * frame (still composite) or plays across the timeline (video export). Phase
+   * 3 (video layers) activated this; see `resolveLayerMediaType`.
+   */
   mediaType?: "image" | "video";
+}
+
+/**
+ * What a wired input handle resolves to inside the Composer — a URL plus the
+ * media kind so the renderer knows whether to decode a still bitmap or sample
+ * a video frame. Superset of `ImageRef` (the editor panels only read `url` +
+ * dimensions, so an `ImageRef` widens to this for free).
+ */
+export interface ComposerInputRef {
+  url: string;
+  mediaType: "image" | "video";
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  mime?: string;
 }
 
 /**
@@ -333,7 +352,7 @@ export function placeLayer(
  */
 export function resolveLayerUrls(
   doc: ComposerDocument,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const layer of doc.layers) {
@@ -344,14 +363,14 @@ export function resolveLayerUrls(
 
 export function resolveLayerUrl(
   layer: ComposerLayer,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): string | undefined {
   return resolveSourceUrl(layer.source, inputs);
 }
 
 function resolveSourceUrl(
   source: LayerSource,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): string | undefined {
   if (source.kind === "input") {
     return source.inputHandle ? inputs[source.inputHandle]?.url : undefined;
@@ -360,10 +379,46 @@ function resolveSourceUrl(
   return undefined; // solid
 }
 
+/**
+ * Resolve a layer/source's media kind. Input layers prefer the LIVE wired
+ * ref's type (a rewire to a video wins over a stale stored hint); url/asset
+ * layers use the source's own `mediaType`; solids are "image". Used to decide
+ * still-bitmap decode vs. video-frame sampling in the renderer + preview.
+ */
+function resolveSourceMediaType(
+  source: LayerSource,
+  inputs: Record<string, ComposerInputRef | undefined>,
+): "image" | "video" {
+  if (source.kind === "input" && source.inputHandle) {
+    const live = inputs[source.inputHandle]?.mediaType;
+    if (live) return live;
+  }
+  return source.mediaType ?? "image";
+}
+
+export function resolveLayerMediaType(
+  layer: ComposerLayer,
+  inputs: Record<string, ComposerInputRef | undefined>,
+): "image" | "video" {
+  return resolveSourceMediaType(layer.source, inputs);
+}
+
+/** layerId → resolved media kind, for every layer (drives still vs. video). */
+export function resolveLayerMediaTypes(
+  doc: ComposerDocument,
+  inputs: Record<string, ComposerInputRef | undefined>,
+): Record<string, "image" | "video"> {
+  const out: Record<string, "image" | "video"> = {};
+  for (const layer of doc.layers) {
+    out[layer.id] = resolveLayerMediaType(layer, inputs);
+  }
+  return out;
+}
+
 /** Resolve a layer's MASK matte URL (Phase 2). Undefined when no mask is set. */
 export function resolveMaskUrl(
   layer: ComposerLayer,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): string | undefined {
   return layer.mask ? resolveSourceUrl(layer.mask.source, inputs) : undefined;
 }
@@ -371,7 +426,7 @@ export function resolveMaskUrl(
 /** layerId → resolved mask matte URL, for layers that carry a mask. */
 export function resolveMaskUrls(
   doc: ComposerDocument,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const layer of doc.layers) {
@@ -383,7 +438,7 @@ export function resolveMaskUrls(
 /** True when a layer contributes nothing to the render (hidden, or unresolved non-solid). */
 export function isLayerDrawable(
   layer: ComposerLayer,
-  inputs: Record<string, ImageRef | undefined>,
+  inputs: Record<string, ComposerInputRef | undefined>,
 ): boolean {
   if (!layer.visible) return false;
   if (layer.source.kind === "solid") return Boolean(layer.source.color);
@@ -550,4 +605,38 @@ export function firstImageRef(
   if (!output) return undefined;
   const single = Array.isArray(output) ? output[0] : output;
   return single && single.type === "image" ? single.value : undefined;
+}
+
+/**
+ * Narrow a node output to a `ComposerInputRef` — an IMAGE or a VIDEO (the two
+ * media kinds a layer can draw). A video resolves with `mediaType: "video"` so
+ * the renderer/preview sample a frame instead of trying to decode the clip as
+ * a still. Non-media outputs (text, audio, …) resolve to undefined.
+ */
+export function firstMediaRef(
+  output: StandardizedOutput | StandardizedOutput[] | undefined,
+): ComposerInputRef | undefined {
+  if (!output) return undefined;
+  const single = Array.isArray(output) ? output[0] : output;
+  if (!single) return undefined;
+  if (single.type === "image") {
+    return {
+      url: single.value.url,
+      mediaType: "image",
+      width: single.value.width,
+      height: single.value.height,
+      mime: single.value.mime,
+    };
+  }
+  if (single.type === "video") {
+    return {
+      url: single.value.url,
+      mediaType: "video",
+      width: single.value.width,
+      height: single.value.height,
+      durationMs: single.value.durationMs,
+      mime: single.value.mime,
+    };
+  }
+  return undefined;
 }

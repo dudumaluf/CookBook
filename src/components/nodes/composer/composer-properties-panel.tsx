@@ -7,12 +7,12 @@ import {
   clampCanvas,
   type BlendMode,
   type ComposerDocument,
+  type ComposerInputRef,
   type ComposerLayer,
   type LayerFit,
   type LayerMask,
   type LayerTransform,
 } from "@/types/composer";
-import type { ImageRef } from "@/types/node";
 
 /**
  * Composer properties panel — numeric / precise controls for the canvas and
@@ -23,7 +23,7 @@ import type { ImageRef } from "@/types/node";
 interface ComposerPropertiesPanelProps {
   doc: ComposerDocument;
   selected: ComposerLayer | null;
-  inputs: Record<string, ImageRef>;
+  inputs: Record<string, ComposerInputRef>;
   onPatchDoc: (patch: Partial<ComposerDocument>) => void;
   onPatchLayer: (id: string, patch: Partial<ComposerLayer>) => void;
   onPatchTransform: (id: string, patch: Partial<LayerTransform>) => void;

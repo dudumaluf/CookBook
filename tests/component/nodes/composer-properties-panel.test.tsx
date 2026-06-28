@@ -22,8 +22,8 @@ describe("ComposerPropertiesPanel — mask controls", () => {
         doc={{ ...doc, layers: [layer] }}
         selected={layer}
         inputs={{
-          "layer-0": { url: "https://x/a.png" },
-          "layer-1": { url: "https://x/m.png" },
+          "layer-0": { url: "https://x/a.png", mediaType: "image" },
+          "layer-1": { url: "https://x/m.png", mediaType: "image" },
         }}
         onPatchDoc={vi.fn()}
         onPatchLayer={vi.fn()}
@@ -44,7 +44,7 @@ describe("ComposerPropertiesPanel — mask controls", () => {
       <ComposerPropertiesPanel
         doc={{ ...doc, layers: [layer] }}
         selected={layer}
-        inputs={{ "layer-1": { url: "https://x/m.png" } }}
+        inputs={{ "layer-1": { url: "https://x/m.png", mediaType: "image" } }}
         onPatchDoc={vi.fn()}
         onPatchLayer={onPatchLayer}
         onPatchTransform={vi.fn()}
@@ -80,7 +80,7 @@ describe("ComposerPropertiesPanel — mask controls", () => {
       <ComposerPropertiesPanel
         doc={{ ...doc, layers: [layer] }}
         selected={layer}
-        inputs={{ "layer-1": { url: "https://x/m.png" } }}
+        inputs={{ "layer-1": { url: "https://x/m.png", mediaType: "image" } }}
         onPatchDoc={vi.fn()}
         onPatchLayer={onPatchLayer}
         onPatchTransform={vi.fn()}

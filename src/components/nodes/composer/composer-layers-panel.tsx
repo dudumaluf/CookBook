@@ -3,11 +3,12 @@
 import { ChevronDown, ChevronUp, Eye, EyeOff, Trash2 } from "lucide-react";
 
 import {
+  resolveLayerMediaType,
   resolveLayerUrl,
   type ComposerDocument,
+  type ComposerInputRef,
   type ComposerLayer,
 } from "@/types/composer";
-import type { ImageRef } from "@/types/node";
 
 /**
  * Composer layers panel — the z-ordered layer list (top layer first, like
@@ -17,7 +18,7 @@ import type { ImageRef } from "@/types/node";
 
 interface ComposerLayersPanelProps {
   doc: ComposerDocument;
-  inputs: Record<string, ImageRef>;
+  inputs: Record<string, ComposerInputRef>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPatchLayer: (id: string, patch: Partial<ComposerLayer>) => void;
@@ -54,6 +55,9 @@ export function ComposerLayersPanel({
                 layer.source.kind === "solid"
                   ? null
                   : resolveLayerUrl(layer, inputs);
+              const isVideo =
+                layer.source.kind !== "solid" &&
+                resolveLayerMediaType(layer, inputs) === "video";
               const active = layer.id === selectedId;
               // List index in the displayed (reversed) order.
               const arrayIndex = doc.layers.indexOf(layer);
@@ -94,7 +98,16 @@ export function ComposerLayersPanel({
                           : undefined
                       }
                     >
-                      {url ? (
+                      {url && isVideo ? (
+                        <video
+                          src={url}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                        />
+                      ) : url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={url}

@@ -7,13 +7,14 @@ import {
   clampScale,
   cssBlendMode,
   placeLayer,
+  resolveLayerMediaType,
   resolveLayerUrl,
   resolveMaskUrl,
   type ComposerDocument,
+  type ComposerInputRef,
   type ComposerLayer,
   type LayerTransform,
 } from "@/types/composer";
-import type { ImageRef } from "@/types/node";
 
 /**
  * Composer stage — the WYSIWYG canvas (ADR-0085). Layers are absolutely
@@ -26,7 +27,7 @@ import type { ImageRef } from "@/types/node";
 
 interface ComposerStageProps {
   doc: ComposerDocument;
-  inputs: Record<string, ImageRef>;
+  inputs: Record<string, ComposerInputRef>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onTransform: (id: string, patch: Partial<LayerTransform>) => void;
@@ -261,6 +262,34 @@ export function ComposerStage({
               );
             }
             if (!url) return null;
+            const setNaturalSize = (w: number, h: number) =>
+              setNatural((prev) =>
+                w <= 0 || h <= 0 || (prev[layer.id]?.w === w && prev[layer.id]?.h === h)
+                  ? prev
+                  : { ...prev, [layer.id]: { w, h } },
+              );
+            // Video layers preview their poster frame live (a muted, paused
+            // <video>); transport + playback land in Slice 3.
+            if (resolveLayerMediaType(layer, inputs) === "video") {
+              return (
+                <video
+                  key={layer.id}
+                  src={url}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  draggable={false}
+                  style={style}
+                  onPointerDown={(e) => startMove(e, layer)}
+                  onLoadedMetadata={(e) =>
+                    setNaturalSize(
+                      e.currentTarget.videoWidth,
+                      e.currentTarget.videoHeight,
+                    )
+                  }
+                />
+              );
+            }
             return (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -270,16 +299,12 @@ export function ComposerStage({
                 draggable={false}
                 style={style}
                 onPointerDown={(e) => startMove(e, layer)}
-                onLoad={(e) => {
-                  const img = e.currentTarget;
-                  const w = img.naturalWidth;
-                  const h = img.naturalHeight;
-                  setNatural((prev) =>
-                    prev[layer.id]?.w === w && prev[layer.id]?.h === h
-                      ? prev
-                      : { ...prev, [layer.id]: { w, h } },
-                  );
-                }}
+                onLoad={(e) =>
+                  setNaturalSize(
+                    e.currentTarget.naturalWidth,
+                    e.currentTarget.naturalHeight,
+                  )
+                }
               />
             );
           })}

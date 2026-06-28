@@ -3515,3 +3515,24 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
   - **Lesson banked**: Fal `/x` vs `/x-rle` (and similar `-*` variants) can ship **identical-looking but stale OpenAPI** — verify the *runtime* output shape, not just the spec, before building a pipeline on it.
 
 
+## ADR-0089: Composer video layers (Phase 3) — accept video on `any` sockets, composite a sampled frame now, encode per-frame later; output flips image↔video via `getOutputs`
+
+- **Status**: Accepted (2026-06-28) — Slice 1 of a 5-slice arc (still-frame → video export → live preview/transport → timeline panel → polish).
+
+- **Context**: ADR-0085 shipped the Composer as an image-only flattener and **reserved** the seams for video (`source.mediaType`, `LayerMask`, `LayerTiming`) without acting on them. A user wired a **video** into a second layer socket and nothing happened — no layer, no preview, no error. Three independent walls (all silent): the `layer-N` sockets were typed `image`; the input resolver (`firstImageRef`) dropped any non-`image` output, so a video never became a layer; and the renderer decodes stills via `createImageBitmap`, which can't read an mp4. The user chose the **full** scope: video layers **and** a timeline editor, exporting a video.
+
+- **Decision**: Build it as an additive arc on the *same* document + Canvas2D pipeline (no new compositing/timeline library, consistent with ADR-0085), starting with the foundation that also unblocks the user immediately:
+  - **`any` sockets, not a `media` union.** `layer-N` inputs become `dataType: "any"` (the one universal wildcard `typesCompatible` honours) so images **and** videos wire cleanly — manually and via the assistant's `add_edge`. The resolver ignores non-media outputs (text/audio), so a wrong wire is a harmless no-op rather than a hard type error. There is no `image|video` union type in `DataType`, and inventing one would touch every node's port-compat logic for one consumer.
+  - **`ComposerInputRef` + `firstMediaRef`.** A wired handle now resolves to `{ url, mediaType: "image"|"video", width?, height?, durationMs? }` (a superset of `ImageRef`, so the editor panels that only read `url`/dims widen for free). `firstMediaRef` narrows an image **or** video output; `resolveLayerMediaType` prefers the **live wired** kind over a stale stored `source.mediaType` (so a rewire image→video wins).
+  - **Slice 1 = sampled frame (still composite).** A video layer composites as a single frame: `renderComposite` routes video layers through `extractFrame(url, atSec→{atMs})` → `createImageBitmap` instead of `loadBitmap`, at a shared `atSec` (poster/0 today; the timeline playhead later). Output **stays an image PNG**. This is genuine groundwork — frame-at-time sampling is exactly what both the per-frame video **export** (Slice 2, the `track-crop.ts` decode→canvas→mediabunny-encode loop, one composite per output frame) and the live **preview** (Slice 3) need.
+  - **Output type via `getOutputs(config)`.** The engine already prefers `getOutputs` over static `outputs` (`node-io.ts`), so the Composer's `out` handle will flip `image` → `video` once the document is in "timeline/video" mode (any video layer or a set duration) in Slice 2 — no second output, no breaking change for existing image-only composers.
+  - **Audio dropped in v1**, consistent with every other video node (Track Crop, Pad, Concat) — re-attach with Video Audio Merge. fps default **30**, duration default = longest video layer (fallback 5 s).
+
+- **Why this shape**: Each slice is independently shippable + green, and nothing is throwaway — the `ComposerInputRef`/`firstMediaRef`/`resolveLayerMediaType` plumbing and the `atSec`-keyed frame sampler are the substrate the timeline rides on. Reusing `placeLayer` + `canvasBlendMode` + the mask matte per-frame means the eventual video export is pixel-faithful to the still preview by construction. The reactive memo (`compositeCacheKey` now encodes media kind + `atSec`) keeps live scrubbing cheap; the heavy full-clip encode stays a Run-only path (per ADR-0075's reactive-preview-vs-durable split).
+
+- **Consequences**:
+  - **Live editor preview of a video layer is a paused `<video>` poster** (stage + layers-panel thumbnail) until Slice 3 wires transport (play/pause + playhead). The baked composite already samples the real frame.
+  - **Video frame sampling uses mediabunny `UrlSource`**, which is subject to the same CORS wall ADR-0087 flagged (the `/api/proxy-media` relay doesn't forward `Range` yet). Supabase-rehosted clips are fine; a raw external CDN video could fail to sample — a known follow-up shared with the resize/crop nodes.
+  - **`atSec` is plumbed through `renderComposite` + `compositeCacheKey` now but always 0** until the timeline drives it — reserved so Slices 3–4 don't re-touch the render signature.
+
+

@@ -23,6 +23,7 @@ import {
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 const img = (url: string): StandardizedOutput => ({ type: "image", value: { url } });
+const vid = (url: string): StandardizedOutput => ({ type: "video", value: { url } });
 
 function docWith(layers: ComposerDocument["layers"]): ComposerDocument {
   return { ...createDefaultDocument(), width: 100, height: 100, layers };
@@ -137,6 +138,32 @@ describe("composer node execute", () => {
       expect.anything(),
       expect.objectContaining({ [layer.id]: "https://x/a.png" }),
       expect.objectContaining({ [layer.id]: "https://x/matte.png" }),
+      expect.objectContaining({ [layer.id]: "image" }),
+    );
+  });
+
+  it("resolves a VIDEO input → media kind 'video' into the render + cache key", async () => {
+    const layer = createLayer({
+      source: { kind: "input", inputHandle: "layer-0", mediaType: "video" },
+    });
+    await composerNodeSchema.execute!(
+      ctx(
+        { doc: docWith([layer]), portCount: 1 },
+        { "layer-0": vid("https://x/clip.mp4") },
+      ) as never,
+    );
+
+    expect(renderComposite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        urls: expect.objectContaining({ [layer.id]: "https://x/clip.mp4" }),
+        mediaTypes: expect.objectContaining({ [layer.id]: "video" }),
+      }),
+    );
+    expect(compositeCacheKey).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ [layer.id]: "https://x/clip.mp4" }),
+      expect.anything(),
+      expect.objectContaining({ [layer.id]: "video" }),
     );
   });
 

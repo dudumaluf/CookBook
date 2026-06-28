@@ -60,6 +60,65 @@ describe("Composer node body", () => {
     expect(screen.getByTestId("composer-editor")).toBeTruthy();
   });
 
+  it("auto-adds a VIDEO layer when a video output is wired in", () => {
+    // Upstream node "v0" produced a video; wire it into layer-0.
+    useExecutionStore.setState({
+      records: new Map([
+        [
+          "v0",
+          {
+            status: "success",
+            output: {
+              type: "video",
+              value: { url: "https://x/clip.mp4", width: 1920, height: 1080 },
+            },
+          },
+        ],
+      ]) as never,
+    });
+    useWorkflowStore.setState({
+      nodes: [],
+      edges: [
+        {
+          id: "e1",
+          source: "v0",
+          sourceHandle: "out",
+          target: "c1",
+          targetHandle: "layer-0",
+        },
+      ] as never,
+    });
+
+    const updateConfig = vi.fn();
+    render(
+      <Body
+        nodeId="c1"
+        config={baseConfig()}
+        updateConfig={updateConfig}
+        selected={false}
+      />,
+    );
+
+    // The auto-add-on-wire effect drops the video in as an input layer tagged
+    // with mediaType "video" (so the renderer samples a frame, not decode-as-still).
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        doc: expect.objectContaining({
+          layers: expect.arrayContaining([
+            expect.objectContaining({
+              source: expect.objectContaining({
+                kind: "input",
+                inputHandle: "layer-0",
+                mediaType: "video",
+              }),
+            }),
+          ]),
+        }),
+        seenInputs: expect.arrayContaining(["layer-0"]),
+      }),
+    );
+  });
+
   it("adding a Solid layer and closing commits a doc with that layer", () => {
     const updateConfig = vi.fn();
     render(

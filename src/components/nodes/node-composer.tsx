@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ComposerEditor } from "@/components/nodes/composer/composer-editor";
 import { PreviewImage } from "@/components/nodes/preview-image";
 import { defineNode } from "@/lib/engine/define-node";
-import { extractInputByType } from "@/lib/engine/extract-input";
 import { uploadImageAsset } from "@/lib/library/upload-asset";
 import {
   compositeCacheKey,
@@ -23,11 +22,14 @@ import {
   createDefaultDocument,
   createLayer,
   firstImageRef,
+  firstMediaRef,
   isLayerDrawable,
+  resolveLayerMediaTypes,
   resolveLayerUrls,
   resolveMaskUrls,
   sanitizeComposerDocument,
   type ComposerDocument,
+  type ComposerInputRef,
 } from "@/types/composer";
 import type {
   ImageRef,
@@ -66,10 +68,13 @@ export interface ComposerNodeConfig {
 
 function layerInputs(portCount: number | undefined): NodeIO[] {
   const n = Math.max(MIN_PORTS, portCount ?? MIN_PORTS);
+  // `any` so a layer socket accepts BOTH images and videos (Phase 3). The
+  // resolver (`firstMediaRef`) ignores non-media outputs, so wiring text/etc.
+  // is a harmless no-op rather than a hard type error.
   return Array.from({ length: n }, (_, i) => ({
     id: `${PORT_PREFIX}${i}`,
     label: `layer ${i + 1}`,
-    dataType: "image" as const,
+    dataType: "any" as const,
   }));
 }
 
@@ -79,17 +84,17 @@ function portIndex(handle: string | undefined): number {
   return Number.isFinite(idx) ? idx : -1;
 }
 
-/** Map every wired `layer-N` input handle → the upstream's current ImageRef. */
-function useComposerInputs(nodeId: string): Record<string, ImageRef> {
+/** Map every wired `layer-N` input handle → the upstream's current media ref. */
+function useComposerInputs(nodeId: string): Record<string, ComposerInputRef> {
   const edges = useWorkflowStore((s) => s.edges);
   const records = useExecutionStore((s) => s.records);
   return useMemo(() => {
-    const map: Record<string, ImageRef> = {};
+    const map: Record<string, ComposerInputRef> = {};
     for (const e of edges) {
       if (e.target !== nodeId || !e.targetHandle?.startsWith(PORT_PREFIX)) {
         continue;
       }
-      const ref = firstImageRef(records.get(e.source)?.output);
+      const ref = firstMediaRef(records.get(e.source)?.output);
       if (ref) map[e.targetHandle] = ref;
     }
     return map;
@@ -146,7 +151,11 @@ function ComposerBody({
         layers: [
           ...next.layers,
           createLayer({
-            source: { kind: "input", inputHandle: h, mediaType: "image" },
+            source: {
+              kind: "input",
+              inputHandle: h,
+              mediaType: inputs[h]?.mediaType ?? "image",
+            },
             name: `Layer ${portIndex(h) + 1}`,
           }),
         ],
@@ -247,7 +256,7 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
   category: "compose",
   title: "Composer",
   description:
-    "A layered visual compositor (mini-Photoshop). Wire images into the auto-growing layer sockets — each wire drops in as a layer — then open the full-screen editor to move, scale, and rotate layers, set per-layer opacity, blend mode (16 modes), and z-order over a sized canvas. Reactive: the composite previews live as you arrange; a Run bakes a durable PNG to Supabase. Add solid-fill and pasted-URL layers in the editor too. Foundation for masks, video layers, and a timeline.",
+    "A layered visual compositor (mini-Photoshop). Wire images OR videos into the auto-growing layer sockets — each wire drops in as a layer — then open the full-screen editor to move, scale, and rotate layers, set per-layer opacity, blend mode (16 modes), masks (alpha/luma), and z-order over a sized canvas. Video layers composite as a sampled frame today (full motion + a timeline are landing next). Reactive: the composite previews live as you arrange; a Run bakes a durable PNG to Supabase. Add solid-fill and pasted-URL layers in the editor too.",
   icon: Layers2,
   inputs: layerInputs(MIN_PORTS),
   getInputs: (config) => layerInputs(config.portCount),
@@ -261,27 +270,29 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
   execute: async ({ nodeId, config, inputs, preview }) => {
     const doc = sanitizeComposerDocument(config.doc);
 
-    // Resolve every wired image input handle → ImageRef, then map layers → urls.
+    // Resolve every wired input handle → media ref (image OR video), then map
+    // layers → urls + media kinds.
     const portCount = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
-    const refByHandle: Record<string, ImageRef | undefined> = {};
+    const refByHandle: Record<string, ComposerInputRef | undefined> = {};
     for (let i = 0; i < portCount; i++) {
       const handle = `${PORT_PREFIX}${i}`;
-      const ref = extractInputByType(inputs, handle, "image");
+      const ref = firstMediaRef(inputs[handle]);
       if (ref) refByHandle[handle] = ref;
     }
     const urls = resolveLayerUrls(doc, refByHandle);
     const maskUrls = resolveMaskUrls(doc, refByHandle);
+    const mediaTypes = resolveLayerMediaTypes(doc, refByHandle);
 
     const anyDrawable = doc.layers.some((l) => isLayerDrawable(l, refByHandle));
     if (!anyDrawable) {
       throw new Error("Add or wire at least one visible layer to compose.");
     }
 
-    const key = compositeCacheKey(doc, urls, maskUrls);
+    const key = compositeCacheKey(doc, urls, maskUrls, mediaTypes);
 
     if (preview) {
       const url = await renderPreview(nodeId, key, () =>
-        renderComposite({ doc, urls, maskUrls }),
+        renderComposite({ doc, urls, maskUrls, mediaTypes }),
       );
       return {
         type: "image",
@@ -289,7 +300,7 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
       } satisfies StandardizedOutput;
     }
 
-    const blob = await renderComposite({ doc, urls, maskUrls });
+    const blob = await renderComposite({ doc, urls, maskUrls, mediaTypes });
     const file = new File([blob], "composite.png", { type: "image/png" });
     const uploaded = await uploadImageAsset(file);
     commitDurableRender(nodeId, key, uploaded.url);

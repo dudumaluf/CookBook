@@ -31,6 +31,7 @@ import {
   type PlacedLayer,
 } from "@/types/composer";
 
+import { extractFrame } from "./extract-frame";
 import { loadBitmap } from "./load-bitmap";
 
 export interface RenderCompositeInput {
@@ -43,6 +44,41 @@ export interface RenderCompositeInput {
   urls: Record<string, string | undefined>;
   /** Resolved MASK matte URL per layer id (Phase 2). Missing = no mask. */
   maskUrls?: Record<string, string | undefined>;
+  /**
+   * Media kind per layer id (Phase 3). "video" samples a frame instead of
+   * decoding the URL as a still; missing entries default to "image" (back-
+   * compat with image-only documents).
+   */
+  mediaTypes?: Record<string, "image" | "video">;
+  /** Media kind per layer id for MASK mattes (a video matte samples a frame). */
+  maskMediaTypes?: Record<string, "image" | "video">;
+  /**
+   * Time (seconds) to sample video layers at — Phase 3 still composite +
+   * Phase 4 timeline both render one frame at a playhead. Defaults to 0 (the
+   * poster / first frame).
+   */
+  atSec?: number;
+}
+
+/**
+ * Decode a drawable to an `ImageBitmap`. Images go through the CORS-safe
+ * `loadBitmap` (ADR-0087); videos sample a single frame at `atSec` (the
+ * poster by default) via mediabunny and rasterise that — so a video layer
+ * composites as a still in the flattened PNG.
+ */
+async function loadDrawableBitmap(
+  url: string,
+  mediaType: "image" | "video",
+  atSec = 0,
+): Promise<ImageBitmap> {
+  if (mediaType === "video") {
+    const frame = await extractFrame(
+      url,
+      atSec > 0 ? { atMs: atSec * 1000 } : "first",
+    );
+    return createImageBitmap(frame);
+  }
+  return loadBitmap(url);
 }
 
 /**
@@ -134,6 +170,9 @@ export async function renderComposite({
   doc,
   urls,
   maskUrls = {},
+  mediaTypes = {},
+  maskMediaTypes = {},
+  atSec = 0,
 }: RenderCompositeInput): Promise<Blob> {
   const W = Math.max(1, Math.round(doc.width));
   const H = Math.max(1, Math.round(doc.height));
@@ -154,11 +193,21 @@ export async function renderComposite({
       .filter((l) => l.source.kind !== "solid")
       .map(async (l) => {
         const url = urls[l.id];
-        if (url) bitmaps.set(l.id, await loadBitmap(url));
+        if (url) {
+          bitmaps.set(
+            l.id,
+            await loadDrawableBitmap(url, mediaTypes[l.id] ?? "image", atSec),
+          );
+        }
       }),
     ...drawable.map(async (l) => {
       const murl = l.mask ? maskUrls[l.id] : undefined;
-      if (murl) maskBitmaps.set(l.id, await loadBitmap(murl));
+      if (murl) {
+        maskBitmaps.set(
+          l.id,
+          await loadDrawableBitmap(murl, maskMediaTypes[l.id] ?? "image", atSec),
+        );
+      }
     }),
   ]);
 
@@ -231,12 +280,17 @@ export function compositeCacheKey(
   doc: ComposerDocument,
   urls: Record<string, string | undefined>,
   maskUrls: Record<string, string | undefined> = {},
+  mediaTypes: Record<string, "image" | "video"> = {},
+  atSec = 0,
 ): string {
   const parts = doc.layers
     .filter((l) => l.visible)
     .map((l) => {
+      const kind = mediaTypes[l.id] ?? "image";
       const src =
-        l.source.kind === "solid" ? `solid:${l.source.color}` : urls[l.id] ?? "";
+        l.source.kind === "solid"
+          ? `solid:${l.source.color}`
+          : `${kind === "video" ? "v:" : ""}${urls[l.id] ?? ""}`;
       const t = l.transform;
       const mask = l.mask
         ? `~${maskUrls[l.id] ?? ""}:${l.mask.mode}:${l.mask.invert ? 1 : 0}`
@@ -253,5 +307,7 @@ export function compositeCacheKey(
         mask,
       ].join(",");
     });
-  return `${doc.width}x${doc.height}#${doc.background ?? "none"}#${parts.join("|")}`;
+  // `atSec` keyed so scrubbing a video layer re-renders (still 0 in Slice 1).
+  const t = atSec > 0 ? `@${atSec.toFixed(3)}` : "";
+  return `${doc.width}x${doc.height}${t}#${doc.background ?? "none"}#${parts.join("|")}`;
 }
