@@ -8,7 +8,7 @@ import {
   Undo2,
   Video as VideoIcon,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -275,6 +275,9 @@ export function Sam31MaskEditor({
   const [draftBox, setDraftBox] = useState<Sam31MaskBox | null>(null);
   const [viewport, setViewport] = useState({ w: 1280, h: 800 });
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+  // Mirrors `draftBox` so the window `pointerup` handler reads the latest box
+  // without re-subscribing the listener on every move (refs dodge stale state).
+  const draftRef = useRef<Sam31MaskBox | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const frameUrlRef = useRef<string | null>(null);
 
@@ -329,62 +332,70 @@ export function Sam31MaskEditor({
     ? Math.max(1, Math.round(dims.h * scale))
     : Math.round((maxW * 9) / 16);
 
-  function normFromEvent(e: React.PointerEvent | React.MouseEvent) {
+  const normFromClient = useCallback((clientX: number, clientY: number) => {
     const el = frameRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
-    const nx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const ny = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    return { nx, ny };
-  }
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      nx: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+      ny: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+    };
+  }, []);
+
+  // Drag-to-draw is driven from WINDOW listeners, not the frame's own
+  // `onPointerMove`. The editor lives inside a Base UI Dialog whose Popup grabs
+  // pointer capture on pointer-down (for its dismiss logic), so after the press
+  // every `pointermove` retargets to the popup — an element-level handler on the
+  // frame never fires and no box grows (a click still works, which is why the
+  // old points UI drew points fine but a box never appeared). Window listeners
+  // still see the bubbled moves regardless of who holds capture. This mirrors
+  // the composer stage's gesture loop.
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      const start = dragStart.current;
+      if (!start) return;
+      const p = normFromClient(e.clientX, e.clientY);
+      if (!p) return;
+      const next: Sam31MaskBox = { x0: start.x, y0: start.y, x1: p.nx, y1: p.ny };
+      draftRef.current = next;
+      setDraftBox(next);
+    }
+    function onUp() {
+      if (!dragStart.current) return;
+      dragStart.current = null;
+      const b = draftRef.current;
+      draftRef.current = null;
+      setDraftBox(null);
+      if (!b) return;
+      if (Math.abs(b.x1 - b.x0) < 0.02 || Math.abs(b.y1 - b.y0) < 0.02) return;
+      onChange({
+        box: {
+          x0: Math.min(b.x0, b.x1),
+          y0: Math.min(b.y0, b.y1),
+          x1: Math.max(b.x0, b.x1),
+          y1: Math.max(b.y0, b.y1),
+        },
+      });
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [normFromClient, onChange]);
 
   function handlePointerDown(e: React.PointerEvent) {
-    const p = normFromEvent(e);
+    if (e.button !== 0) return; // primary button only
+    const p = normFromClient(e.clientX, e.clientY);
     if (!p) return;
-    // Start the draft FIRST. Pointer capture (below) only keeps the drag
-    // tracking if the cursor briefly leaves the frame — but `setPointerCapture`
-    // can throw `InvalidStateError` inside a portaled overlay (the Base UI
-    // Dialog this editor lives in). It used to run *before* this state was set,
-    // so a throw silently aborted the whole draw and no box ever appeared.
-    // Best-effort + guarded now, on the stable frame element, so it always draws.
+    // Begin the drag; the window listeners above carry it to completion.
+    e.preventDefault();
     dragStart.current = { x: p.nx, y: p.ny };
-    setDraftBox({ x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny });
-    try {
-      frameRef.current?.setPointerCapture(e.pointerId);
-    } catch {
-      /* capture is optional — the frame's own move/up handlers still fire */
-    }
-  }
-
-  function handlePointerMove(e: React.PointerEvent) {
-    if (!dragStart.current) return;
-    const p = normFromEvent(e);
-    if (!p) return;
-    setDraftBox({
-      x0: dragStart.current.x,
-      y0: dragStart.current.y,
-      x1: p.nx,
-      y1: p.ny,
-    });
-  }
-
-  function handlePointerUp() {
-    if (!dragStart.current || !draftBox) {
-      dragStart.current = null;
-      return;
-    }
-    const b = draftBox;
-    dragStart.current = null;
-    setDraftBox(null);
-    if (Math.abs(b.x1 - b.x0) < 0.02 || Math.abs(b.y1 - b.y0) < 0.02) return;
-    onChange({
-      box: {
-        x0: Math.min(b.x0, b.x1),
-        y0: Math.min(b.y0, b.y1),
-        x1: Math.max(b.x0, b.x1),
-        y1: Math.max(b.y0, b.y1),
-      },
-    });
+    const next: Sam31MaskBox = { x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny };
+    draftRef.current = next;
+    setDraftBox(next);
   }
 
   function undo() {
@@ -396,6 +407,8 @@ export function Sam31MaskEditor({
   }
 
   function clearAll() {
+    dragStart.current = null;
+    draftRef.current = null;
     setDraftBox(null);
     onChange({ box: null });
   }
@@ -476,8 +489,6 @@ export function Sam31MaskEditor({
               <div
                 ref={frameRef}
                 onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
                 style={{ width: displayW, height: displayH }}
                 className="relative cursor-crosshair touch-none select-none overflow-hidden rounded-md border bg-black"
               >

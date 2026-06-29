@@ -2,6 +2,16 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-06-29 — Fix: SAM 3.1 mask editor box-drag finally works — Base UI steals pointer capture, so drive the drag off `window`
+
+The user still couldn't draw a box: *"I enter the draw box mode but … clicking and dragging … doesn't draw a box."* The earlier "reorder `setPointerCapture`" fix (2026-06-26) treated the wrong cause. **Real root cause:** the editor lives inside a Base UI `Dialog` whose `Popup` grabs **pointer capture** on pointer-down (for its dismiss logic). Once captured, every `pointermove` retargets to the popup, so the frame's *element-level* `onPointerMove` never fires and the draft box never grows — a *click* still works (down+up complete before/through capture), which is exactly why the old points UI dropped points fine but a box drag drew nothing, and why nudging our own capture call couldn't help.
+
+**Fix** ([`node-fal-sam31-video.tsx`](src/components/nodes/node-fal-sam31-video.tsx)). Drag is now driven from **`window`** `pointermove`/`pointerup` listeners (a `useEffect` reading a `dragStart` ref + a `draftRef` mirror), not the frame. Window listeners still receive the *bubbled* moves regardless of who holds capture (pointer-capture only changes the event **target**, not that it bubbles to `window`). `setPointerCapture` is gone entirely. The frame keeps only `onPointerDown` to seed the gesture. This mirrors the composer stage's window-level gesture loop.
+
+**Verification (real browser, not just unit).** Mounted the actual editor on a throwaway route, loaded a same-origin clip, opened the real Base UI `Dialog`, and — via `Runtime.evaluate` — dispatched `pointerdown` on the frame but `pointermove`+`pointerup` on **`window` only** (reproducing the stolen capture). The dashed draft rendered live at 20%/20%/50%×50% **and** committed `box={x0:0.2,y0:0.2,x1:0.7,y1:0.7}`; a screenshot shows the sky-blue box on the frame, the tip flips to "Boxed…", and Undo/Clear enable. Throwaway route + sample clip removed after.
+
+**Tests (±).** [`sam31-mask-editor.test.tsx`](tests/component/nodes/sam31-mask-editor.test.tsx): the drag test now dispatches move/up on `window` (never the frame) to pin the capture-steal, asserts the commit; new test asserts the dashed draft renders live mid-drag (40%×40%); click-sized non-drag still ignored. 3 pass; `tsc` + lint clean.
+
 ## 2026-06-28 — Composer timeline UI: transport + per-layer clip track (move / trim / fade), live video preview
 
 The engine entry below shipped the *render* (a wired video → a per-frame MP4) but left the timing fields editable only in code. This ships the **editing surface** the user actually asked for — *"sequence, trim, control duration, fade in/out … like a basic After Effects"* — so `LayerTiming` is now directly manipulable.

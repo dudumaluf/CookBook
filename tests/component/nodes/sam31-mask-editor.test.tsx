@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const { callSam31Video, uploadVideoFromUrl, probeMedia, extractFrame } =
   vi.hoisted(() => ({
@@ -15,16 +15,16 @@ vi.mock("@/lib/media", () => ({ probeMedia, extractFrame }));
 import { Sam31MaskEditor } from "@/components/nodes/node-fal-sam31-video";
 
 /**
- * Regression test for the box-drawing bug: the mask editor lives inside a
- * Base UI Dialog (a portal), where `setPointerCapture` can throw
- * `InvalidStateError`. The handler used to call it BEFORE seeding the draft
- * box, so a throw silently aborted the draw and the box never appeared. The
- * fix seeds the draft first and guards capture.
- *
- * happy-dom doesn't implement pointer capture, so we install a THROWING
- * `setPointerCapture` on the frame element to stand in for the real-browser
- * failure, then assert the box still commits. (The editor is box-only — Fal's
- * SAM 3.1 video model 500s on point prompts; see ADR-0090.)
+ * Regression test for the box-drawing bug: the mask editor lives inside a Base
+ * UI Dialog whose Popup grabs POINTER CAPTURE on pointer-down (for its dismiss
+ * logic). Once captured, every `pointermove` retargets to the popup, so an
+ * element-level `onPointerMove` on the frame never fires and the box never
+ * grows — a click still works, which is why the old points UI dropped points
+ * fine but a box drag drew nothing. The fix drives the drag from WINDOW
+ * listeners, which still receive the bubbled moves regardless of who holds
+ * capture. We prove that by dispatching the move/up on `window` (NOT the frame),
+ * standing in for capture being stolen. (Editor is box-only — Fal's SAM 3.1
+ * video model 500s on point prompts; see ADR-0090.)
  */
 
 // Minimal Image stand-in so `loadImageDims` resolves (happy-dom doesn't fire
@@ -64,8 +64,18 @@ async function openEditorAndGetFrame() {
   return frameDiv;
 }
 
+/** Dispatch a pointer event on `window` with the given client coords — stands
+ * in for the Base UI Popup having stolen capture (moves never reach the frame). */
+function winPointer(type: "pointermove" | "pointerup", x: number, y: number) {
+  act(() => {
+    window.dispatchEvent(
+      Object.assign(new Event(type, { bubbles: true }), { clientX: x, clientY: y, pointerId: 1 }),
+    );
+  });
+}
+
 describe("Sam31MaskEditor — box drawing", () => {
-  it("commits a box from a drag even when setPointerCapture throws (portal)", async () => {
+  it("commits a box from a drag even when capture is stolen (moves go to window)", async () => {
     const onChange = vi.fn();
     render(
       <Sam31MaskEditor videoUrl="https://x/v.mp4" box={null} onChange={onChange} />,
@@ -76,14 +86,11 @@ describe("Sam31MaskEditor — box drawing", () => {
     );
     const frameDiv = await openEditorAndGetFrame();
 
-    // Stand in for the Base UI portal where setPointerCapture throws.
-    frameDiv.setPointerCapture = () => {
-      throw new Error("InvalidStateError");
-    };
-
+    // Press on the frame, but deliver the move + release on WINDOW only — the
+    // frame element never sees them (capture stolen). The box must still draw.
     fireEvent.pointerDown(frameDiv, { clientX: 40, clientY: 30, pointerId: 1 });
-    fireEvent.pointerMove(frameDiv, { clientX: 200, clientY: 150, pointerId: 1 });
-    fireEvent.pointerUp(frameDiv, { clientX: 200, clientY: 150, pointerId: 1 });
+    winPointer("pointermove", 200, 150);
+    winPointer("pointerup", 200, 150);
 
     await waitFor(() => expect(onChange).toHaveBeenCalled());
     const arg = onChange.mock.calls.at(-1)![0] as {
@@ -94,6 +101,26 @@ describe("Sam31MaskEditor — box drawing", () => {
     expect(arg.box!.y0).toBeCloseTo(0.1, 5);
     expect(arg.box!.x1).toBeCloseTo(0.5, 5);
     expect(arg.box!.y1).toBeCloseTo(0.5, 5);
+  });
+
+  it("shows the draft box live while dragging (before release)", async () => {
+    const onChange = vi.fn();
+    render(
+      <Sam31MaskEditor videoUrl="https://x/v.mp4" box={null} onChange={onChange} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Draw a box around the object/i }),
+    );
+    const frameDiv = await openEditorAndGetFrame();
+
+    fireEvent.pointerDown(frameDiv, { clientX: 40, clientY: 30, pointerId: 1 });
+    winPointer("pointermove", 200, 150);
+
+    // A dashed draft rect is rendered inside the frame mid-drag (40%×40%).
+    const draft = frameDiv.querySelector(".border-dashed") as HTMLElement | null;
+    expect(draft).toBeTruthy();
+    expect(draft!.style.width).toBe("40%");
+    expect(draft!.style.height).toBe("40%");
   });
 
   it("ignores a click-sized (non-drag) box", async () => {
@@ -108,7 +135,7 @@ describe("Sam31MaskEditor — box drawing", () => {
 
     // Down + up at (nearly) the same spot → below the 2% threshold → no box.
     fireEvent.pointerDown(frameDiv, { clientX: 40, clientY: 30, pointerId: 1 });
-    fireEvent.pointerUp(frameDiv, { clientX: 41, clientY: 31, pointerId: 1 });
+    winPointer("pointerup", 41, 31);
 
     expect(onChange).not.toHaveBeenCalled();
   });
