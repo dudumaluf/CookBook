@@ -280,6 +280,12 @@ export function Sam31MaskEditor({
   const draftRef = useRef<Sam31MaskBox | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const frameUrlRef = useRef<string | null>(null);
+  // Opt-in on-screen diagnostics (append `?samdebug` to the URL). Mirrored into
+  // state (not refs) so the readout is lint-clean and re-renders live; the
+  // bookkeeping is gated by `samDebug`, so it's zero-cost in the normal path.
+  const samDebug =
+    typeof window !== "undefined" && window.location.search.includes("samdebug");
+  const [dbg, setDbg] = useState({ down: 0, move: 0, drag: false, ev: "none" });
 
   // Track the viewport so the marking surface grows/shrinks with the window.
   useEffect(() => {
@@ -348,14 +354,20 @@ export function Sam31MaskEditor({
   // editor lives inside a portaled Base UI Dialog; driving the gesture from the
   // window means a move that leaves the frame — or is intercepted by an overlay
   // — still updates the box, and the capture keeps the OS pointer pinned to the
-  // frame. This mirrors the composer stage's gesture loop. Verified with a real
-  // trusted-input drag (Playwright) inside the actual Dialog.
+  // frame. Three layers of robustness, because the failure mode varied across
+  // environments: (1) CAPTURE-phase listeners fire before any bubble-phase
+  // `stopPropagation()` a browser extension might run; (2) BOTH the pointer and
+  // mouse event families are bound, so the drag still works if an extension
+  // suppresses pointer events; the handlers are idempotent, so the two families
+  // firing together is harmless. Verified with real trusted-input (Playwright)
+  // inside the actual Dialog, incl. nested in the settings Popover.
   useEffect(() => {
-    function onMove(e: PointerEvent) {
+    function onMove(e: PointerEvent | MouseEvent) {
       const start = dragStart.current;
       if (!start) return;
       const p = normFromClient(e.clientX, e.clientY);
       if (!p) return;
+      if (samDebug) setDbg((d) => ({ ...d, move: d.move + 1, ev: e.type }));
       const next: Sam31MaskBox = { x0: start.x, y0: start.y, x1: p.nx, y1: p.ny };
       draftRef.current = next;
       setDraftBox(next);
@@ -363,6 +375,7 @@ export function Sam31MaskEditor({
     function onUp() {
       if (!dragStart.current) return;
       dragStart.current = null;
+      if (samDebug) setDbg((d) => ({ ...d, drag: false }));
       const b = draftRef.current;
       draftRef.current = null;
       setDraftBox(null);
@@ -377,24 +390,34 @@ export function Sam31MaskEditor({
         },
       });
     }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    // `true` = capture phase. Bind pointer + mouse families.
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("mousemove", onMove, true);
+    window.addEventListener("mouseup", onUp, true);
     return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("mousemove", onMove, true);
+      window.removeEventListener("mouseup", onUp, true);
     };
-  }, [normFromClient, onChange]);
+  }, [normFromClient, onChange, samDebug]);
 
-  function handlePointerDown(e: React.PointerEvent) {
-    if (e.button !== 0) return; // primary button only
-    const p = normFromClient(e.clientX, e.clientY);
-    if (!p) return;
-    // Begin the drag; the window listeners above carry it to completion.
-    e.preventDefault();
+  function beginDrag(clientX: number, clientY: number, kind: string): boolean {
+    const p = normFromClient(clientX, clientY);
+    if (!p) return false;
+    if (samDebug) setDbg((d) => ({ ...d, down: d.down + 1, drag: true, ev: kind }));
     dragStart.current = { x: p.nx, y: p.ny };
     const next: Sam31MaskBox = { x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny };
     draftRef.current = next;
     setDraftBox(next);
+    return true;
+  }
+
+  function handlePointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return; // primary button only
+    if (!beginDrag(e.clientX, e.clientY, "pointerdown")) return;
+    e.preventDefault();
     // Capture the pointer to the frame so moves are delivered here even if some
     // overlay (e.g. a browser extension) sits on top during the drag. Best
     // effort — the window listeners are the real driver, so a throw is harmless.
@@ -403,6 +426,14 @@ export function Sam31MaskEditor({
     } catch {
       /* capture unavailable in this context — window listeners still drive it */
     }
+  }
+
+  // Fallback for environments where pointer events are suppressed (some
+  // extensions). In the normal case a pointer drag already began, so this just
+  // re-seeds the same values — harmless.
+  function handleMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0 || dragStart.current) return;
+    beginDrag(e.clientX, e.clientY, "mousedown");
   }
 
   function undo() {
@@ -455,6 +486,12 @@ export function Sam31MaskEditor({
             <span className="text-[11px] text-muted-foreground">
               Drag to draw · drag again to replace
             </span>
+            {samDebug ? (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-700 dark:text-amber-300">
+                dbg2 · down:{dbg.down} move:{dbg.move} drag:{dbg.drag ? "Y" : "N"}{" "}
+                ev:{dbg.ev}
+              </span>
+            ) : null}
             <div className="ml-auto flex items-center gap-1.5">
               <Button
                 variant="ghost"
@@ -496,6 +533,7 @@ export function Sam31MaskEditor({
               <div
                 ref={frameRef}
                 onPointerDown={handlePointerDown}
+                onMouseDown={handleMouseDown}
                 style={{ width: displayW, height: displayH }}
                 className="relative cursor-crosshair touch-none select-none overflow-hidden rounded-md border bg-black"
               >

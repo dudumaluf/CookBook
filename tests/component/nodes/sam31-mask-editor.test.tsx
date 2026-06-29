@@ -74,6 +74,16 @@ function winPointer(type: "pointermove" | "pointerup", x: number, y: number) {
   });
 }
 
+/** Mouse-family equivalent — stands in for an environment that suppresses
+ * pointer events entirely, so only the mouse fallback fires. */
+function winMouse(type: "mousemove" | "mouseup", x: number, y: number) {
+  act(() => {
+    window.dispatchEvent(
+      Object.assign(new Event(type, { bubbles: true }), { clientX: x, clientY: y }),
+    );
+  });
+}
+
 describe("Sam31MaskEditor — box drawing", () => {
   it("commits a box from a drag even when capture is stolen (moves go to window)", async () => {
     const onChange = vi.fn();
@@ -121,6 +131,30 @@ describe("Sam31MaskEditor — box drawing", () => {
     expect(draft).toBeTruthy();
     expect(draft!.style.width).toBe("40%");
     expect(draft!.style.height).toBe("40%");
+  });
+
+  it("commits a box via the mouse-event fallback (pointer events suppressed)", async () => {
+    const onChange = vi.fn();
+    render(
+      <Sam31MaskEditor videoUrl="https://x/v.mp4" box={null} onChange={onChange} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Draw a box around the object/i }),
+    );
+    const frameDiv = await openEditorAndGetFrame();
+
+    // Only the mouse family fires — no pointer events at all.
+    fireEvent.mouseDown(frameDiv, { clientX: 40, clientY: 30, button: 0 });
+    winMouse("mousemove", 200, 150);
+    winMouse("mouseup", 200, 150);
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    const arg = onChange.mock.calls.at(-1)![0] as {
+      box?: { x0: number; y0: number; x1: number; y1: number };
+    };
+    expect(arg.box).toBeTruthy();
+    expect(arg.box!.x0).toBeCloseTo(0.1, 5);
+    expect(arg.box!.x1).toBeCloseTo(0.5, 5);
   });
 
   it("ignores a click-sized (non-drag) box", async () => {
