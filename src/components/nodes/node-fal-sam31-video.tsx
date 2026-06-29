@@ -343,14 +343,13 @@ export function Sam31MaskEditor({
     };
   }, []);
 
-  // Drag-to-draw is driven from WINDOW listeners, not the frame's own
-  // `onPointerMove`. The editor lives inside a Base UI Dialog whose Popup grabs
-  // pointer capture on pointer-down (for its dismiss logic), so after the press
-  // every `pointermove` retargets to the popup — an element-level handler on the
-  // frame never fires and no box grows (a click still works, which is why the
-  // old points UI drew points fine but a box never appeared). Window listeners
-  // still see the bubbled moves regardless of who holds capture. This mirrors
-  // the composer stage's gesture loop.
+  // Drag-to-draw is driven from WINDOW listeners (plus pointer capture on the
+  // frame in `handlePointerDown`), not the frame's own `onPointerMove`. The
+  // editor lives inside a portaled Base UI Dialog; driving the gesture from the
+  // window means a move that leaves the frame — or is intercepted by an overlay
+  // — still updates the box, and the capture keeps the OS pointer pinned to the
+  // frame. This mirrors the composer stage's gesture loop. Verified with a real
+  // trusted-input drag (Playwright) inside the actual Dialog.
   useEffect(() => {
     function onMove(e: PointerEvent) {
       const start = dragStart.current;
@@ -396,6 +395,14 @@ export function Sam31MaskEditor({
     const next: Sam31MaskBox = { x0: p.nx, y0: p.ny, x1: p.nx, y1: p.ny };
     draftRef.current = next;
     setDraftBox(next);
+    // Capture the pointer to the frame so moves are delivered here even if some
+    // overlay (e.g. a browser extension) sits on top during the drag. Best
+    // effort — the window listeners are the real driver, so a throw is harmless.
+    try {
+      frameRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* capture unavailable in this context — window listeners still drive it */
+    }
   }
 
   function undo() {
