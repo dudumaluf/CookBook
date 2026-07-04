@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-07-04 — New node: Gemini Omni Flash (reference images + prompt → video with native audio)
+
+Added a node for Google's **Gemini Omni Flash** reference-to-video (`google/gemini-omni-flash/reference-to-video`, ADR-0092). Wire a prompt + one or more reference images and it renders a short clip **with native audio**, binding images to roles inline via `<IMAGE_REF_0>`, `<IMAGE_REF_1>`, … tags.
+
+**What ships.** A thin adapter over the existing conventions:
+- **Queue transport** ([`gemini-omni-api.ts`](src/lib/fal/gemini-omni-api.ts) server wrapper, [`call-gemini-omni.ts`](src/lib/fal/call-gemini-omni.ts) client caller, [`/api/fal/gemini-omni`](src/app/api/fal/gemini-omni/route.ts) + [`/status`](src/app/api/fal/gemini-omni/status/route.ts) routes) — submit + poll (ADR-0057), `FAL_KEY` server-only, 20-min deadline that rides out transient poll blips, exactly like Seedance / DWPose.
+- **Node** ([`node-fal-gemini-omni.tsx`](src/components/nodes/node-fal-gemini-omni.tsx)) — `prompt` + auto-growing numbered `<IMAGE_REF_N>` image sockets (up to 4) + one `<IMAGE_REF[]>` array socket (wire a Frames Extract / Array straight in). Settings: aspect ratio (16:9 / 9:16) + duration (3–10s) with a token-based cost estimate (~$0.13/s at 720p). Non-reactive (Run-only); the body shows the `<IMAGE_REF_N>` tokens for the wired images + an `IteratorCursor` over run history.
+- **Schema-over-marketing (ADR-0092).** The model's page reads as "omni" (text/image/audio/video in) but the documented `reference-to-video` schema is only `prompt` + `image_urls` + `aspect_ratio` + `duration` — no audio/video input field (the audio comes OUT). Built to the schema: image + text in, video-with-audio out. If Fal ships an audio-in variant, add the socket then.
+- **Persistence is automatic** — `category: "ai-video"` routes the result through `generation-sync` (auto-rehost to Supabase + content-hash-deduped `cookbook_generations` row).
+
+**Tests (+13).** [`node-fal-gemini-omni.test.ts`](tests/unit/nodes/node-fal-gemini-omni.test.ts): execute throws with no prompt / no image; forwards numbered sockets in order; fans `<IMAGE_REF[]>` after them; caps at 4; sends aspect/duration + their defaults; getInputs auto-grows + caps sockets, labels each `<IMAGE_REF_N>`, exposes the array socket; registered non-reactive ai-video → video. Full suite green (2643); `tsc` + lint clean (0 new warnings).
+
 ## 2026-06-29 — Fix: SAM 3.1 mask editor box-drag — window-driven gesture + pointer capture, verified with real trusted input
 
 The user couldn't draw a box: *"I enter the draw box mode but … clicking and dragging … doesn't draw a box."* The earlier "reorder `setPointerCapture`" fix (2026-06-26) treated the wrong cause. The element-level `onPointerMove` on the frame was fragile — a fast drag that leaves the frame, or anything that intercepts the move, stops the box growing.

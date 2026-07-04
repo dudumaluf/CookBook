@@ -1153,3 +1153,86 @@ export type Sam31VideoStatusRequest = z.infer<
 export type Sam31VideoStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & Sam31VideoSuccessResponse);
+
+/* ────────── Gemini Omni Flash (reference images + prompt → video) ────────── */
+
+/**
+ * Fal `google/gemini-omni-flash/reference-to-video` — Google's Gemini Omni
+ * Flash reference-to-video. Feed a text prompt + one or more reference images
+ * and it renders a short clip WITH native audio, binding images to roles you
+ * name inline in the prompt via `<IMAGE_REF_0>`, `<IMAGE_REF_1>`, … tags.
+ *
+ * The documented `reference-to-video` input schema is `prompt` + `image_urls`
+ * (both required) + `aspect_ratio` + `duration` — there is NO audio/video URL
+ * input field despite the model's "omni" framing, so this node is image + text
+ * only (the audio comes OUT, not in). Long-running render → async queue
+ * (submit + poll, ADR-0057), same shape as Seedance / DWPose. Pricing is
+ * token-based (~$0.13 / second of 720p video).
+ */
+export const GEMINI_OMNI_ENDPOINT =
+  "google/gemini-omni-flash/reference-to-video";
+
+export const GEMINI_OMNI_ASPECT_RATIOS = ["16:9", "9:16"] as const;
+export type GeminiOmniAspectRatio = (typeof GEMINI_OMNI_ASPECT_RATIOS)[number];
+export const GEMINI_OMNI_ASPECT_DEFAULT: GeminiOmniAspectRatio = "16:9";
+
+export const GEMINI_OMNI_DURATION_MIN = 3;
+export const GEMINI_OMNI_DURATION_MAX = 10;
+export const GEMINI_OMNI_DURATION_DEFAULT = 8;
+
+/** Approx cost in USD per second of generated 720p video (Fal pricing). */
+export const GEMINI_OMNI_USD_PER_SECOND = 0.13;
+
+/**
+ * Max reference images we expose. Fal's schema documents no hard maximum, but
+ * reference-to-video role binding uses a handful of images (the docs' own
+ * examples wire two), so the UI + request cap at 4 — bump if a workflow needs
+ * more and Fal accepts it.
+ */
+export const GEMINI_OMNI_MAX_IMAGES = 4;
+
+export const geminiOmniRequestSchema = z
+  .object({
+    prompt: z.string().min(1),
+    /** Reference images (`<IMAGE_REF_0>`..). At least one is required. */
+    imageUrls: z
+      .array(z.string().url())
+      .min(1)
+      .max(GEMINI_OMNI_MAX_IMAGES),
+    aspectRatio: z.enum(GEMINI_OMNI_ASPECT_RATIOS).optional(),
+    duration: z
+      .number()
+      .int()
+      .min(GEMINI_OMNI_DURATION_MIN)
+      .max(GEMINI_OMNI_DURATION_MAX)
+      .optional(),
+  })
+  .strict();
+
+export type GeminiOmniRequest = z.infer<typeof geminiOmniRequestSchema>;
+
+export interface GeminiOmniSuccessResponse {
+  videoUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface GeminiOmniSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const geminiOmniStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type GeminiOmniStatusRequest = z.infer<
+  typeof geminiOmniStatusRequestSchema
+>;
+
+export type GeminiOmniStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & GeminiOmniSuccessResponse);
