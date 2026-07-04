@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-07-04 — Gemini Omni Flash: edit mode (video-to-video)
+
+Extended the existing **Gemini Omni Flash** node with a **edit** mode (`google/gemini-omni-flash/edit`). Switch mode in settings: **reference** (unchanged — images + prompt → new clip) or **edit** (source video + edit prompt → revised clip, preserves source length). Edit sockets: `prompt` + `video`; the body shows an edit badge + tip to add "Keep everything else the same." Server wrapper dispatches by `mode` to the reference or edit Fal endpoint; same submit + poll queue (ADR-0057). **Tests (+5):** edit throws without video; forwards `mode` + `videoUrl`; getInputs exposes `prompt` + `video` in edit mode.
+
 ## 2026-07-04 — New node: Gemini Omni Flash (reference images + prompt → video with native audio)
 
 Added a node for Google's **Gemini Omni Flash** reference-to-video (`google/gemini-omni-flash/reference-to-video`, ADR-0092). Wire a prompt + one or more reference images and it renders a short clip **with native audio**, binding images to roles inline via `<IMAGE_REF_0>`, `<IMAGE_REF_1>`, … tags.

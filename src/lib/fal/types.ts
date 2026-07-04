@@ -1169,8 +1169,17 @@ export type Sam31VideoStatusResponse =
  * (submit + poll, ADR-0057), same shape as Seedance / DWPose. Pricing is
  * token-based (~$0.13 / second of 720p video).
  */
-export const GEMINI_OMNI_ENDPOINT =
+export const GEMINI_OMNI_REFERENCE_ENDPOINT =
   "google/gemini-omni-flash/reference-to-video";
+/** @deprecated Use GEMINI_OMNI_REFERENCE_ENDPOINT */
+export const GEMINI_OMNI_ENDPOINT = GEMINI_OMNI_REFERENCE_ENDPOINT;
+
+/** Fal `google/gemini-omni-flash/edit` — conversational video edit (v2v). */
+export const GEMINI_OMNI_EDIT_ENDPOINT = "google/gemini-omni-flash/edit";
+
+export const GEMINI_OMNI_MODES = ["reference", "edit"] as const;
+export type GeminiOmniMode = (typeof GEMINI_OMNI_MODES)[number];
+export const GEMINI_OMNI_MODE_DEFAULT: GeminiOmniMode = "reference";
 
 export const GEMINI_OMNI_ASPECT_RATIOS = ["16:9", "9:16"] as const;
 export type GeminiOmniAspectRatio = (typeof GEMINI_OMNI_ASPECT_RATIOS)[number];
@@ -1191,8 +1200,9 @@ export const GEMINI_OMNI_USD_PER_SECOND = 0.13;
  */
 export const GEMINI_OMNI_MAX_IMAGES = 4;
 
-export const geminiOmniRequestSchema = z
+export const geminiOmniReferenceRequestSchema = z
   .object({
+    mode: z.literal("reference").optional(),
     prompt: z.string().min(1),
     /** Reference images (`<IMAGE_REF_0>`..). At least one is required. */
     imageUrls: z
@@ -1209,7 +1219,29 @@ export const geminiOmniRequestSchema = z
   })
   .strict();
 
-export type GeminiOmniRequest = z.infer<typeof geminiOmniRequestSchema>;
+export type GeminiOmniReferenceRequest = z.infer<
+  typeof geminiOmniReferenceRequestSchema
+>;
+
+export const geminiOmniEditRequestSchema = z
+  .object({
+    mode: z.literal("edit"),
+    prompt: z.string().min(1),
+    videoUrl: z.string().url(),
+  })
+  .strict();
+
+export type GeminiOmniEditRequest = z.infer<typeof geminiOmniEditRequestSchema>;
+
+/** Discriminated by `mode` (default reference when omitted + imageUrls present). */
+export const geminiOmniRequestSchema = z.union([
+  geminiOmniEditRequestSchema,
+  geminiOmniReferenceRequestSchema,
+]);
+
+export type GeminiOmniRequest =
+  | GeminiOmniReferenceRequest
+  | GeminiOmniEditRequest;
 
 export interface GeminiOmniSuccessResponse {
   videoUrl: string;

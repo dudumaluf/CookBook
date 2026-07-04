@@ -2,25 +2,20 @@ import { authedFetch } from "@/lib/auth/authed-fetch";
 import { FalCallError } from "./call-seedance";
 import type {
   FalErrorResponse,
-  GeminiOmniRequest,
+  GeminiOmniEditRequest,
+  GeminiOmniReferenceRequest,
   GeminiOmniStatusResponse,
   GeminiOmniSubmitResponse,
   GeminiOmniSuccessResponse,
 } from "./types";
 
 /**
- * Client wrapper for the async Gemini Omni Flash queue.
- *
- * Same submit-then-poll resilience as the other Fal video nodes (ADR-0057): a
- * fast submit returns a request id, then small status pings every few seconds.
- * The render is token-based and can run for a while, so the deadline is
- * generous (20 minutes) and a handful of transient network blips are ridden
- * out (the job keeps running on Fal regardless).
+ * Client wrapper for the async Gemini Omni Flash queue (reference + edit).
  */
 
-export interface CallGeminiOmniArgs extends GeminiOmniRequest {
-  signal: AbortSignal;
-}
+export type CallGeminiOmniArgs =
+  | (GeminiOmniReferenceRequest & { signal: AbortSignal })
+  | (GeminiOmniEditRequest & { signal: AbortSignal });
 
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_MS = 1_200_000;

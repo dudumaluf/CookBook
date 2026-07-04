@@ -143,6 +143,53 @@ describe("gemini-omni-video node execute", () => {
     expect(arg.aspectRatio).toBe("16:9");
     expect(arg.duration).toBe(8);
   });
+
+  it("throws in edit mode when no source video is wired", async () => {
+    await expect(
+      geminiOmniNodeSchema.execute!(
+        ctx(
+          { prompt: { type: "text", value: "Make this anime." } },
+          { mode: "edit" },
+        ) as Cfg,
+      ),
+    ).rejects.toThrow(/source video/i);
+    expect(callGeminiOmni).not.toHaveBeenCalled();
+  });
+
+  it("edits a source video from prompt + video socket", async () => {
+    callGeminiOmni.mockResolvedValueOnce({
+      videoUrl: "https://cdn.fal.media/omni-edited.mp4",
+      mime: "video/mp4",
+      model: "google/gemini-omni-flash/edit",
+    });
+
+    const result = await geminiOmniNodeSchema.execute!(
+      ctx(
+        {
+          prompt: {
+            type: "text",
+            value: "Make this video anime. Keep everything else the same.",
+          },
+          video: {
+            type: "video",
+            value: { url: "https://x/source.mp4" },
+          },
+        },
+        { mode: "edit" },
+      ) as Cfg,
+    );
+
+    expect(callGeminiOmni).toHaveBeenCalledTimes(1);
+    const arg = callGeminiOmni.mock.calls[0]![0];
+    expect(arg.mode).toBe("edit");
+    expect(arg.prompt).toMatch(/anime/i);
+    expect(arg.videoUrl).toBe("https://x/source.mp4");
+    const out = (result as { output: StandardizedOutput }).output;
+    expect(out.type).toBe("video");
+    if (out.type === "video") {
+      expect(out.value.url).toBe("https://cdn.fal.media/omni-edited.mp4");
+    }
+  });
 });
 
 describe("gemini-omni-video node schema", () => {
@@ -185,5 +232,17 @@ describe("gemini-omni-video node schema", () => {
     expect(geminiOmniNodeSchema.category).toBe("ai-video");
     expect(geminiOmniNodeSchema.reactive).toBe(false);
     expect(geminiOmniNodeSchema.outputs[0]?.dataType).toBe("video");
+  });
+
+  it("exposes prompt + video sockets in edit mode", () => {
+    const io = geminiOmniNodeSchema.getInputs!({ mode: "edit" });
+    expect(io.map((h) => h.id)).toEqual(["prompt", "video"]);
+    expect(io.find((h) => h.id === "video")?.dataType).toBe("video");
+  });
+
+  it("defaults to reference mode inputs", () => {
+    const io = geminiOmniNodeSchema.getInputs!({});
+    expect(io.some((h) => h.id.startsWith("image-"))).toBe(true);
+    expect(io.some((h) => h.id === "video")).toBe(false);
   });
 });

@@ -6,20 +6,18 @@ import { MissingCredentialsError } from "@/lib/byok/resolver";
 import { buildFalClient } from "./client-factory";
 import {
   describeFalError,
-  GEMINI_OMNI_ENDPOINT,
+  GEMINI_OMNI_EDIT_ENDPOINT,
+  GEMINI_OMNI_REFERENCE_ENDPOINT,
+  type GeminiOmniEditRequest,
   type GeminiOmniRequest,
   type GeminiOmniStatusResponse,
   type GeminiOmniSubmitResponse,
 } from "./types";
 
 /**
- * Server-only Gemini Omni Flash wrapper — `google/gemini-omni-flash/
- * reference-to-video`. Same async-queue pattern as the other Fal video nodes
- * (submit returns a request id, the client polls until the clip is ready,
- * ADR-0057), so a token-based render that runs for a while survives tab
- * backgrounding + transient network blips. FAL_KEY stays server-side.
- *
- * Errors carry a stable `code` the route maps to an HTTP status.
+ * Server-only Gemini Omni Flash wrapper — reference-to-video and edit modes.
+ * Same async-queue pattern as the other Fal video nodes (submit returns a
+ * request id, the client polls until the clip is ready, ADR-0057).
  */
 
 type FalErrorCode =
@@ -34,7 +32,24 @@ function annotate(err: Error, code: FalErrorCode): Error {
   return err;
 }
 
+function isEditRequest(req: GeminiOmniRequest): req is GeminiOmniEditRequest {
+  return req.mode === "edit";
+}
+
+function endpointFor(req: GeminiOmniRequest): string {
+  return isEditRequest(req)
+    ? GEMINI_OMNI_EDIT_ENDPOINT
+    : GEMINI_OMNI_REFERENCE_ENDPOINT;
+}
+
 function buildInput(req: GeminiOmniRequest): Record<string, unknown> {
+  if (isEditRequest(req)) {
+    return {
+      prompt: req.prompt,
+      video_url: req.videoUrl,
+    };
+  }
+
   const input: Record<string, unknown> = {
     prompt: req.prompt,
     image_urls: req.imageUrls,
@@ -75,11 +90,12 @@ export async function submitGeminiOmni(
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
+  const endpoint = endpointFor(req);
   try {
-    const res = await fal.queue.submit(GEMINI_OMNI_ENDPOINT as string, {
+    const res = await fal.queue.submit(endpoint, {
       input: buildInput(req),
     });
-    return { requestId: res.request_id, endpoint: GEMINI_OMNI_ENDPOINT };
+    return { requestId: res.request_id, endpoint };
   } catch (err) {
     if (isAbort(err, signal)) {
       throw annotate(new Error("Request cancelled"), "aborted");

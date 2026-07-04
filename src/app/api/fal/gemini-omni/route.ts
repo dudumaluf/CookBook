@@ -8,8 +8,8 @@ import {
 } from "@/lib/fal/types";
 
 /**
- * POST /api/fal/gemini-omni — SUBMIT a Gemini Omni Flash reference-to-video
- * job to Fal's queue (ADR-0057). Keeps FAL_KEY server-only; returns a
+ * POST /api/fal/gemini-omni — SUBMIT a Gemini Omni Flash job to Fal's queue
+ * (reference-to-video or edit, ADR-0057). Keeps FAL_KEY server-only; returns
  * `{ requestId, endpoint }` fast (no render wait). The client polls
  * `/api/fal/gemini-omni/status` until done.
  *
