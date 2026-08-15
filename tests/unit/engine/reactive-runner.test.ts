@@ -218,6 +218,97 @@ describe("reactive-runner", () => {
     }
   });
 
+  it("ignores late onProgress from an aborted flush (stale Composer preview race)", async () => {
+    // Flush A starts a slow composite, then a newer mutation starts flush B
+    // and aborts A. If A still emits `done` afterward, the canvas thumb would
+    // show the pre-edit composite. Pin that aborted emits are dropped.
+    type ProgressFn = (
+      nodeId: string,
+      record: {
+        status: string;
+        output?: { type: string; value: { url: string } };
+      },
+    ) => void;
+
+    let flushAProgress: ProgressFn | null = null;
+    let flushASignal: AbortSignal | null = null;
+    let resolveFlushA: (() => void) | null = null;
+    let flushBWrote = false;
+
+    runWorkflowMock.mockImplementation((args: unknown) => {
+      const a = args as { signal: AbortSignal; onProgress: ProgressFn };
+      if (!flushAProgress) {
+        // First call = flush A (stays open until we resolve).
+        flushASignal = a.signal;
+        flushAProgress = a.onProgress;
+        return new Promise<undefined>((resolve) => {
+          resolveFlushA = () => resolve(undefined);
+        });
+      }
+      // Second call = flush B (writes the fresh preview and finishes).
+      a.onProgress("n_preview", {
+        status: "done",
+        output: { type: "image", value: { url: "blob:fresh" } },
+      });
+      flushBWrote = true;
+      return Promise.resolve(undefined);
+    });
+
+    const stop = startReactiveRunner({ debounceMs: TEST_DEBOUNCE_MS });
+    try {
+      useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });
+      await sleep(FLUSH_GRACE_MS); // flush A in flight
+      expect(flushAProgress).toBeTruthy();
+
+      // Seed a "current" thumb so we can see whether a late A overwrite lands.
+      useExecutionStore.setState({
+        records: new Map([
+          [
+            "n_preview",
+            {
+              status: "done" as const,
+              output: {
+                type: "image" as const,
+                value: { url: "blob:from-B-or-prior" },
+              },
+            },
+          ],
+        ]),
+      });
+
+      // New mutation → abort A, start B.
+      useWorkflowStore.getState().addNode("text", { x: 100, y: 0 });
+      await sleep(FLUSH_GRACE_MS);
+
+      expect((flushASignal as unknown as AbortSignal | null)?.aborted).toBe(
+        true,
+      );
+      expect(flushBWrote).toBe(true);
+      expect(useExecutionStore.getState().records.get("n_preview")?.output).toEqual(
+        {
+          type: "image",
+          value: { url: "blob:fresh" },
+        },
+      );
+
+      // Late done from aborted flush A — must NOT overwrite B.
+      flushAProgress!("n_preview", {
+        status: "done",
+        output: { type: "image", value: { url: "blob:stale-late" } },
+      });
+      expect(useExecutionStore.getState().records.get("n_preview")?.output).toEqual(
+        {
+          type: "image",
+          value: { url: "blob:fresh" },
+        },
+      );
+
+      resolveFlushA?.();
+    } finally {
+      stop();
+    }
+  });
+
   it("the unsubscribe cleanup stops further flushes after teardown", async () => {
     const stop = startReactiveRunner({ debounceMs: TEST_DEBOUNCE_MS });
     useWorkflowStore.getState().addNode("text", { x: 0, y: 0 });

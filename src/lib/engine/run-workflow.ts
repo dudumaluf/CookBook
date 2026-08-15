@@ -811,6 +811,17 @@ export async function runWorkflow(
           });
         },
       });
+      // Abort can land during a long await (Composer bitmap flatten, etc.)
+      // even when execute itself never throws — don't publish a stale `done`.
+      if (signal.aborted) {
+        emit(node.id, { status: "cancelled", hash: nodeHash });
+        for (const n of topo.order) {
+          if (records.get(n.id)?.status === "pending") {
+            emit(n.id, { status: "cancelled" });
+          }
+        }
+        return { ok: false, records };
+      }
       const { output, usage } = normalizeExecuteResult(rawResult);
       const elapsedMs = Math.round(performance.now() - start);
       cache.set(nodeHash, { output, usage });

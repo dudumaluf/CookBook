@@ -138,8 +138,9 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Use \`delimiter\` (string), not \`separator\`, to change the split character. \`separator\` is a phantom field the runtime ignores.`,
   ],
   "fal-image": [
-    `\`config.model\` takes the literal id ("nano-banana-2", "flux-2-pro", "seedream-v4.5", "krea-v2-medium", "krea-v2-large", "gpt-image-2"), not the Fal endpoint id ("fal-ai/<...>"). Endpoint ids are server-side only.`,
+    `\`config.model\` takes the literal id ("nano-banana-2", "flux-2-pro", "seedream-v4.5", "seedream-v5-pro", "krea-v2-medium", "krea-v2-large", "gpt-image-2"), not the Fal endpoint id ("fal-ai/<...>"). Endpoint ids are server-side only.`,
     `"gpt-image-2" is EDIT-ONLY — it requires at least one wired image ref. It also accepts \`quality\` (auto/low/medium/high) + \`outputFormat\` (png/jpeg/webp) and ignores \`seed\` (it has none).`,
+    `"seedream-v5-pro" is EDIT-ONLY (ByteDance Seedream 5.0 Pro) — requires ≥1 wired image ref (up to 10). Accepts \`imageSize\` (auto_2K / presets / custom 1024–2048) + \`numImages\` (1–6) + \`outputFormat\` (jpeg/png). No seed.`,
   ],
   "llm-text": [
     `\`user\` is a single socket — the multi-user smart-input pattern was rolled back. Combine multiple text sources via Text Concat upstream, not via \`config.userPorts\` (which is now ignored).`,

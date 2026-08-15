@@ -362,6 +362,9 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
         const url = await renderPreview(nodeId, key, () =>
           renderComposite({ doc, urls, maskUrls, mediaTypes, atSec: 0 }),
         );
+        if (signal.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
         return {
           type: "image",
           value: { url, mime: "image/png" },
@@ -397,6 +400,10 @@ export const composerNodeSchema = defineNode<ComposerNodeConfig>({
       const url = await renderPreview(nodeId, key, () =>
         renderComposite({ doc, urls, maskUrls, mediaTypes }),
       );
+      // Reactive runner aborts superseded flushes; don't return a stale thumb.
+      if (signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
       return {
         type: "image",
         value: { url, mime: "image/png" },

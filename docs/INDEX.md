@@ -20,7 +20,8 @@ This folder is the **single source of truth** for the project. Every architectur
 8. **[CHANGELOG.md](./CHANGELOG.md)** — date-keyed log of what shipped each day.
 9. **[ASSISTANT.md](./ASSISTANT.md)** — north-star doc for the LLM assistant: identity, knowledge dimensions, tool surface, runtime contract, provider strategy, failure modes. Lands in Slice 7.1.
 10. **[COOKBOOK-LIBRARY.md](./COOKBOOK-LIBRARY.md)** — design + roadmap for the Library feature (recipes + prompts hub). Phased plan (A → E), concept glossary, and the premium-UI contract. Copy any section into another LLM to brainstorm without losing context.
-11. **NODES.md** (auto-generated, lands in M0a) — registry of every node, its schema, cost class, and example usage.
+11. **[NODES.md](./NODES.md)** — registry of every node: what it does, inputs, and outputs.
+12. **[WORKFLOWS.md](./WORKFLOWS.md)** — system recipes / workflows prontos: o que cada um faz, inputs → cadeia → output, e quando usar.
 
 ## Milestone snapshots
 
@@ -47,7 +48,8 @@ Whenever any of the following happen, the corresponding doc **must** be updated 
 | Milestone closed                    | ROADMAP.md (mark done) + CHANGELOG |
 | New convention agreed               | CONVENTIONS.md                     |
 | New term introduced                 | GLOSSARY.md                        |
-| New node added                      | NODES.md (auto-generated, M0a+)    |
+| New node added                      | NODES.md                           |
+| New system recipe / workflow        | WORKFLOWS.md                       |
 | File/pattern copied from Prism      | PRISM-REUSE-LOG.md                 |
 | Test strategy evolves               | TESTING.md                         |
 | Assistant capability changes        | ASSISTANT.md                        |

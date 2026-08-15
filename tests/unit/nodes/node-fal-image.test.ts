@@ -292,6 +292,45 @@ describe("fal-image node", () => {
     ).rejects.toThrow(/wire at least one image/i);
   });
 
+  it("throws when Seedream 5.0 Pro (edit-only) has no wired image", async () => {
+    await expect(
+      falImageNodeSchema.execute!(
+        ctx(
+          { prompt: { type: "text", value: "replace the product" } },
+          { model: "seedream-v5-pro" },
+        ) as never,
+      ),
+    ).rejects.toThrow(/wire at least one image/i);
+  });
+
+  it("forwards Seedream 5.0 Pro edit params (image urls, size, format, count)", async () => {
+    await falImageNodeSchema.execute!(
+      ctx(
+        {
+          prompt: {
+            type: "text",
+            value: "Replace the product in Figure 1 with that in Figure 2.",
+          },
+          "image-0": { type: "image", value: { url: "https://x/a.png" } },
+          "image-1": { type: "image", value: { url: "https://x/b.png" } },
+        },
+        {
+          model: "seedream-v5-pro",
+          imageSize: "auto_2K",
+          imageSizeMode: "preset",
+          outputFormat: "jpeg",
+          numImages: 2,
+        },
+      ) as never,
+    );
+    const arg = callFalImage.mock.calls[0]![0];
+    expect(arg.model).toBe("seedream-v5-pro");
+    expect(arg.imageUrls).toEqual(["https://x/a.png", "https://x/b.png"]);
+    expect(arg.imageSize).toBe("auto_2K");
+    expect(arg.outputFormat).toBe("jpeg");
+    expect(arg.numImages).toBe(2);
+  });
+
   it("omits the GPT Image 2 mask when none is wired", async () => {
     await falImageNodeSchema.execute!(
       ctx(
@@ -350,6 +389,7 @@ describe("fal-image smart-input ports", () => {
     expect(modelMaxRefs("nano-banana-2")).toBe(14);
     expect(modelMaxRefs("flux-2-pro")).toBe(8);
     expect(modelMaxRefs("seedream-v4.5")).toBe(10);
+    expect(modelMaxRefs("seedream-v5-pro")).toBe(10);
     expect(modelMaxRefs("krea-v2-medium")).toBe(10);
     expect(modelMaxRefs("krea-v2-large")).toBe(10);
     expect(modelMaxRefs("gpt-image-2")).toBe(16);

@@ -78,4 +78,57 @@ describe("fal-audio-isolation node execute", () => {
       expect.objectContaining({ videoUrl: "https://x/clip.mp4" }),
     );
   });
+
+  it("isolates each audio in a wired array and emits audio[]", async () => {
+    callAudioIsolation
+      .mockResolvedValueOnce({
+        audioUrl: "https://fal/iso-1.mp3",
+        mime: "audio/mpeg",
+        model: "fal-ai/elevenlabs/audio-isolation",
+      })
+      .mockResolvedValueOnce({
+        audioUrl: "https://fal/iso-2.mp3",
+        mime: "audio/mpeg",
+        model: "fal-ai/elevenlabs/audio-isolation",
+      })
+      .mockResolvedValueOnce({
+        audioUrl: "https://fal/iso-3.mp3",
+        mime: "audio/mpeg",
+        model: "fal-ai/elevenlabs/audio-isolation",
+      });
+
+    const result = await falAudioIsolationNodeSchema.execute!(
+      ctx({
+        audio: [
+          { type: "audio", value: { url: "https://x/s1.wav" } },
+          { type: "audio", value: { url: "https://x/s2.wav" } },
+          { type: "audio", value: { url: "https://x/s3.wav" } },
+        ],
+      }) as Cfg,
+    );
+
+    expect(callAudioIsolation).toHaveBeenCalledTimes(3);
+    expect(callAudioIsolation).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ audioUrl: "https://x/s1.wav" }),
+    );
+    expect(callAudioIsolation).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ audioUrl: "https://x/s2.wav" }),
+    );
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toHaveLength(3);
+    expect(out.map((o) => (o.type === "audio" ? o.value.url : null))).toEqual([
+      "https://fal/iso-1.mp3",
+      "https://fal/iso-2.mp3",
+      "https://fal/iso-3.mp3",
+    ]);
+  });
+
+  it("accepts a multiple audio input and emits a multiple audio output", () => {
+    const audioIn = falAudioIsolationNodeSchema.inputs.find((i) => i.id === "audio");
+    expect(audioIn?.multiple).toBe(true);
+    expect(falAudioIsolationNodeSchema.outputs[0]?.multiple).toBe(true);
+  });
 });

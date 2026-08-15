@@ -175,6 +175,7 @@ export const FAL_IMAGE_MODELS = [
   "nano-banana-2",
   "flux-2-pro",
   "seedream-v4.5",
+  "seedream-v5-pro",
   "krea-v2-medium",
   "krea-v2-large",
   "gpt-image-2",
@@ -218,6 +219,7 @@ export const FAL_IMAGE_MODEL_LABELS: Record<FalImageModel, string> = {
   "nano-banana-2": "Nano Banana 2 (Google)",
   "flux-2-pro": "Flux 2 [pro]",
   "seedream-v4.5": "Seedream 4.5 (ByteDance)",
+  "seedream-v5-pro": "Seedream 5.0 Pro (ByteDance)",
   "krea-v2-medium": "Krea 2 Medium",
   "krea-v2-large": "Krea 2 Large",
   "gpt-image-2": "GPT Image 2 (OpenAI)",
@@ -241,6 +243,23 @@ export const SEEDREAM_IMAGE_SIZES = [
 ] as const;
 
 /**
+ * Seedream 5.0 Pro edit — `image_size` presets. Total pixels must sit between
+ * 1024×1024 and 2048×2048 (no auto_4K). Default on Fal is `auto_2K`.
+ */
+export const SEEDREAM_V5_IMAGE_SIZES = [
+  "auto_2K",
+  "square_hd",
+  "square",
+  "portrait_4_3",
+  "portrait_16_9",
+  "landscape_4_3",
+  "landscape_16_9",
+] as const;
+
+/** Seedream 5.0 Pro edit — jpeg / png only (Fal schema). */
+export const SEEDREAM_V5_OUTPUT_FORMATS = ["jpeg", "png"] as const;
+
+/**
  * Custom-resolution constraints for the Fal models that accept a
  * `{ width, height }` object in `image_size` (Flux 2 Pro and Seedream 4.5;
  * Krea genuinely does not — Fal docs: "Krea returns a fixed-resolution
@@ -255,6 +274,12 @@ export const FLUX_CUSTOM_SIZE = {
 export const SEEDREAM_CUSTOM_SIZE = {
   min: 1920,
   max: 4096,
+  default: 2048,
+} as const;
+/** Seedream 5.0 Pro — total area ≤ 2048×2048; UI caps each axis at 2048. */
+export const SEEDREAM_V5_CUSTOM_SIZE = {
+  min: 1024,
+  max: 2048,
   default: 2048,
 } as const;
 /** GPT Image 2 custom `{ width, height }` — schema allows up to 14142px, but
@@ -332,6 +357,16 @@ export const FAL_IMAGE_MODEL_CAPS: Record<FalImageModel, FalImageModelCaps> = {
     imageSizes: SEEDREAM_IMAGE_SIZES,
     numImages: { max: 6 },
     editRefs: { max: 10 },
+  },
+  // Seedream 5.0 Pro is edit-only (`bytedance/seedream/v5/pro/edit`): needs
+  // ≥1 image ref (up to 10). Region-precise edits; no seed in Fal schema.
+  "seedream-v5-pro": {
+    imageSizes: SEEDREAM_V5_IMAGE_SIZES,
+    numImages: { max: 6 },
+    outputFormats: SEEDREAM_V5_OUTPUT_FORMATS,
+    editRefs: { max: 10 },
+    requiresEditRefs: true,
+    supportsSeed: false,
   },
   "krea-v2-medium": {
     aspectRatios: KREA_ASPECT_RATIOS,

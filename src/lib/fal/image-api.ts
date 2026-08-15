@@ -49,6 +49,11 @@ const ENDPOINTS: Record<FalImageModel, { gen: string; edit?: string }> = {
     gen: "fal-ai/bytedance/seedream/v4.5/text-to-image",
     edit: "fal-ai/bytedance/seedream/v4.5/edit",
   },
+  // Seedream 5.0 Pro is edit-only — one endpoint, always needs image_urls.
+  "seedream-v5-pro": {
+    gen: "bytedance/seedream/v5/pro/edit",
+    edit: "bytedance/seedream/v5/pro/edit",
+  },
   // Krea has no edit endpoint — wired images steer style, not edits.
   "krea-v2-medium": { gen: "krea/v2/medium/text-to-image" },
   "krea-v2-large": { gen: "krea/v2/large/text-to-image" },

@@ -16,6 +16,7 @@ import {
   GPT_IMAGE_2_OUTPUT_FORMATS,
   GPT_IMAGE_2_QUALITY,
   SEEDREAM_CUSTOM_SIZE,
+  SEEDREAM_V5_CUSTOM_SIZE,
   type FalImageModel,
   type FalStyleReference,
   isRandomSeed,
@@ -41,18 +42,21 @@ import { useNodeHistoryCursor } from "./use-node-history-cursor";
 /**
  * Fal Image — multi-model image generation/edit (Slice F).
  *
- * One node, a model picker (Nano Banana 2 default, Flux 2, Seedream, Krea,
- * GPT Image 2). Wire a prompt; wire reference image(s) into the smart-input
- * slots (`image 1..N`, auto-grows to the model's per-call max — Nano Banana
- * 2 = 14, GPT Image 2 = 16, Seedream 4.5 = 10, Krea v2 = 10 style refs, Flux
- * 2 Pro = 8). Output is the batch of generated images. Non-reactive (costs
- * money).
+ * One node, a model picker (Nano Banana 2 default, Flux 2, Seedream 4.5 /
+ * 5.0 Pro, Krea, GPT Image 2). Wire a prompt; wire reference image(s) into
+ * the smart-input slots (`image 1..N`, auto-grows to the model's per-call
+ * max — Nano Banana 2 = 14, GPT Image 2 = 16, Seedream = 10, Krea v2 = 10
+ * style refs, Flux 2 Pro = 8). Output is the batch of generated images.
+ * Non-reactive (costs money).
  *
  * Per-model settings (Slice F.2):
  *   - nano-banana-2: aspect_ratio (15) + resolution (0.5K..4K) + num_images
  *   - flux-2-pro:    image_size (preset) OR custom { width, height }
  *   - seedream-v4.5: image_size (preset, +auto_2K/4K) OR custom { width,
  *                    height } in 1920..4096 + num_images
+ *   - seedream-v5-pro: EDIT-ONLY (needs ≥1 ref, up to 10). image_size
+ *                    (auto_2K default / preset OR custom 1024..2048) +
+ *                    num_images + output_format (jpeg/png). No seed.
  *   - krea v2:       aspect_ratio + creativity + style strength (per-ref)
  *   - gpt-image-2:   EDIT-ONLY (needs ≥1 ref). image_size (preset/auto OR
  *                    custom up to 4096) + quality + num_images +
@@ -225,6 +229,7 @@ function modelSupportsCustomSize(model: FalImageModel): boolean {
   return (
     model === "flux-2-pro" ||
     model === "seedream-v4.5" ||
+    model === "seedream-v5-pro" ||
     model === "gpt-image-2"
   );
 }
@@ -241,6 +246,7 @@ function modelCustomSizeRange(model: FalImageModel): {
   default: number;
 } {
   if (model === "seedream-v4.5") return SEEDREAM_CUSTOM_SIZE;
+  if (model === "seedream-v5-pro") return SEEDREAM_V5_CUSTOM_SIZE;
   if (model === "gpt-image-2") return GPT_IMAGE_2_CUSTOM_SIZE;
   return FLUX_CUSTOM_SIZE;
 }
@@ -525,10 +531,12 @@ function ImageSizeControl({
           </div>
           <p className="col-span-2 text-[10px] leading-snug text-muted-foreground/80">
             {model === "seedream-v4.5"
-              ? "Seedream: width and height between 1920 and 4096."
-              : model === "gpt-image-2"
-                ? "GPT Image 2: 256–4096 per axis (or pick a preset / auto)."
-                : "Flux 2 Pro: any positive integers (256–2048 typical)."}
+              ? "Seedream 4.5: width and height between 1920 and 4096."
+              : model === "seedream-v5-pro"
+                ? "Seedream 5.0 Pro: 1024–2048 per axis (total area ≤ 2048×2048)."
+                : model === "gpt-image-2"
+                  ? "GPT Image 2: 256–4096 per axis (or pick a preset / auto)."
+                  : "Flux 2 Pro: any positive integers (256–2048 typical)."}
           </p>
         </div>
       ) : (
@@ -644,7 +652,7 @@ function FalImageSettings({
       {caps.outputFormats ? (
         <LabeledSelect
           label="Output format"
-          value={config.outputFormat ?? "png"}
+          value={config.outputFormat ?? caps.outputFormats[0]!}
           options={caps.outputFormats}
           onChange={(v) => updateConfig({ outputFormat: v })}
         />
@@ -748,7 +756,7 @@ export const falImageNodeSchema = defineNode<FalImageNodeConfig>({
   category: "ai-image",
   title: "Fal Image",
   description:
-    "Generate or edit images with Fal — Nano Banana 2 (default, up to 14 image refs), Flux 2, Seedream, Krea 2, or GPT Image 2 (OpenAI, edit-only: needs ≥1 image ref, exposes quality + output format + optional inpainting mask). Each model exposes its own controls (aspect ratio, image size — preset or custom width/height for Flux/Seedream/GPT Image 2, resolution, creativity, style references, quality). Wire a prompt; wire image(s) into the auto-growing `image 1..N` slots to edit or steer style.",
+    "Generate or edit images with Fal — Nano Banana 2 (default, up to 14 image refs), Flux 2, Seedream 4.5, Seedream 5.0 Pro (ByteDance, edit-only: region-precise edits, up to 10 refs, auto_2K / custom ≤2048², jpeg/png), Krea 2, or GPT Image 2 (OpenAI, edit-only: needs ≥1 image ref, quality + output format + optional inpainting mask). Each model exposes its own controls. Wire a prompt; wire image(s) into the auto-growing `image 1..N` slots to edit or steer style.",
   icon: Sparkles,
   // Static inputs cover the initial port count (two image slots) so a
   // fresh node renders with `image 1` and `image 2`. The dynamic shape —

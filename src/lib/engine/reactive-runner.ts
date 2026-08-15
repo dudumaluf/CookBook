@@ -140,6 +140,12 @@ export function startReactiveRunner(
           // user's run will overwrite records itself; we don't want to
           // race them).
           if (useExecutionStore.getState().isRunning) return;
+          // Skip emits from an aborted flush. Composer / Image Stack / similar
+          // reactive media nodes can take hundreds of ms to bitmap-composite;
+          // a newer mutation aborts this controller, but without this guard
+          // the late `done` from the old render would overwrite the fresher
+          // preview (e.g. trash a layer → canvas thumb still shows it).
+          if (controller.signal.aborted) return;
           // Same Map-clone-and-set pattern as execution-store's regular
           // onProgress. Only patch reactive node records — never overwrite
           // an existing non-reactive record (LLM result, Higgsfield image)

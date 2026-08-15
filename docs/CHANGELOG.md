@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-14 — Audio Isolation: batch a slicer's chunks in one Run
+
+Audio Isolation now accepts an **array** on `audio` / `video` (same pattern as Silent Video). Wire an Audio Slicer's chunks straight in → one Run isolates each slice and emits `audio[]`. Single source still yields one clip. Body cursor scrubs the batch; optional `index` Number stays in lockstep with the slicers. Progress shows `Isolating 2/5…`.
+
+## 2026-07-30 — Fix: Composer (and other reactive media) outside preview stale after editor edits
+
+Deleting a layer / changing params inside the Composer editor updated `config.doc` but the canvas thumbnail often kept the old composite. Root cause: the reactive runner aborts the previous flush when a new mutation arrives, but a slow `renderComposite` could still finish and write a late `done` over the fresher result. **Fix:** ignore `onProgress` from aborted reactive flushes; treat post-`execute` abort as `cancelled` in `run-workflow`; Composer preview paths throw `AbortError` if their signal was aborted after the bitmap flatten. Test pinned in `reactive-runner.test.ts`.
+
+## 2026-07-30 — Fal Image: Seedream 5.0 Pro (edit-only)
+
+Added **Seedream 5.0 Pro** (`seedream-v5-pro` → `bytedance/seedream/v5/pro/edit`) to the Fal Image model picker. Edit-only (needs ≥1 image ref, up to 10): region-precise edits with `imageSize` (`auto_2K` default / presets / custom 1024–2048), `numImages` (1–6), `outputFormat` (jpeg/png); no seed. Same node as Nano Banana / Flux / Seedream 4.5 / Krea / GPT Image 2.
+
 ## 2026-07-04 — Gemini Omni Flash: edit mode (video-to-video)
 
 Extended the existing **Gemini Omni Flash** node with a **edit** mode (`google/gemini-omni-flash/edit`). Switch mode in settings: **reference** (unchanged — images + prompt → new clip) or **edit** (source video + edit prompt → revised clip, preserves source length). Edit sockets: `prompt` + `video`; the body shows an edit badge + tip to add "Keep everything else the same." Server wrapper dispatches by `mode` to the reference or edit Fal endpoint; same submit + poll queue (ADR-0057). **Tests (+5):** edit throws without video; forwards `mode` + `videoUrl`; getInputs exposes `prompt` + `video` in edit mode.

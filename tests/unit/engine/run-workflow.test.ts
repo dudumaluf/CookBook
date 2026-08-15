@@ -378,6 +378,47 @@ describe("runWorkflow", () => {
     expect(records.get("b")?.status).toBe("cancelled");
   });
 
+  it("does not emit done when the signal aborts during a long execute await", async () => {
+    // Composer-style: execute finishes a bitmap flatten after the reactive
+    // runner already aborted this flush — must be `cancelled`, not a stale
+    // `done` that would overwrite a newer preview.
+    const registry = new NodeRegistry();
+    registry.register(textSchema());
+    const controller = new AbortController();
+    const slow = defineNode<{ tag: string }>({
+      kind: "slow-resolve",
+      category: "ai-text",
+      title: "SlowResolve",
+      description: "",
+      icon: Sparkles,
+      inputs: [{ id: "in", label: "in", dataType: "text" }],
+      outputs: [{ id: "out", label: "out", dataType: "text" }],
+      defaultConfig: { tag: "" },
+      execute: async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        controller.abort();
+        return { type: "text", value: "stale" };
+      },
+      Body: EmptyBody as never,
+    });
+    registry.register(slow);
+
+    const records = new Map<string, ExecutionRecord>();
+    await runWorkflow({
+      nodes: [
+        node("a", "text", { text: "hi" }),
+        node("b", "slow-resolve", { tag: "" }),
+      ],
+      edges: [edge("a", "b")],
+      registry,
+      cache: newCache(),
+      signal: controller.signal,
+      onProgress: (id, r) => records.set(id, r),
+    });
+    expect(records.get("b")?.status).toBe("cancelled");
+    expect(records.get("b")?.output).toBeUndefined();
+  });
+
   it("marks every node error on cycle", async () => {
     const registry = buildRegistry();
     const nodes = [
