@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-14 — Fix: Audio Isolation batch skipped — stale single-clip cache
+
+A slicer → isolation graph that had already run once kept replaying the **first** isolated clip: the engine hash didn't change, so Run hit the old cache and never looped the 12 chunks. Changing the slicer cursor also does not re-run Isolation (it's paid / non-reactive). **Fix:** `cacheVersion: 2` so the next Run isolates every wired chunk; the body now says "Slicer has N chunks — Run this node to isolate all" when the live result is still a single leftover clip.
+
 ## 2026-08-14 — Audio Isolation: batch a slicer's chunks in one Run
 
 Audio Isolation now accepts an **array** on `audio` / `video` (same pattern as Silent Video). Wire an Audio Slicer's chunks straight in → one Run isolates each slice and emits `audio[]`. Single source still yields one clip. Body cursor scrubs the batch; optional `index` Number stays in lockstep with the slicers. Progress shows `Isolating 2/5…`.

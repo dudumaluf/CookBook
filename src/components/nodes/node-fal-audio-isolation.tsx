@@ -7,6 +7,7 @@ import { defineNode } from "@/lib/engine/define-node";
 import { extractInputArrayByType } from "@/lib/engine/extract-input";
 import { callAudioIsolation } from "@/lib/fal/call-audio-isolation";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { AudioRef, NodeBodyProps, StandardizedOutput } from "@/types/node";
 
 import { IteratorCursor } from "./iterator-cursor";
@@ -34,18 +35,39 @@ function urlsFromOutput(
   return output.type === "audio" ? [output.value.url] : [];
 }
 
+function useWiredSourceCount(nodeId: string): number {
+  const sourceId = useWorkflowStore((s) => {
+    const audio = s.edges.find(
+      (e) => e.target === nodeId && e.targetHandle === "audio",
+    );
+    const video = s.edges.find(
+      (e) => e.target === nodeId && e.targetHandle === "video",
+    );
+    return (audio ?? video)?.source ?? "";
+  });
+  return useExecutionStore((s) => {
+    if (!sourceId) return 0;
+    const out = s.records.get(sourceId)?.output;
+    if (!out) return 0;
+    if (Array.isArray(out)) return out.length;
+    return 1;
+  });
+}
+
 function AudioIsolationBody({ nodeId }: NodeBodyProps) {
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
   const fanOut = record?.fanOut;
   const history = record?.history ?? [];
+  const wiredCount = useWiredSourceCount(nodeId);
 
   const { cursor: historyCursor, setCursor: setHistoryCursor } =
     useNodeHistoryCursor(nodeId, history.length);
 
-  const activeOutput =
-    history.length > 0 ? history[historyCursor]?.output : record?.output;
-  const urls = urlsFromOutput(activeOutput);
+  // Current record.output is what the engine considers "live" (latest run,
+  // or the history entry the user picked). Don't walk history[0] here —
+  // an older single-clip run would hide a newer batch.
+  const urls = urlsFromOutput(record?.output);
 
   const [cursor, setCursor] = useState(0);
   const localCursor = urls.length === 0 ? 0 : Math.min(cursor, urls.length - 1);
@@ -139,6 +161,10 @@ function AudioIsolationBody({ nodeId }: NodeBodyProps) {
               <span className="text-[10px] text-muted-foreground">
                 Clip {safeCursor + 1} / {urls.length}
               </span>
+            ) : wiredCount > 1 ? (
+              <span className="text-[10px] text-muted-foreground">
+                Slicer has {wiredCount} chunks — Run this node to isolate all
+              </span>
             ) : null}
           </div>
         ) : (
@@ -167,6 +193,8 @@ export const falAudioIsolationNodeSchema = defineNode({
   outputs: [{ id: "out", label: "out", dataType: "audio", multiple: true }],
   defaultConfig: {},
   reactive: false,
+  // v2: batch over a slicer array. Old single-clip cache keys must miss.
+  cacheVersion: 2,
   execute: async ({ inputs, signal, reportProgress }) => {
     const audios = extractInputArrayByType(inputs, "audio", "audio");
     const videos = extractInputArrayByType(inputs, "video", "video");

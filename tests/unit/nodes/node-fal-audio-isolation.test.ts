@@ -130,5 +130,6 @@ describe("fal-audio-isolation node execute", () => {
     const audioIn = falAudioIsolationNodeSchema.inputs.find((i) => i.id === "audio");
     expect(audioIn?.multiple).toBe(true);
     expect(falAudioIsolationNodeSchema.outputs[0]?.multiple).toBe(true);
+    expect(falAudioIsolationNodeSchema.cacheVersion).toBe(2);
   });
 });
