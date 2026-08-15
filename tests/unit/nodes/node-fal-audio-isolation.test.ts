@@ -130,6 +130,74 @@ describe("fal-audio-isolation node execute", () => {
     const audioIn = falAudioIsolationNodeSchema.inputs.find((i) => i.id === "audio");
     expect(audioIn?.multiple).toBe(true);
     expect(falAudioIsolationNodeSchema.outputs[0]?.multiple).toBe(true);
-    expect(falAudioIsolationNodeSchema.cacheVersion).toBe(2);
+    expect(falAudioIsolationNodeSchema.cacheVersion).toBe(3);
+  });
+
+  it("keeps successful clips when a later chunk is too short", async () => {
+    callAudioIsolation
+      .mockResolvedValueOnce({
+        audioUrl: "https://fal/iso-1.mp3",
+        mime: "audio/mpeg",
+        model: "fal-ai/elevenlabs/audio-isolation",
+      })
+      .mockRejectedValueOnce(
+        new Error(
+          "Fail: audio_url: Media duration is too short: 3.29 seconds. This endpoint requires a media duration of at least 4.6 seconds.",
+        ),
+      );
+
+    const result = await falAudioIsolationNodeSchema.execute!(
+      ctx({
+        audio: [
+          { type: "audio", value: { url: "https://x/s1.wav" } },
+          { type: "audio", value: { url: "https://x/s2.wav" } },
+        ],
+      }) as Cfg,
+    );
+
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      type: "audio",
+      value: { url: "https://fal/iso-1.mp3" },
+    });
+  });
+
+  it("skips a chunk with known duration under 4.6s without calling Fal", async () => {
+    const result = await falAudioIsolationNodeSchema.execute!(
+      ctx({
+        audio: [
+          { type: "audio", value: { url: "https://x/s1.wav", durationMs: 15_000 } },
+          { type: "audio", value: { url: "https://x/tail.wav", durationMs: 3_291 } },
+        ],
+      }) as Cfg,
+    );
+
+    expect(callAudioIsolation).toHaveBeenCalledTimes(1);
+    expect(callAudioIsolation).toHaveBeenCalledWith(
+      expect.objectContaining({ audioUrl: "https://x/s1.wav" }),
+    );
+    const out = (result as { output: StandardizedOutput[] }).output;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      type: "audio",
+      value: { url: "https://fal/isolated.mp3" },
+    });
+  });
+
+  it("throws when every wired chunk is too short", async () => {
+    await expect(
+      falAudioIsolationNodeSchema.execute!(
+        ctx({
+          audio: [
+            { type: "audio", value: { url: "https://x/a.wav", durationMs: 2_000 } },
+            { type: "audio", value: { url: "https://x/b.wav", durationMs: 3_000 } },
+          ],
+        }) as Cfg,
+      ),
+    ).rejects.toThrow(/too short/);
+    expect(callAudioIsolation).not.toHaveBeenCalled();
   });
 });

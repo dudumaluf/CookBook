@@ -284,7 +284,10 @@ export const audioSlicerNodeSchema = defineNode<AudioSlicerNodeConfig>({
         type: blobs[i]!.type || (format === "mp3" ? "audio/mpeg" : "audio/wav"),
       });
       const uploaded = await uploadMediaAsset(file, "audio");
-      const ref: AudioRef = { url: uploaded.url };
+      const ref: AudioRef = {
+        url: uploaded.url,
+        durationMs: windows[i]?.durationMs,
+      };
       chunks.push({ type: "audio", value: ref });
       reportProgress?.({ fanOut: { total: blobs.length, done: i + 1 } });
     }

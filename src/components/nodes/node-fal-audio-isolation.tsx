@@ -14,6 +14,9 @@ import { IteratorCursor } from "./iterator-cursor";
 import { useExternalIndex } from "./use-external-index";
 import { useNodeHistoryCursor } from "./use-node-history-cursor";
 
+/** ElevenLabs isolation rejects clips shorter than this (Fal error text). */
+const MIN_ISOLATION_SEC = 4.6;
+
 /**
  * ElevenLabs Audio Isolation (via Fal) — isolate vocals from audio or video.
  *
@@ -157,7 +160,13 @@ function AudioIsolationBody({ nodeId }: NodeBodyProps) {
               onPointerDown={(e) => e.stopPropagation()}
               className="w-full"
             />
-            {batch ? (
+            {wiredCount > urls.length ? (
+              <span className="text-[10px] text-muted-foreground">
+                {batch ? `Clip ${safeCursor + 1} / ${urls.length} · ` : ""}
+                skipped {wiredCount - urls.length} (ElevenLabs needs ≥
+                {MIN_ISOLATION_SEC}s)
+              </span>
+            ) : batch ? (
               <span className="text-[10px] text-muted-foreground">
                 Clip {safeCursor + 1} / {urls.length}
               </span>
@@ -193,17 +202,31 @@ export const falAudioIsolationNodeSchema = defineNode({
   outputs: [{ id: "out", label: "out", dataType: "audio", multiple: true }],
   defaultConfig: {},
   reactive: false,
-  // v2: batch over a slicer array. Old single-clip cache keys must miss.
-  cacheVersion: 2,
+  // v3: keep successful clips when a later chunk is too short for ElevenLabs.
+  cacheVersion: 3,
   execute: async ({ inputs, signal, reportProgress }) => {
     const audios = extractInputArrayByType(inputs, "audio", "audio");
     const videos = extractInputArrayByType(inputs, "video", "video");
-    const sources: { kind: "audio" | "video"; url: string }[] =
+    const sources: {
+      kind: "audio" | "video";
+      url: string;
+      durationMs?: number;
+    }[] =
       audios.length > 0
-        ? audios.filter((a) => a.url).map((a) => ({ kind: "audio", url: a.url }))
+        ? audios
+            .filter((a) => a.url)
+            .map((a) => ({
+              kind: "audio" as const,
+              url: a.url,
+              durationMs: a.durationMs,
+            }))
         : videos
             .filter((v) => v.url)
-            .map((v) => ({ kind: "video", url: v.url }));
+            .map((v) => ({
+              kind: "video" as const,
+              url: v.url,
+              durationMs: v.durationMs,
+            }));
 
     if (sources.length === 0) {
       throw new Error("Wire an audio file or a video into this node.");
@@ -212,28 +235,58 @@ export const falAudioIsolationNodeSchema = defineNode({
     reportProgress?.({ fanOut: { total: sources.length, done: 0 } });
     const clips: StandardizedOutput[] = [];
     let lastModel: string | undefined;
+    let lastError: Error | undefined;
     for (let i = 0; i < sources.length; i++) {
       if (signal.aborted) {
         throw new DOMException("Aborted", "AbortError");
       }
       const src = sources[i]!;
-      const result = await callAudioIsolation({
-        ...(src.kind === "audio"
-          ? { audioUrl: src.url }
-          : { videoUrl: src.url }),
-        signal,
+      if (
+        src.durationMs !== undefined &&
+        src.durationMs < MIN_ISOLATION_SEC * 1000
+      ) {
+        reportProgress?.({
+          fanOut: { total: sources.length, done: i + 1 },
+          ...(clips.length > 0 ? { output: clips } : {}),
+        });
+        continue;
+      }
+      try {
+        const result = await callAudioIsolation({
+          ...(src.kind === "audio"
+            ? { audioUrl: src.url }
+            : { videoUrl: src.url }),
+          signal,
+        });
+        lastModel = result.model;
+        const ref: AudioRef = {
+          url: result.audioUrl,
+          mime: result.mime ?? "audio/mpeg",
+        };
+        clips.push({ type: "audio", value: ref });
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError" || signal.aborted) {
+          throw err;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
+      reportProgress?.({
+        fanOut: { total: sources.length, done: i + 1 },
+        ...(clips.length > 0 ? { output: clips } : {}),
       });
-      lastModel = result.model;
-      const ref: AudioRef = {
-        url: result.audioUrl,
-        mime: result.mime ?? "audio/mpeg",
-      };
-      clips.push({ type: "audio", value: ref });
-      reportProgress?.({ fanOut: { total: sources.length, done: i + 1 } });
+    }
+
+    if (clips.length === 0) {
+      throw (
+        lastError ??
+        new Error(
+          `ElevenLabs isolation needs at least ${MIN_ISOLATION_SEC}s per clip — every wired chunk was too short.`,
+        )
+      );
     }
 
     return {
-      output: clips.length === 1 ? clips[0]! : clips,
+      output: sources.length === 1 ? clips[0]! : clips,
       usage: { model: lastModel },
     };
   },

@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-15 — Fix: Audio Isolation keeps the batch when a tail chunk is too short
+
+ElevenLabs isolation requires ≥4.6s. A slicer's last window is often ~3s, which used to throw and wipe the node — the 11 clips that already isolated were gone. **Fix:** skip known-short chunks (slicer now stamps `durationMs`) and continue after a per-clip Fal "too short" error; return the successful `audio[]` so the cursor still works. Body notes how many were skipped.
+
 ## 2026-08-14 — Fix: Audio Isolation batch skipped — stale single-clip cache
 
 A slicer → isolation graph that had already run once kept replaying the **first** isolated clip: the engine hash didn't change, so Run hit the old cache and never looped the 12 chunks. Changing the slicer cursor also does not re-run Isolation (it's paid / non-reactive). **Fix:** `cacheVersion: 2` so the next Run isolates every wired chunk; the body now says "Slicer has N chunks — Run this node to isolate all" when the live result is still a single leftover clip.

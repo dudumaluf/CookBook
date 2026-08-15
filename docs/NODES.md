@@ -484,7 +484,7 @@ Split an upstream text into items, fan out downstream nodes per item.
 - **Category:** `transform`
 - **Run:** manual (Run / Run-here)
 
-Isolate vocals using ElevenLabs (via Fal). Wire an audio file or a video — video uses its soundtrack. Audio input wins if both are wired. Both inputs accept an array: wire an Audio Slicer's chunks and one Run isolates each slice. ~$0.10/min.
+Isolate vocals using ElevenLabs (via Fal). Wire an audio file or a video — video uses its soundtrack. Audio input wins if both are wired. Both inputs accept an array: wire an Audio Slicer's chunks and one Run isolates each slice. Clips shorter than 4.6s are skipped so a short tail does not fail the whole batch. ~$0.10/min.
 
 **Inputs**
 
