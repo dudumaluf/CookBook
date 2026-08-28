@@ -30,13 +30,20 @@ import {
  */
 
 /**
- * Encoded packets from some MP4s start a few tens of ms *before* 0
- * (B-frame composition offset / AAC encoder delay). Mediabunny rejects
- * those on add(). Shift onto a non-negative timeline; keep the rest of
- * the clip's relative timing.
+ * Map a clip-local packet onto the joined timeline.
+ *
+ * `originTs` is this clip's first packet timestamp. Many generated MP4s
+ * start a few tens of ms *before* 0 (B-frame composition offset / AAC
+ * delay). Adding `offset + packetTs` then lands the next clip *before*
+ * the previous GOP ended. Subtracting origin makes the clip start
+ * exactly at `offsetSec`. Lengths do not have to match.
  */
-export function remuxTimestamp(packetTs: number, offsetSec: number): number {
-  return Math.max(0, packetTs + offsetSec);
+export function remuxTimestamp(
+  packetTs: number,
+  offsetSec: number,
+  originTs: number,
+): number {
+  return Math.max(0, offsetSec + (packetTs - originTs));
 }
 
 function makeInput(src: Blob | string): Input {
@@ -97,32 +104,42 @@ export async function concatVideos(
 
       if (vTrack && videoSource) {
         const sink = new EncodedPacketSink(vTrack);
+        let origin: number | null = null;
         let lastEnd = 0;
         for await (const packet of sink.packets()) {
+          if (origin === null) origin = packet.timestamp;
           const meta =
             firstVideoAdd && videoDecoderConfig
               ? { decoderConfig: videoDecoderConfig }
               : undefined;
           firstVideoAdd = false;
-          const ts = remuxTimestamp(packet.timestamp, videoOffsetSec);
+          const ts = remuxTimestamp(packet.timestamp, videoOffsetSec, origin);
           await videoSource.add(packet.clone({ timestamp: ts }), meta);
-          lastEnd = Math.max(lastEnd, ts + Math.max(0, packet.duration));
+          lastEnd = Math.max(
+            lastEnd,
+            packet.timestamp - origin + Math.max(0, packet.duration),
+          );
         }
         videoOffsetSec += lastEnd;
       }
 
       if (aTrack && audioSource) {
         const sink = new EncodedPacketSink(aTrack);
+        let origin: number | null = null;
         let lastEnd = 0;
         for await (const packet of sink.packets()) {
+          if (origin === null) origin = packet.timestamp;
           const meta =
             firstAudioAdd && audioDecoderConfig
               ? { decoderConfig: audioDecoderConfig }
               : undefined;
           firstAudioAdd = false;
-          const ts = remuxTimestamp(packet.timestamp, audioOffsetSec);
+          const ts = remuxTimestamp(packet.timestamp, audioOffsetSec, origin);
           await audioSource.add(packet.clone({ timestamp: ts }), meta);
-          lastEnd = Math.max(lastEnd, ts + Math.max(0, packet.duration));
+          lastEnd = Math.max(
+            lastEnd,
+            packet.timestamp - origin + Math.max(0, packet.duration),
+          );
         }
         audioOffsetSec += lastEnd;
       }

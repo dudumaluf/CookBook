@@ -2,9 +2,9 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
-## 2026-08-28 — Fix: Video Concat rejects clips whose packets start before 0
+## 2026-08-28 — Fix: Video Concat GOP overlap after a negative-start clip
 
-Some generated MP4s (H3 Max, others) put the first encoded packet a few tens of ms *before* t=0 (B-frame composition offset / AAC priming). Mediabunny then throws `Timestamps must be non-negative (got -0.032s)` and the join dies. **Fix:** clamp remux timestamps to ≥0 so Concat can stitch those clips.
+Clamping `offset + packetTs` to ≥0 unblocked the first packet, then the *next* clip started a few ms before the previous GOP ended (`Got 4.468s, but largest timestamp is 4.48s`). Clip lengths do not have to match. **Fix:** shift each clip relative to its first packet so it starts exactly at the running offset.
 
 ## 2026-08-28 — New node: H3 Max (MiniMax image-to-video)
 
