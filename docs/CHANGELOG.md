@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — New node: H3 Max (MiniMax image-to-video)
+
+Added **H3 Max** (`h3-max-video`) wrapping Fal `minimax/h3-max/image-to-video`. Wire a prompt + start image (first frame; aspect follows the still); optional end image for first-to-last. Settings: duration 5–15s, resolution 480P / 768P, prompt expansion (disabled / balanced / quality), safety checker, seed. Same submit + poll queue as Seedance / Gemini Omni (ADR-0057). Launch promo ~$0.025/s at 480P, $0.04/s at 768P until Sep 1.
+
 ## 2026-08-15 — Fix: Audio Isolation keeps the batch when a tail chunk is too short
 
 ElevenLabs isolation requires ≥4.6s. A slicer's last window is often ~3s, which used to throw and wipe the node — the 11 clips that already isolated were gone. **Fix:** skip known-short chunks (slicer now stamps `durationMs`) and continue after a per-clip Fal "too short" error; return the successful `audio[]` so the cursor still works. Body notes how many were skipped.

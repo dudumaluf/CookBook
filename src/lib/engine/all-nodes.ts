@@ -10,6 +10,7 @@ import { exportNodeSchema } from "@/components/nodes/node-export";
 import { dwposeNodeSchema } from "@/components/nodes/node-fal-dwpose";
 import { falAudioIsolationNodeSchema } from "@/components/nodes/node-fal-audio-isolation";
 import { geminiOmniNodeSchema } from "@/components/nodes/node-fal-gemini-omni";
+import { h3MaxVideoNodeSchema } from "@/components/nodes/node-fal-h3-max";
 import { heygenLipsyncNodeSchema } from "@/components/nodes/node-fal-heygen-lipsync";
 import { hunyuan3dNodeSchema } from "@/components/nodes/node-fal-hunyuan-3d";
 import { falImageNodeSchema } from "@/components/nodes/node-fal-image";
@@ -92,6 +93,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(sam31VideoNodeSchema);
   nodeRegistry.register(seedanceVideoNodeSchema);
   nodeRegistry.register(geminiOmniNodeSchema);
+  nodeRegistry.register(h3MaxVideoNodeSchema);
   nodeRegistry.register(objectTrackCropNodeSchema);
   nodeRegistry.register(trackRecomposeNodeSchema);
   nodeRegistry.register(continuityBuilderNodeSchema);

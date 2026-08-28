@@ -1303,3 +1303,83 @@ export type GeminiOmniStatusRequest = z.infer<
 export type GeminiOmniStatusResponse =
   | { status: "pending" }
   | ({ status: "done" } & GeminiOmniSuccessResponse);
+
+/* ────────── MiniMax H3 Max (image-to-video) ────────── */
+
+/**
+ * Fal `minimax/h3-max/image-to-video` — post-trained MiniMax H3, stronger
+ * prompt adherence + aesthetics. Start frame (required on our node) sets
+ * the first frame and the output aspect; optional end frame is first-to-last
+ * keyframe. Prompt-only T2V exists on Fal but this node is image-to-video.
+ * Async queue (ADR-0057). Launch promo through 2026-09-01: $0.025/s at
+ * 480P, $0.04/s at 768P; then $0.05 / $0.08.
+ */
+export const H3_MAX_ENDPOINT = "minimax/h3-max/image-to-video";
+
+export const H3_MAX_RESOLUTIONS = ["480P", "768P"] as const;
+export type H3MaxResolution = (typeof H3_MAX_RESOLUTIONS)[number];
+export const H3_MAX_RESOLUTION_DEFAULT: H3MaxResolution = "768P";
+
+export const H3_MAX_DURATION_MIN = 5;
+export const H3_MAX_DURATION_MAX = 15;
+export const H3_MAX_DURATION_DEFAULT = 5;
+
+export const H3_MAX_PROMPT_EXPANSION_MODES = [
+  "disabled",
+  "balanced",
+  "quality",
+] as const;
+export type H3MaxPromptExpansionMode =
+  (typeof H3_MAX_PROMPT_EXPANSION_MODES)[number];
+export const H3_MAX_PROMPT_EXPANSION_DEFAULT: H3MaxPromptExpansionMode =
+  "balanced";
+
+/** Launch-promo USD per second (through 2026-09-01). */
+export const H3_MAX_USD_PER_SECOND: Record<H3MaxResolution, number> = {
+  "480P": 0.025,
+  "768P": 0.04,
+};
+
+export const h3MaxRequestSchema = z
+  .object({
+    prompt: z.string().min(1),
+    imageUrl: z.string().url(),
+    endImageUrl: z.string().url().optional(),
+    duration: z
+      .number()
+      .int()
+      .min(H3_MAX_DURATION_MIN)
+      .max(H3_MAX_DURATION_MAX)
+      .optional(),
+    resolution: z.enum(H3_MAX_RESOLUTIONS).optional(),
+    seed: z.number().int().optional(),
+    enableSafetyChecker: z.boolean().optional(),
+    promptExpansionMode: z.enum(H3_MAX_PROMPT_EXPANSION_MODES).optional(),
+  })
+  .strict();
+
+export type H3MaxRequest = z.infer<typeof h3MaxRequestSchema>;
+
+export interface H3MaxSuccessResponse {
+  videoUrl: string;
+  mime?: string;
+  model: string;
+}
+
+export interface H3MaxSubmitResponse {
+  requestId: string;
+  endpoint: string;
+}
+
+export const h3MaxStatusRequestSchema = z
+  .object({
+    endpoint: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
+export type H3MaxStatusRequest = z.infer<typeof h3MaxStatusRequestSchema>;
+
+export type H3MaxStatusResponse =
+  | { status: "pending" }
+  | ({ status: "done" } & H3MaxSuccessResponse);

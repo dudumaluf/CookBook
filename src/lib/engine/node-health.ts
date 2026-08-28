@@ -175,6 +175,10 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Renders the wired audio as a SOLID-BLACK MP4 that carries the audio track — its \`out\` is a \`video\`, not audio. The point is the ByteDance singer-performance method: feed a song into Seedance's video slot (\`@Video1\`) as an AUDIO-ONLY reference. The black picture keeps the song from polluting the visuals (those come from the keyframes) while the audio drives lip-sync / rhythm / timing. Don't treat it as a normal motion video.`,
     `Settings expose only \`aspectRatio\` (16:9 / 9:16 / 1:1) — match it to the keyframes you'll feed Seedance. fps / height / color are fixed sensible defaults (2 fps, 720p tall, black). Non-reactive — it needs a Run.`,
   ],
+  "h3-max-video": [
+    `Needs a wired \`prompt\` AND a start \`image\` (the first frame). Optional \`end\` image is first-to-last keyframe only — it does not replace the start still.`,
+    `\`config.resolution\` is \`"480P"\` or \`"768P"\` (capital P). Duration is 5–15 seconds. \`promptExpansionMode\` is \`disabled\` / \`balanced\` / \`quality\` — quality can add ~30s before Fal starts rendering.`,
+  ],
   "fal-veed-subtitles": [
     `Needs a \`video\` input wired (the source clip) — it transcribes that clip's audio and burns styled subtitles back onto it. Output is a \`video\`. Non-reactive + bills per minute, so it needs a Run.`,
     `\`config.preset\` is REQUIRED (defaults to "simple"). Presets come in two pricing tiers: BASIC (1x) — simple, plain, beans, corpo, boo, shadeplay, casper, capri, lowkey, vinta, diego, ali, slay, kitty, hustle, karl, sprout, flex, mint, rizz, vegas — and DYNAMIC (2x) — glass, whisper, glide2, fusion, glide, terminal, handwritten, backdrop, backdrop2. Picking a dynamic preset DOUBLES the price; prefer a basic one unless the richer look is wanted.`,

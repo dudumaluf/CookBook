@@ -2,7 +2,7 @@
 
 Catalog of every registered node: what it does, inputs, and outputs.
 
-**51 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
+**52 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
 
 > When I/O is dynamic (auto-growing sockets / mode switches), the list is the usual default snapshot — check the node settings for variants.
 
@@ -30,11 +30,12 @@ Catalog of every registered node: what it does, inputs, and outputs.
 - [Soul Cinema](#soul-cinema) (`soul-cinema`)
 - [TeleStyle V2](#telestyle-v2) (`fal-telestyle-v2`)
 
-### AI Video (7)
+### AI Video (8)
 
 - [Continuity Builder](#continuity-builder) (`continuity-builder`)
 - [DWPose](#dwpose) (`fal-dwpose`)
 - [Gemini Omni Flash](#gemini-omni-flash) (`gemini-omni-video`)
+- [H3 Max](#h3-max) (`h3-max-video`)
 - [HeyGen Lipsync](#heygen-lipsync) (`fal-heygen-lipsync`)
 - [SAM 3.1 Video](#sam-31-video) (`fal-sam31-video`)
 - [Seedance Video](#seedance-video) (`seedance-video`)
@@ -365,6 +366,24 @@ Google Gemini Omni Flash in two modes. Reference: generate a short clip WITH nat
 
 - **reference mode:** `prompt` (text), numbered `<IMAGE_REF_N>` (image), `<IMAGE_REF[]>` (image array)
 - **edit mode:** `prompt` (text), `video` (video)
+
+**Outputs**
+
+- `out` (video)
+
+### H3 Max
+
+- **Kind:** `h3-max-video`
+- **Category:** `ai-video`
+- **Run:** manual (Run / Run-here)
+
+MiniMax H3 Max image-to-video (via Fal). Wire a prompt + a start image (first frame; output aspect follows it). Optional end image for first-to-last keyframes. Settings: duration (5–15s), resolution (480P / 768P), prompt expansion (disabled / balanced / quality), safety checker, seed. Launch promo ~$0.025/s at 480P, $0.04/s at 768P until Sep 1.
+
+**Inputs**
+
+- `prompt` (text)
+- `image` (image) — start / first frame
+- `end` (image) — optional last frame
 
 **Outputs**
 

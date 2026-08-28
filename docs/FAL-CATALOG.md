@@ -109,6 +109,7 @@
 | Candidate node | Backed by | Notes |
 |---|---|---|
 | **Video Gen (Seedance)** | `bytedance/seedance-2.0/*` | ✅ Shipped (`seedance-video`). One node, mode = reference/text + image-to-video (first/last frame, ADR-0054). Handles swap + lipsync + native audio + extension. |
+| **H3 Max** | `minimax/h3-max/image-to-video` | ✅ Shipped (`h3-max-video`). Prompt + start frame (optional end frame). 5–15s, 480P / 768P. |
 | **Frame Extract** | mediabunny (client WebCodecs) | ✅ Shipped (`frame-extract`). Pull first/last frame of a video → image. Lynchpin for frame-chaining continuity. |
 | **Video Concat / Stitch** | mediabunny (client) | ✅ Shipped (`video-concat`). Join clips into one (remux, no re-encode). |
 | **Audio Slicer** | mediabunny (client) | ✅ Shipped (`audio-slicer`). Split a song into 15s windows → audio[] for per-chunk lipsync. |
