@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Fix: Video Concat rejects clips whose packets start before 0
+
+Some generated MP4s (H3 Max, others) put the first encoded packet a few tens of ms *before* t=0 (B-frame composition offset / AAC priming). Mediabunny then throws `Timestamps must be non-negative (got -0.032s)` and the join dies. **Fix:** clamp remux timestamps to ≥0 so Concat can stitch those clips.
+
 ## 2026-08-28 — New node: H3 Max (MiniMax image-to-video)
 
 Added **H3 Max** (`h3-max-video`) wrapping Fal `minimax/h3-max/image-to-video`. Wire a prompt + start image (first frame; aspect follows the still); optional end image for first-to-last. Settings: duration 5–15s, resolution 480P / 768P, prompt expansion (disabled / balanced / quality), safety checker, seed. Same submit + poll queue as Seedance / Gemini Omni (ADR-0057). Launch promo ~$0.025/s at 480P, $0.04/s at 768P until Sep 1.

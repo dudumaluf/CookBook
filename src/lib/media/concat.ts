@@ -29,6 +29,16 @@ import {
  * fallback — noted for when that case actually arises.
  */
 
+/**
+ * Encoded packets from some MP4s start a few tens of ms *before* 0
+ * (B-frame composition offset / AAC encoder delay). Mediabunny rejects
+ * those on add(). Shift onto a non-negative timeline; keep the rest of
+ * the clip's relative timing.
+ */
+export function remuxTimestamp(packetTs: number, offsetSec: number): number {
+  return Math.max(0, packetTs + offsetSec);
+}
+
 function makeInput(src: Blob | string): Input {
   const source =
     typeof src === "string" ? new UrlSource(src) : new BlobSource(src);
@@ -94,11 +104,9 @@ export async function concatVideos(
               ? { decoderConfig: videoDecoderConfig }
               : undefined;
           firstVideoAdd = false;
-          await videoSource.add(
-            packet.clone({ timestamp: packet.timestamp + videoOffsetSec }),
-            meta,
-          );
-          lastEnd = Math.max(lastEnd, packet.timestamp + packet.duration);
+          const ts = remuxTimestamp(packet.timestamp, videoOffsetSec);
+          await videoSource.add(packet.clone({ timestamp: ts }), meta);
+          lastEnd = Math.max(lastEnd, ts + Math.max(0, packet.duration));
         }
         videoOffsetSec += lastEnd;
       }
@@ -112,11 +120,9 @@ export async function concatVideos(
               ? { decoderConfig: audioDecoderConfig }
               : undefined;
           firstAudioAdd = false;
-          await audioSource.add(
-            packet.clone({ timestamp: packet.timestamp + audioOffsetSec }),
-            meta,
-          );
-          lastEnd = Math.max(lastEnd, packet.timestamp + packet.duration);
+          const ts = remuxTimestamp(packet.timestamp, audioOffsetSec);
+          await audioSource.add(packet.clone({ timestamp: ts }), meta);
+          lastEnd = Math.max(lastEnd, ts + Math.max(0, packet.duration));
         }
         audioOffsetSec += lastEnd;
       }
