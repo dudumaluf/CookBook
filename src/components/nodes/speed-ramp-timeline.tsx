@@ -3,11 +3,11 @@
 import { useRef } from "react";
 
 import {
-  formatRampTime,
   moveSpeedPin,
   speedPinSegments,
   type SpeedPin,
 } from "@/lib/media/speed-pins";
+import { formatRampTime } from "@/lib/media/time-remap";
 import { cn } from "@/lib/utils";
 
 const PRESETS = [0.25, 0.5, 1, 2, 4] as const;
