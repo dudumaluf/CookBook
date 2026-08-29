@@ -41,6 +41,27 @@ const CLIP_PREFIX = "clip-";
 export interface VideoConcatNodeConfig {
   /** Ordered clip sockets rendered. Auto-grows to `maxWired + 2`. */
   portCount?: number;
+  /** Per-socket: play that clip backwards in the join. Index = clip-N. */
+  reversed?: boolean[];
+}
+
+export function isClipReversed(
+  reversed: boolean[] | undefined,
+  index: number,
+): boolean {
+  return reversed?.[index] === true;
+}
+
+export function setClipReversed(
+  reversed: boolean[] | undefined,
+  index: number,
+  value: boolean,
+): boolean[] {
+  const next = (reversed ?? []).slice();
+  while (next.length <= index) next.push(false);
+  next[index] = value;
+  while (next.length > 0 && !next[next.length - 1]) next.pop();
+  return next;
 }
 
 function clipInputs(portCount: number | undefined): NodeIO[] {
@@ -89,9 +110,34 @@ function VideoConcatBody({
   }, [current, desired, updateConfig]);
 
   const wiredCount = maxConnected + 1;
+  const toggleCount = Math.max(MIN_PORTS, wiredCount);
 
   return (
     <div className="flex w-full min-w-[260px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {Array.from({ length: toggleCount }, (_, i) => (
+          <label
+            key={i}
+            className="flex cursor-pointer items-center gap-1.5 text-[10.5px] text-muted-foreground"
+          >
+            <input
+              type="checkbox"
+              checked={isClipReversed(config.reversed, i)}
+              onPointerDown={(e) => e.stopPropagation()}
+              onChange={(e) =>
+                updateConfig({
+                  reversed: setClipReversed(config.reversed, i, e.target.checked),
+                })
+              }
+              className="h-3 w-3 accent-accent"
+            />
+            <span>
+              clip {i + 1}
+              {isClipReversed(config.reversed, i) ? " · reversed" : ""}
+            </span>
+          </label>
+        ))}
+      </div>
       {status === "error" && record?.error ? (
         <p
           role="alert"
@@ -120,12 +166,44 @@ function VideoConcatBody({
   );
 }
 
+function VideoConcatSettings({
+  config,
+  updateConfig,
+}: NodeBodyProps<VideoConcatNodeConfig>) {
+  const n = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
+  return (
+    <div className="flex flex-col gap-2 text-xs">
+      <p className="text-muted-foreground">
+        Reverse plays that clip backwards in the join. Socket order stays the
+        same.
+      </p>
+      {Array.from({ length: n }, (_, i) => (
+        <label key={i} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={isClipReversed(config.reversed, i)}
+            onChange={(e) =>
+              updateConfig({
+                reversed: setClipReversed(config.reversed, i, e.target.checked),
+              })
+            }
+            className="h-3.5 w-3.5 cursor-pointer accent-accent"
+          />
+          <span className="font-medium text-foreground/90">
+            Reverse clip {i + 1}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
   kind: "video-concat",
   category: "compose",
   title: "Video Concat",
   description:
-    "Join video clips into one continuous MP4 (client-side re-encode). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order.",
+    "Join video clips into one continuous MP4 (client-side re-encode). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order. Tick Reverse on a clip to play that input backwards.",
   icon: Combine,
   inputs: clipInputs(MIN_PORTS),
   getInputs: (config) => clipInputs(config.portCount),
@@ -134,27 +212,34 @@ export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
   reactive: false,
   // Salt + always-bust: the remux result is persisted in the exec cache.
   // Without this, Run replays the frozen file and looks like a no-op.
-  cacheVersion: 2,
+  cacheVersion: 3,
   isCacheBusting: () => true,
   execute: async ({ config, inputs }) => {
     const n = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
-    const ordered: string[] = [];
+    const ordered: { src: string; reverse?: boolean }[] = [];
     for (let i = 0; i < n; i++) {
       const ref = extractInputByType(inputs, `${CLIP_PREFIX}${i}`, "video");
-      if (ref?.url) ordered.push(ref.url);
+      if (ref?.url) {
+        ordered.push({
+          src: ref.url,
+          ...(isClipReversed(config.reversed, i) ? { reverse: true } : {}),
+        });
+      }
     }
     // Back-compat: clips still wired to the pre-ADR-0056 `clips` multi-handle.
     const legacy = extractInputArrayByType(inputs, "clips", "video")
       .map((r) => r.url)
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((src) => ({ src }));
     const clips = [...ordered, ...legacy];
 
     if (clips.length === 0) {
       throw new Error("Wire one or more video clips into the ordered sockets.");
     }
-    if (clips.length === 1) {
+    const anyReverse = clips.some((c) => c.reverse);
+    if (clips.length === 1 && !anyReverse) {
       // Nothing to join — pass the single clip through.
-      const ref: VideoRef = { url: clips[0]! };
+      const ref: VideoRef = { url: clips[0]!.src };
       return { type: "video", value: ref } satisfies StandardizedOutput;
     }
     const blob = await concatVideos(clips);
@@ -167,6 +252,10 @@ export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
     };
   },
   Body: VideoConcatBody,
+  settings: {
+    Content: VideoConcatSettings,
+    hasOverrides: (config) => config.reversed?.some(Boolean) === true,
+  },
   size: {
     defaultWidth: 320,
     minWidth: 260,

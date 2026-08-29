@@ -50,6 +50,7 @@ import { videoAudioMergeNodeSchema } from "@/components/nodes/node-video-audio-m
 import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
 import { videoPadNodeSchema } from "@/components/nodes/node-video-pad";
 import { videoSlicerNodeSchema } from "@/components/nodes/node-video-slicer";
+import { speedRampNodeSchema } from "@/components/nodes/node-speed-ramp";
 
 import { nodeRegistry } from "./registry";
 
@@ -99,6 +100,7 @@ export function registerAllNodes(): void {
   nodeRegistry.register(continuityBuilderNodeSchema);
   nodeRegistry.register(audioSlicerNodeSchema);
   nodeRegistry.register(videoSlicerNodeSchema);
+  nodeRegistry.register(speedRampNodeSchema);
   nodeRegistry.register(frameExtractNodeSchema);
   nodeRegistry.register(framesExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);

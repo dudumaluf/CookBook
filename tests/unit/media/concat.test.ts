@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { nextClipStart, remuxTimestamp } from "@/lib/media/concat";
+import {
+  nextClipStart,
+  remuxTimestamp,
+  resolveConcatClip,
+} from "@/lib/media/concat";
 
 describe("remuxTimestamp", () => {
   it("maps a clip that starts before 0 onto t=0", () => {
@@ -18,6 +22,26 @@ describe("remuxTimestamp", () => {
   it("does not require clips to have the same duration", () => {
     expect(remuxTimestamp(0, 3.1, 0)).toBe(3.1);
     expect(remuxTimestamp(12.4, 3.1, 0)).toBe(15.5);
+  });
+});
+
+describe("resolveConcatClip", () => {
+  it("treats a URL or Blob as forward", () => {
+    expect(resolveConcatClip("https://x/a.mp4")).toEqual({
+      src: "https://x/a.mp4",
+      reverse: false,
+    });
+  });
+
+  it("reads the reverse flag from a clip spec", () => {
+    expect(resolveConcatClip({ src: "https://x/a.mp4" })).toEqual({
+      src: "https://x/a.mp4",
+      reverse: false,
+    });
+    expect(resolveConcatClip({ src: "https://x/a.mp4", reverse: true })).toEqual({
+      src: "https://x/a.mp4",
+      reverse: true,
+    });
   });
 });
 

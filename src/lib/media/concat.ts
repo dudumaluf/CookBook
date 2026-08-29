@@ -85,14 +85,30 @@ async function firstClipSize(
   }
 }
 
+export type ConcatClip =
+  | Blob
+  | string
+  | { src: Blob | string; reverse?: boolean };
+
+export function resolveConcatClip(clip: ConcatClip): {
+  src: Blob | string;
+  reverse: boolean;
+} {
+  if (typeof clip === "object" && clip !== null && "src" in clip) {
+    return { src: clip.src, reverse: clip.reverse === true };
+  }
+  return { src: clip, reverse: false };
+}
+
 export async function concatVideos(
-  srcs: readonly (Blob | string)[],
+  srcs: readonly ConcatClip[],
 ): Promise<Blob> {
   if (srcs.length === 0) {
     throw new Error("No clips to concatenate.");
   }
 
-  const blobs = await Promise.all(srcs.map(resolveBlob));
+  const clips = srcs.map(resolveConcatClip);
+  const blobs = await Promise.all(clips.map((c) => resolveBlob(c.src)));
   const { width, height } = await firstClipSize(blobs[0]!);
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
@@ -122,36 +138,41 @@ export async function concatVideos(
         throw new Error(`Clip ${i + 1} has no video track.`);
       }
       const sink = new VideoSampleSink(vTrack);
-      let origin: number | null = null;
-      let frames = 0;
-      let lastDur = 0;
-      for await (const sample of sink.samples()) {
-        if (origin === null) origin = sample.timestamp;
-        ctx.fillStyle = "#000";
-        ctx.fillRect(0, 0, width, height);
-        const sw = sample.displayWidth;
-        const sh = sample.displayHeight;
-        const scale = Math.min(width / sw, height / sh);
-        const dw = sw * scale;
-        const dh = sh * scale;
-        sample.draw(ctx, (width - dw) / 2, (height - dh) / 2, dw, dh);
-        const dur = sample.duration > 0 ? sample.duration : 1 / 30;
-        const t = Math.max(
-          lastTs + 1e-4,
-          remuxTimestamp(sample.timestamp, offsetSec, origin),
-        );
-        await videoSource.add(
-          t,
-          dur,
-          frames === 0 ? { keyFrame: true } : undefined,
-        );
-        lastTs = t;
-        lastDur = dur;
-        frames += 1;
-        sample.close();
-      }
-      if (frames === 0) {
+      const samples = [];
+      for await (const sample of sink.samples()) samples.push(sample);
+      if (clips[i]!.reverse) samples.reverse();
+      if (samples.length === 0) {
         throw new Error(`Could not decode any frames from clip ${i + 1}.`);
+      }
+      let closed = 0;
+      let lastDur = 0;
+      let encodedInClip = 0;
+      try {
+        for (let f = 0; f < samples.length; f++) {
+          const sample = samples[f]!;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, width, height);
+          const sw = sample.displayWidth;
+          const sh = sample.displayHeight;
+          const scale = Math.min(width / sw, height / sh);
+          const dw = sw * scale;
+          const dh = sh * scale;
+          sample.draw(ctx, (width - dw) / 2, (height - dh) / 2, dw, dh);
+          const dur = sample.duration > 0 ? sample.duration : 1 / 30;
+          const t = Math.max(lastTs + 1e-4, offsetSec + encodedInClip);
+          await videoSource.add(
+            t,
+            dur,
+            f === 0 ? { keyFrame: true } : undefined,
+          );
+          lastTs = t;
+          lastDur = dur;
+          encodedInClip += dur;
+          sample.close();
+          closed += 1;
+        }
+      } finally {
+        for (let f = closed; f < samples.length; f++) samples[f]!.close();
       }
       offsetSec = nextClipStart(lastTs, lastDur);
     } finally {

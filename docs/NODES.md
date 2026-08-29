@@ -2,7 +2,7 @@
 
 Catalog of every registered node: what it does, inputs, and outputs.
 
-**52 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
+**53 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
 
 > When I/O is dynamic (auto-growing sockets / mode switches), the list is the usual default snapshot — check the node settings for variants.
 
@@ -45,7 +45,7 @@ Catalog of every registered node: what it does, inputs, and outputs.
 
 - [Marlin](#marlin) (`fal-marlin`)
 
-### Transform (17)
+### Transform (18)
 
 - [Array](#array) (`array`)
 - [Audio Isolation](#audio-isolation) (`fal-audio-isolation`)
@@ -60,6 +60,7 @@ Catalog of every registered node: what it does, inputs, and outputs.
 - [SAM 3 Segment](#sam-3-segment) (`sam-3`)
 - [Scribe V2](#scribe-v2) (`fal-scribe-v2`)
 - [Silent Video](#silent-video) (`audio-to-video`)
+- [Speed Ramp](#speed-ramp) (`speed-ramp`)
 - [Track Recompose](#track-recompose) (`track-recompose`)
 - [Transform](#transform) (`image-transform`)
 - [Video Pad](#video-pad) (`video-pad`)
@@ -736,6 +737,22 @@ Translate, rotate, and scale a single image around its center, preserving alpha 
 
 - `out` (image)
 
+### Speed Ramp
+
+- **Kind:** `speed-ramp`
+- **Category:** `transform`
+- **Run:** manual (Run / Run-here)
+
+Time-remap a video with a bezier curve (After Effects-style). X is output time, Y is source time — steep is faster, flat freezes, downhill reverses. Double-click the graph to add a key; drag handles to ease. Settings: output length (0 = same as source) and fps. Run encodes an MP4 you can preview and wire into Concat / Export / anything that takes `video`. Audio is dropped.
+
+**Inputs**
+
+- `video` (video)
+
+**Outputs**
+
+- `out` (video)
+
 ### Video Pad
 
 - **Kind:** `video-pad`
@@ -932,7 +949,7 @@ Mux a video with a replacement audio track — video frames from `video`, soundt
 - **Run:** manual (Run / Run-here)
 - **Dynamic I/O:** yes (sockets change with config / wiring)
 
-Join video clips into one continuous MP4 (client-side re-encode onto one H.264 timeline). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order. Lengths and aspects do not need to match.
+Join video clips into one continuous MP4 (client-side re-encode onto one H.264 timeline). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order. Tick Reverse on a clip to play that input backwards. Lengths and aspects do not need to match.
 
 **Inputs**
 

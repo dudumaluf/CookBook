@@ -64,6 +64,20 @@ export { sliceVideo } from "./slice-video";
 
 export { concatVideos } from "./concat";
 
+export { remapVideo } from "./remap-video";
+export {
+  addRemapKey,
+  defaultRemapKeys,
+  evaluateRemap,
+  moveRemapHandle,
+  moveRemapKey,
+  removeRemapKey,
+  sanitizeRemapKeys,
+  sourceTimeSec,
+  type RemapHandle,
+  type RemapKey,
+} from "./time-remap";
+
 export { replaceVideoAudio } from "./replace-audio";
 
 export {

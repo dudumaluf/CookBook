@@ -9,7 +9,11 @@ vi.mock("@/lib/media", async (importOriginal) => {
 const { uploadMediaAsset } = vi.hoisted(() => ({ uploadMediaAsset: vi.fn() }));
 vi.mock("@/lib/library/upload-asset", () => ({ uploadMediaAsset }));
 
-import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
+import {
+  isClipReversed,
+  setClipReversed,
+  videoConcatNodeSchema,
+} from "@/components/nodes/node-video-concat";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 function ctx(
@@ -57,8 +61,8 @@ describe("video-concat node", () => {
       }) as never,
     );
     expect(concatVideos).toHaveBeenCalledWith([
-      "https://x/a.mp4",
-      "https://x/b.mp4",
+      { src: "https://x/a.mp4" },
+      { src: "https://x/b.mp4" },
     ]);
     expect(uploadMediaAsset).toHaveBeenCalledTimes(1);
     const out = (result as { output: StandardizedOutput }).output;
@@ -82,9 +86,9 @@ describe("video-concat node", () => {
       } as never,
     );
     expect(concatVideos).toHaveBeenCalledWith([
-      "https://x/a.mp4",
-      "https://x/b.mp4",
-      "https://x/c.mp4",
+      { src: "https://x/a.mp4" },
+      { src: "https://x/b.mp4" },
+      { src: "https://x/c.mp4" },
     ]);
     const out = (result as { output: StandardizedOutput }).output;
     expect(out.type).toBe("video");
@@ -108,7 +112,44 @@ describe("video-concat node", () => {
   });
 
   it("busts the exec cache so Run always re-encodes", () => {
-    expect(videoConcatNodeSchema.cacheVersion).toBe(2);
+    expect(videoConcatNodeSchema.cacheVersion).toBe(3);
     expect(videoConcatNodeSchema.isCacheBusting?.({})).toBe(true);
+  });
+
+  it("forwards per-clip reverse flags and encodes a lone reversed clip", async () => {
+    await videoConcatNodeSchema.execute!({
+      nodeId: "n1",
+      config: { portCount: 2, reversed: [false, true] },
+      inputs: {
+        "clip-0": { type: "video", value: { url: "https://x/a.mp4" } },
+        "clip-1": { type: "video", value: { url: "https://x/b.mp4" } },
+      },
+      signal: new AbortController().signal,
+    } as never);
+    expect(concatVideos).toHaveBeenCalledWith([
+      { src: "https://x/a.mp4" },
+      { src: "https://x/b.mp4", reverse: true },
+    ]);
+
+    concatVideos.mockClear();
+    await videoConcatNodeSchema.execute!({
+      nodeId: "n1",
+      config: { portCount: 2, reversed: [true] },
+      inputs: {
+        "clip-0": { type: "video", value: { url: "https://x/solo.mp4" } },
+      },
+      signal: new AbortController().signal,
+    } as never);
+    expect(concatVideos).toHaveBeenCalledWith([
+      { src: "https://x/solo.mp4", reverse: true },
+    ]);
+  });
+
+  it("toggles reverse flags by clip index without trailing falses", () => {
+    expect(isClipReversed(undefined, 0)).toBe(false);
+    expect(isClipReversed([true, false], 0)).toBe(true);
+    expect(setClipReversed(undefined, 1, true)).toEqual([false, true]);
+    expect(setClipReversed([true, true], 1, false)).toEqual([true]);
+    expect(setClipReversed([true], 0, false)).toEqual([]);
   });
 });

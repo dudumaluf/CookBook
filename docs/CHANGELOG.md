@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — New node: Speed Ramp (After Effects-style time remap)
+
+Added **Speed Ramp** (`speed-ramp`). Wire a video, draw a bezier on the graph (X = output time, Y = source time), Run — get an MP4 you can play on the node and plug into Concat / Export / anything that takes `video`. Steep = faster, flat = freeze, downhill = reverse. Double-click adds a key; Delete removes it; handles ease the segment. Settings: output length (0 = keep source duration) and fps (24/30/60). Audio is dropped. Local re-encode via mediabunny (`remapVideo`), same canvas path as Concat.
+
+## 2026-08-28 — Video Concat: optional reverse per input clip
+
+Each clip socket can play **backwards** in the join (checkbox on the node + in settings). Socket order is unchanged — reverse is per clip, not a reorder. A single reversed clip still re-encodes (passthrough only when there's one clip and it's forward).
+
 ## 2026-08-28 — Fix: Video Concat Run was a no-op + freeze at the cut
 
 Two stacked bugs. (1) **Run replayed the cached remux** — hash is `{kind, config, deps}`, so the "always re-encode" change never ran; the playhead stayed stuck at ~4s / 9s. `cacheVersion: 2` + `isCacheBusting` so every Run actually re-encodes. (2) **A hole at the join** — advancing by container duration (H3 Max says 5s, frames end ~4.5s) left a gap the browser stalls in. Next clip now starts at the last encoded sample; keyframe on each clip start; load via `fetchMediaBlob` (CORS); throw if a clip decodes zero frames.
