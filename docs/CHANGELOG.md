@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Speed Ramp curve: hover to add a key + time readout
+
+The graph used a 1×1 viewBox stretched to a wide node, so keys looked like pills and sat clipped in the corners. It now draws in pixel space with padding (round dots). Hover the curve to see **out → src** time and a ghost key; click to add. Delete still removes the selected key.
+
 ## 2026-08-28 — New node: Speed Ramp (After Effects-style time remap)
 
 Added **Speed Ramp** (`speed-ramp`). Wire a video, draw a bezier on the graph (X = output time, Y = source time), Run — get an MP4 you can play on the node and plug into Concat / Export / anything that takes `video`. Steep = faster, flat = freeze, downhill = reverse. Double-click adds a key; Delete removes it; handles ease the segment. Settings: output length (0 = keep source duration) and fps (24/30/60). Audio is dropped. Local re-encode via mediabunny (`remapVideo`), same canvas path as Concat.

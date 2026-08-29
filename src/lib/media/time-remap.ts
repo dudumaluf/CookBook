@@ -159,6 +159,22 @@ export function sourceTimeSec(
   return evaluateRemap(keys, u) * Math.max(0, srcDurSec);
 }
 
+/** `0:04` / `0:04.3` / `1:02` — hover readout on the remap graph. */
+export function formatRampTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  const whole = Math.floor(s);
+  const tenth = Math.round((s - whole) * 10);
+  if (tenth <= 0) return `${m}:${String(whole).padStart(2, "0")}`;
+  if (tenth >= 10) {
+    const carry = whole + 1;
+    if (carry >= 60) return `${m + 1}:00`;
+    return `${m}:${String(carry).padStart(2, "0")}`;
+  }
+  return `${m}:${String(whole).padStart(2, "0")}.${tenth}`;
+}
+
 export function outputFrameCount(outDurSec: number, fps: number): number {
   const f = Math.max(1, Math.round(fps));
   const d = Math.max(1 / f, outDurSec);

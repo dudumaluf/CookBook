@@ -12,6 +12,7 @@ import {
   type RemapKey,
 } from "@/lib/media/time-remap";
 import { useExecutionStore } from "@/lib/stores/execution-store";
+import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
 import { TimeRemapCurve } from "./time-remap-curve";
@@ -46,8 +47,24 @@ function SpeedRampBody({
       ? output.value.url
       : null;
   const [playheadU, setPlayheadU] = useState<number | undefined>();
+  const [resultDurSec, setResultDurSec] = useState(0);
+  const sourceId = useWorkflowStore(
+    (s) =>
+      s.edges.find((e) => e.target === nodeId && e.targetHandle === "video")
+        ?.source ?? null,
+  );
+  const sourceDurSec = useExecutionStore((s) => {
+    if (!sourceId) return 0;
+    const out = s.records.get(sourceId)?.output;
+    const single = Array.isArray(out) ? out[0] : out;
+    if (single && single.type === "video" && single.value.durationMs) {
+      return single.value.durationMs / 1000;
+    }
+    return 0;
+  });
   const fps = config.fps ?? DEFAULT_FPS;
   const dur = config.durationSec ?? 0;
+  const outDurSec = dur > 0 ? dur : resultDurSec || sourceDurSec;
 
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
@@ -67,11 +84,13 @@ function SpeedRampBody({
       <TimeRemapCurve
         keys={config.keys}
         playheadU={url ? playheadU : undefined}
+        outputDurationSec={outDurSec || undefined}
+        sourceDurationSec={sourceDurSec || resultDurSec || undefined}
         onChange={(keys) => updateConfig({ keys })}
       />
       <p className="text-[10px] leading-snug text-muted-foreground/80">
-        X = output time · Y = source time. Double-click adds a key; Delete
-        removes it. Drag handles to ease.
+        Hover the curve for time · click to add a key · Delete removes it ·
+        drag the hollow dots to ease
       </p>
       {status === "error" && record?.error ? (
         <p
@@ -99,6 +118,10 @@ function SpeedRampBody({
             playsInline
             preload="metadata"
             onPointerDown={(e) => e.stopPropagation()}
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (Number.isFinite(d) && d > 0) setResultDurSec(d);
+            }}
             onTimeUpdate={(e) => {
               const el = e.currentTarget;
               if (el.duration > 0) setPlayheadU(el.currentTime / el.duration);

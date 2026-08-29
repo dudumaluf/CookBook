@@ -8,6 +8,7 @@ import {
   outputFrameCount,
   removeRemapKey,
   sanitizeRemapKeys,
+  formatRampTime,
   sourceTimeSec,
 } from "@/lib/media/time-remap";
 
@@ -40,6 +41,15 @@ describe("evaluateRemap", () => {
 
   it("falls back to identity when keys are missing", () => {
     expect(evaluateRemap(undefined, 0.25)).toBeCloseTo(0.25, 3);
+  });
+});
+
+describe("formatRampTime", () => {
+  it("formats seconds as m:ss with an optional tenth", () => {
+    expect(formatRampTime(0)).toBe("0:00");
+    expect(formatRampTime(4)).toBe("0:04");
+    expect(formatRampTime(4.2)).toBe("0:04.2");
+    expect(formatRampTime(62)).toBe("1:02");
   });
 });
 
