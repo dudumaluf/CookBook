@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Fix: Video Concat always re-encodes so playback crosses the cut
+
+Remux still froze in the middle (~end of clip 1) when codec/size looked compatible: GOP/SPS mismatch or a short audio track stopped the player. Concat now always decodes every clip onto one H.264 canvas timeline (letterbox if aspects differ), no audio — duration follows the picture. Lengths do not need to match. Run is slower; the join should play through.
+
 ## 2026-08-28 — Fix: Video Concat freeze at the first clip
 
 Joined file played ~4.5s then the scrubber stuck — the second clip never appeared. Two causes: (1) a shorter audio track makes the browser treat the file as over even when video continues; (2) different coded sizes (common across H3 Max start images) remux “successfully” then the decoder dies at the cut. **Fix:** one shared timeline (`computeDuration`); drop audio unless every clip has it; re-encode when codec/size differ. Lengths still do not need to match.

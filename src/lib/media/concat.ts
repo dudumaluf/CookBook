@@ -3,9 +3,6 @@ import {
   BlobSource,
   BufferTarget,
   CanvasSource,
-  EncodedAudioPacketSource,
-  EncodedPacketSink,
-  EncodedVideoPacketSource,
   Input,
   Mp4OutputFormat,
   Output,
@@ -15,25 +12,19 @@ import {
 } from "mediabunny";
 
 /**
- * Video concatenation via mediabunny — Slice D.2 (multimodal media arc).
+ * Video concatenation via mediabunny.
  *
- * Fast path: remux (packet-copy) when every clip shares codec + size.
- * Fallback: re-encode through a canvas when sizes/codecs differ — otherwise
- * the decoder dies at the cut and the player freezes on the last frame of
- * clip 1 (scrub stuck at ~4.5s). Lengths do not have to match.
- *
- * Audio is kept only when every clip has an audio track. A shorter audio
- * track makes browsers treat the file as ending there even if video continues.
+ * Always decode → draw → re-encode onto one H.264 timeline. Remux
+ * (packet-copy) kept freezing at the cut: B-frame GOPs, per-clip SPS,
+ * and a shorter audio track all make the player stop in the "middle"
+ * even when the second clip is in the file. Lengths / aspects do not
+ * have to match. Audio is dropped so duration follows the picture.
  */
 
 /**
- * Map a clip-local packet onto the joined timeline.
- *
- * `originTs` is this clip's first packet timestamp. Many generated MP4s
- * start a few tens of ms *before* 0 (B-frame composition offset / AAC
- * delay). Adding `offset + packetTs` then lands the next clip *before*
- * the previous GOP ended. Subtracting origin makes the clip start
- * exactly at `offsetSec`.
+ * Map a clip-local timestamp onto the joined timeline.
+ * `originTs` is this clip's first sample/packet timestamp (often slightly
+ * before 0). Subtracting it makes the clip start exactly at `offsetSec`.
  */
 export function remuxTimestamp(
   packetTs: number,
@@ -43,43 +34,37 @@ export function remuxTimestamp(
   return Math.max(0, offsetSec + (packetTs - originTs));
 }
 
-export interface ConcatClipProbe {
-  codec: string | null;
-  width?: number;
-  height?: number;
-  hasAudio: boolean;
-}
-
-/** True when every clip can share one remux decoder config. */
-export function clipsCanRemux(clips: readonly ConcatClipProbe[]): boolean {
-  const first = clips[0];
-  if (!first?.codec || !first.width || !first.height) return false;
-  return clips.every(
-    (c) =>
-      c.codec === first.codec &&
-      c.width === first.width &&
-      c.height === first.height,
-  );
-}
-
 function makeInput(src: Blob | string): Input {
   const source =
     typeof src === "string" ? new UrlSource(src) : new BlobSource(src);
   return new Input({ formats: ALL_FORMATS, source });
 }
 
-async function probeClip(src: Blob | string): Promise<ConcatClipProbe> {
+function even(n: number): number {
+  const r = Math.round(n);
+  return r > 0 ? r - (r % 2) : 2;
+}
+
+async function firstClipSize(
+  src: Blob | string,
+): Promise<{ width: number; height: number }> {
   const input = makeInput(src);
   try {
     const vTrack = await input.getPrimaryVideoTrack();
-    const aTrack = await input.getPrimaryAudioTrack();
-    const cfg = vTrack ? await vTrack.getDecoderConfig() : null;
-    return {
-      codec: vTrack ? await vTrack.getCodec() : null,
-      width: cfg?.codedWidth,
-      height: cfg?.codedHeight,
-      hasAudio: !!aTrack,
-    };
+    if (!vTrack) {
+      throw new Error("Wire clips that contain a video track.");
+    }
+    const sink = new VideoSampleSink(vTrack);
+    const sample = await sink.getSample(
+      await input.getFirstTimestamp([vTrack]),
+    );
+    if (!sample) {
+      throw new Error("Could not decode the first frame.");
+    }
+    const width = even(sample.displayWidth);
+    const height = even(sample.displayHeight);
+    sample.close();
+    return { width, height };
   } finally {
     input.dispose();
   }
@@ -92,112 +77,7 @@ export async function concatVideos(
     throw new Error("No clips to concatenate.");
   }
 
-  const probes = [];
-  for (const src of srcs) probes.push(await probeClip(src));
-  const keepAudio = probes.every((p) => p.hasAudio);
-
-  if (!clipsCanRemux(probes)) {
-    const w = probes[0]?.width;
-    const h = probes[0]?.height;
-    if (!w || !h) {
-      throw new Error("Wire clips that contain a video track.");
-    }
-    return concatByReencode(srcs, w, h);
-  }
-
-  return concatByRemux(srcs, keepAudio);
-}
-
-async function concatByRemux(
-  srcs: readonly (Blob | string)[],
-  keepAudio: boolean,
-): Promise<Blob> {
-  const output = new Output({
-    format: new Mp4OutputFormat(),
-    target: new BufferTarget(),
-  });
-
-  let videoSource: EncodedVideoPacketSource | null = null;
-  let audioSource: EncodedAudioPacketSource | null = null;
-  let offsetSec = 0;
-
-  for (const src of srcs) {
-    const input = makeInput(src);
-    try {
-      const vTrack = await input.getPrimaryVideoTrack();
-      const aTrack = await input.getPrimaryAudioTrack();
-
-      if (!videoSource) {
-        const codec = vTrack ? await vTrack.getCodec() : null;
-        if (!codec || !vTrack) {
-          throw new Error("Wire clips that contain a video track.");
-        }
-        videoSource = new EncodedVideoPacketSource(codec);
-        output.addVideoTrack(videoSource);
-        if (keepAudio && aTrack) {
-          const aCodec = await aTrack.getCodec();
-          if (aCodec) {
-            audioSource = new EncodedAudioPacketSource(aCodec);
-            output.addAudioTrack(audioSource);
-          }
-        }
-        await output.start();
-      }
-
-      let maxEnd = offsetSec;
-      if (vTrack && videoSource) {
-        const sink = new EncodedPacketSink(vTrack);
-        const decoderConfig = await vTrack.getDecoderConfig();
-        let origin: number | null = null;
-        let first = true;
-        for await (const packet of sink.packets()) {
-          if (origin === null) origin = packet.timestamp;
-          const ts = remuxTimestamp(packet.timestamp, offsetSec, origin);
-          await videoSource.add(
-            packet.clone({ timestamp: ts }),
-            first && decoderConfig ? { decoderConfig } : undefined,
-          );
-          first = false;
-          maxEnd = Math.max(maxEnd, ts + Math.max(0, packet.duration));
-        }
-      }
-      if (keepAudio && aTrack && audioSource) {
-        const sink = new EncodedPacketSink(aTrack);
-        const decoderConfig = await aTrack.getDecoderConfig();
-        let origin: number | null = null;
-        let first = true;
-        for await (const packet of sink.packets()) {
-          if (origin === null) origin = packet.timestamp;
-          const ts = remuxTimestamp(packet.timestamp, offsetSec, origin);
-          await audioSource.add(
-            packet.clone({ timestamp: ts }),
-            first && decoderConfig ? { decoderConfig } : undefined,
-          );
-          first = false;
-          maxEnd = Math.max(maxEnd, ts + Math.max(0, packet.duration));
-        }
-      }
-      const durationSec = await input.computeDuration();
-      offsetSec = Math.max(offsetSec + durationSec, maxEnd);
-    } finally {
-      input.dispose();
-    }
-  }
-
-  await output.finalize();
-  const buffer = (output.target as BufferTarget).buffer;
-  if (!buffer) {
-    throw new Error("Concat produced no output buffer.");
-  }
-  return new Blob([buffer], { type: "video/mp4" });
-}
-
-/** Decode + draw + re-encode so mismatched sizes still join. */
-async function concatByReencode(
-  srcs: readonly (Blob | string)[],
-  width: number,
-  height: number,
-): Promise<Blob> {
+  const { width, height } = await firstClipSize(srcs[0]!);
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -216,14 +96,17 @@ async function concatByReencode(
   await output.start();
 
   let offsetSec = 0;
+  let lastTs = -1;
   for (const src of srcs) {
     const input = makeInput(src);
     try {
       const vTrack = await input.getPrimaryVideoTrack();
       if (!vTrack) continue;
       const sink = new VideoSampleSink(vTrack);
-      let maxEnd = 0;
+      let origin: number | null = null;
+      let clipEnd = 0;
       for await (const sample of sink.samples()) {
+        if (origin === null) origin = sample.timestamp;
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, width, height);
         const sw = sample.displayWidth;
@@ -232,14 +115,18 @@ async function concatByReencode(
         const dw = sw * scale;
         const dh = sh * scale;
         sample.draw(ctx, (width - dw) / 2, (height - dh) / 2, dw, dh);
-        const t = offsetSec + Math.max(0, sample.timestamp);
         const dur = sample.duration > 0 ? sample.duration : 1 / 30;
+        const t = Math.max(
+          lastTs + 1e-4,
+          remuxTimestamp(sample.timestamp, offsetSec, origin),
+        );
         await videoSource.add(t, dur);
-        maxEnd = Math.max(maxEnd, sample.timestamp + dur);
+        lastTs = t;
+        clipEnd = Math.max(clipEnd, sample.timestamp - origin + dur);
         sample.close();
       }
       const durationSec = await input.computeDuration();
-      offsetSec += Math.max(durationSec, maxEnd);
+      offsetSec += Math.max(durationSec, clipEnd);
     } finally {
       input.dispose();
     }
