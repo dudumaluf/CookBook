@@ -45,18 +45,24 @@ function useWiredVideo(nodeId: string): { url: string | null; durationSec: numbe
       s.edges.find((e) => e.target === nodeId && e.targetHandle === "video")
         ?.source ?? null,
   );
-  return useExecutionStore((s) => {
-    if (!sourceId) return { url: null, durationSec: 0 };
+  // Selectors must return primitives — a fresh `{ url, durationSec }`
+  // each time loops (React #185), same trap as Seedance / Concat.
+  const url = useExecutionStore((s) => {
+    if (!sourceId) return null;
     const out = s.records.get(sourceId)?.output;
     const single = Array.isArray(out) ? out[0] : out;
-    if (single && single.type === "video") {
-      return {
-        url: single.value.url,
-        durationSec: (single.value.durationMs ?? 0) / 1000,
-      };
-    }
-    return { url: null, durationSec: 0 };
+    return single && single.type === "video" ? (single.value.url ?? null) : null;
   });
+  const durationSec = useExecutionStore((s) => {
+    if (!sourceId) return 0;
+    const out = s.records.get(sourceId)?.output;
+    const single = Array.isArray(out) ? out[0] : out;
+    if (single && single.type === "video" && single.value.durationMs) {
+      return single.value.durationMs / 1000;
+    }
+    return 0;
+  });
+  return { url, durationSec };
 }
 
 function SpeedRampBody({
