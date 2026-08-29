@@ -66,6 +66,15 @@ export { concatVideos } from "./concat";
 
 export { remapVideo } from "./remap-video";
 export {
+  clampSpeed,
+  defaultSpeedPins,
+  outputDurationFromPins,
+  sanitizeSpeedPins,
+  sourceTimeFromPins,
+  splitSpeedPin,
+  type SpeedPin,
+} from "./speed-pins";
+export {
   addRemapKey,
   defaultRemapKeys,
   evaluateRemap,

@@ -13,6 +13,11 @@ import {
 
 import { fetchMediaBlob } from "./load-bitmap";
 import {
+  outputDurationFromPins,
+  sourceTimeFromPins,
+  type SpeedPin,
+} from "./speed-pins";
+import {
   outputFrameCount,
   sourceTimeSec,
   type RemapKey,
@@ -25,8 +30,11 @@ import {
  */
 
 export interface RemapVideoOptions {
+  /** Footage pins (preferred). Constant speed between cuts on the source. */
+  pins?: readonly SpeedPin[];
   keys?: readonly RemapKey[];
-  /** Output length in seconds. Omit / ≤0 to keep the source duration. */
+  /** Output length in seconds. Omit / ≤0 to keep the source duration
+   *  (or the duration implied by `pins`). */
   durationSec?: number;
   fps?: number;
 }
@@ -76,8 +84,16 @@ export async function remapVideo(
     if (srcDurSec <= 0) {
       throw new Error("Could not read the source duration.");
     }
+    const fromPins =
+      opts.pins && opts.pins.length > 0
+        ? outputDurationFromPins(opts.pins, srcDurSec)
+        : 0;
     const outDurSec =
-      opts.durationSec && opts.durationSec > 0 ? opts.durationSec : srcDurSec;
+      opts.durationSec && opts.durationSec > 0
+        ? opts.durationSec
+        : fromPins > 0
+          ? fromPins
+          : srcDurSec;
     const fps = opts.fps && opts.fps > 0 ? opts.fps : 30;
     const framesN = outputFrameCount(outDurSec, fps);
     const frameDur = 1 / fps;
@@ -116,7 +132,10 @@ export async function remapVideo(
     try {
       for (let i = 0; i < framesN; i++) {
         const outSec = i * frameDur;
-        const srcSec = sourceTimeSec(opts.keys, outSec, outDurSec, srcDurSec);
+        const srcSec =
+          opts.pins && opts.pins.length > 0
+            ? sourceTimeFromPins(opts.pins, outSec, srcDurSec)
+            : sourceTimeSec(opts.keys, outSec, outDurSec, srcDurSec);
         const idx = nearestIndex(times, srcSec);
         const sample = samples[Math.max(0, idx)]!;
         ctx.fillStyle = "#000";

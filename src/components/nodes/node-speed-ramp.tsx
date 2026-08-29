@@ -1,37 +1,62 @@
 "use client";
 
 import { Loader2, Spline } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputByType } from "@/lib/engine/extract-input";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
 import { remapVideo } from "@/lib/media/remap-video";
 import {
-  defaultRemapKeys,
-  type RemapKey,
-} from "@/lib/media/time-remap";
+  defaultSpeedPins,
+  outputDurationFromPins,
+  pinSummary,
+  removeSpeedPin,
+  sanitizeSpeedPins,
+  splitSpeedPin,
+  type SpeedPin,
+} from "@/lib/media/speed-pins";
+import { formatRampTime, type RemapKey } from "@/lib/media/time-remap";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
-import { TimeRemapCurve } from "./time-remap-curve";
+import { SpeedRampTimeline } from "./speed-ramp-timeline";
 
 /**
- * Speed Ramp — After Effects-style time remap.
- *
- * A bezier curve maps output time (X) → source time (Y). Steep = faster,
- * flat = freeze, downhill = reverse. Run re-encodes a new MP4 that other
- * nodes can take as `video`. Audio is dropped (same as Concat / Pad).
+ * Speed Ramp — mark places on the source footage and set a speed
+ * (0.25× / 1× / 2× …) for each zone. CapCut-style, not an AE bezier.
+ * Run re-encodes an MP4. Audio is dropped.
  */
 
 const DEFAULT_FPS = 30;
 
 export interface SpeedRampNodeConfig {
+  pins?: SpeedPin[];
+  /** Legacy bezier keys — used only when `pins` is absent. */
   keys?: RemapKey[];
-  /** Output length in seconds. 0 / omit = keep the source duration. */
   durationSec?: number;
   fps?: number;
+}
+
+function useWiredVideo(nodeId: string): { url: string | null; durationSec: number } {
+  const sourceId = useWorkflowStore(
+    (s) =>
+      s.edges.find((e) => e.target === nodeId && e.targetHandle === "video")
+        ?.source ?? null,
+  );
+  return useExecutionStore((s) => {
+    if (!sourceId) return { url: null, durationSec: 0 };
+    const out = s.records.get(sourceId)?.output;
+    const single = Array.isArray(out) ? out[0] : out;
+    if (single && single.type === "video") {
+      return {
+        url: single.value.url,
+        durationSec: (single.value.durationMs ?? 0) / 1000,
+      };
+    }
+    return { url: null, durationSec: 0 };
+  });
 }
 
 function SpeedRampBody({
@@ -42,56 +67,102 @@ function SpeedRampBody({
   const record = useExecutionStore((s) => s.records.get(nodeId));
   const status = record?.status;
   const output = record?.output;
-  const url =
+  const resultUrl =
     output && !Array.isArray(output) && output.type === "video"
       ? output.value.url
       : null;
-  const [playheadU, setPlayheadU] = useState<number | undefined>();
-  const [resultDurSec, setResultDurSec] = useState(0);
-  const sourceId = useWorkflowStore(
-    (s) =>
-      s.edges.find((e) => e.target === nodeId && e.targetHandle === "video")
-        ?.source ?? null,
-  );
-  const sourceDurSec = useExecutionStore((s) => {
-    if (!sourceId) return 0;
-    const out = s.records.get(sourceId)?.output;
-    const single = Array.isArray(out) ? out[0] : out;
-    if (single && single.type === "video" && single.value.durationMs) {
-      return single.value.durationMs / 1000;
-    }
-    return 0;
-  });
+  const wired = useWiredVideo(nodeId);
+  const srcRef = useRef<HTMLVideoElement>(null);
+  const [srcDur, setSrcDur] = useState(wired.durationSec);
+  const [playhead, setPlayhead] = useState(0);
+  const [selected, setSelected] = useState(0);
+  const dur = srcDur > 0 ? srcDur : wired.durationSec;
+  const pins = sanitizeSpeedPins(config.pins ?? defaultSpeedPins(), dur);
   const fps = config.fps ?? DEFAULT_FPS;
-  const dur = config.durationSec ?? 0;
-  const outDurSec = dur > 0 ? dur : resultDurSec || sourceDurSec;
+  const outEst = dur > 0 ? outputDurationFromPins(pins, dur) : 0;
+
+  const setPins = (next: SpeedPin[]) => {
+    updateConfig({ pins: sanitizeSpeedPins(next, dur) });
+  };
 
   return (
     <div className="flex w-full min-w-[280px] flex-col gap-2 px-3 pb-2.5 pt-0.5">
       <div className="flex items-center justify-between gap-2 text-[10.5px] text-muted-foreground">
-        <span>
-          out {dur > 0 ? `${dur}s` : "source"} · {fps} fps
-        </span>
+        <span>{pinSummary(pins, dur || 1)} · {fps} fps</span>
         <button
           type="button"
           className="rounded px-1.5 py-0.5 hover:bg-foreground/[0.06] hover:text-foreground"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => updateConfig({ keys: defaultRemapKeys() })}
+          onClick={() => {
+            setPins(defaultSpeedPins());
+            setSelected(0);
+          }}
         >
-          Reset curve
+          Reset
         </button>
       </div>
-      <TimeRemapCurve
-        keys={config.keys}
-        playheadU={url ? playheadU : undefined}
-        outputDurationSec={outDurSec || undefined}
-        sourceDurationSec={sourceDurSec || resultDurSec || undefined}
-        onChange={(keys) => updateConfig({ keys })}
-      />
+
+      {wired.url ? (
+        <div
+          className="relative overflow-hidden rounded-md bg-black"
+          style={{ aspectRatio: "16 / 9" }}
+        >
+          <video
+            ref={srcRef}
+            key={wired.url}
+            src={wired.url}
+            className="h-full w-full object-contain"
+            controls
+            playsInline
+            preload="metadata"
+            onPointerDown={(e) => e.stopPropagation()}
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (Number.isFinite(d) && d > 0) setSrcDur(d);
+            }}
+            onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
+          />
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
+          <Spline className="h-3 w-3" />
+          <span>Wire a video, then mark ramps on the footage</span>
+        </div>
+      )}
+
+      {wired.url && dur > 0 ? (
+        <SpeedRampTimeline
+          pins={pins}
+          srcDurSec={dur}
+          playheadSec={playhead}
+          selected={selected}
+          onSelect={setSelected}
+          onSeek={(t) => {
+            const v = srcRef.current;
+            if (v) v.currentTime = t;
+            setPlayhead(t);
+          }}
+          onPins={setPins}
+          onSplit={() => {
+            const next = splitSpeedPin(pins, playhead, dur);
+            setPins(next);
+            const idx = next.findIndex(
+              (p) => Math.abs(p.srcSec - playhead) < 0.08,
+            );
+            if (idx >= 0) setSelected(idx);
+          }}
+          onRemove={() => {
+            setPins(removeSpeedPin(pins, selected, dur));
+            setSelected(0);
+          }}
+        />
+      ) : null}
+
       <p className="text-[10px] leading-snug text-muted-foreground/80">
-        Hover the curve for time · click to add a key · Delete removes it ·
-        drag the hollow dots to ease
+        Scrub the source, Split at the playhead, set that zone&apos;s speed.
+        {outEst > 0 ? ` Result ≈ ${formatRampTime(outEst)}.` : ""} Run to encode.
       </p>
+
       {status === "error" && record?.error ? (
         <p
           role="alert"
@@ -104,36 +175,23 @@ function SpeedRampBody({
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>Ramping…</span>
         </div>
-      ) : url ? (
+      ) : resultUrl ? (
         <div
           className="relative overflow-hidden rounded-md bg-black"
           style={{ aspectRatio: "16 / 9" }}
         >
           <video
-            key={url}
-            src={url}
+            key={resultUrl}
+            src={resultUrl}
             className="h-full w-full object-contain"
             controls
             loop
             playsInline
             preload="metadata"
             onPointerDown={(e) => e.stopPropagation()}
-            onLoadedMetadata={(e) => {
-              const d = e.currentTarget.duration;
-              if (Number.isFinite(d) && d > 0) setResultDurSec(d);
-            }}
-            onTimeUpdate={(e) => {
-              const el = e.currentTarget;
-              if (el.duration > 0) setPlayheadU(el.currentTime / el.duration);
-            }}
           />
         </div>
-      ) : (
-        <div className="flex items-center gap-2 rounded-md border border-dashed border-border/40 bg-foreground/[0.02] px-2 py-2 text-[11px] text-muted-foreground">
-          <Spline className="h-3 w-3" />
-          <span>Wire a video, shape the curve, then Run</span>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -142,31 +200,9 @@ function SpeedRampSettings({
   config,
   updateConfig,
 }: NodeBodyProps<SpeedRampNodeConfig>) {
-  const durId = useId();
   const fpsId = useId();
-  const cls =
-    "h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs";
   return (
     <div className="flex flex-col gap-3 text-xs">
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={durId} className="font-medium text-foreground/90">
-          Output length (s)
-          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-            (0 = same as source)
-          </span>
-        </label>
-        <input
-          id={durId}
-          type="number"
-          min={0}
-          step={0.1}
-          value={config.durationSec ?? 0}
-          onChange={(e) =>
-            updateConfig({ durationSec: Math.max(0, Number(e.target.value)) })
-          }
-          className={cls}
-        />
-      </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={fpsId} className="font-medium text-foreground/90">
           FPS
@@ -175,7 +211,7 @@ function SpeedRampSettings({
           id={fpsId}
           value={String(config.fps ?? DEFAULT_FPS)}
           onChange={(e) => updateConfig({ fps: Number(e.target.value) })}
-          className={cls}
+          className="h-7 w-full rounded-md border border-border/60 bg-background/40 px-2 text-xs"
         >
           <option value="24">24</option>
           <option value="30">30</option>
@@ -186,25 +222,17 @@ function SpeedRampSettings({
   );
 }
 
-function hasOverrides(config: SpeedRampNodeConfig): boolean {
-  return (
-    (config.durationSec !== undefined && config.durationSec > 0) ||
-    (config.fps !== undefined && config.fps !== DEFAULT_FPS)
-  );
-}
-
 export const speedRampNodeSchema = defineNode<SpeedRampNodeConfig>({
   kind: "speed-ramp",
   category: "transform",
   title: "Speed Ramp",
   description:
-    "Time-remap a video with a bezier curve (After Effects-style). X is output time, Y is source time — steep is faster, flat freezes, downhill reverses. Run encodes an MP4 you can preview and wire into other nodes. Audio is dropped.",
+    "Mark places on the source footage and set a speed per zone (0.25× slow-mo, 2× fast, …). Scrub, Split at the playhead, pick a speed. Run encodes an MP4 you can wire into other nodes. Audio is dropped.",
   icon: Spline,
   inputs: [{ id: "video", label: "video", dataType: "video" }],
   outputs: [{ id: "out", label: "out", dataType: "video" }],
-  defaultConfig: { keys: defaultRemapKeys(), fps: DEFAULT_FPS, durationSec: 0 },
+  defaultConfig: { pins: defaultSpeedPins(), fps: DEFAULT_FPS },
   configParams: {
-    durationSec: { control: "number", label: "output length (s)", min: 0, step: 0.1 },
     fps: { control: "select", options: ["24", "30", "60"], label: "fps" },
   },
   reactive: false,
@@ -214,7 +242,9 @@ export const speedRampNodeSchema = defineNode<SpeedRampNodeConfig>({
       throw new Error("Wire a video into the `video` handle.");
     }
     const result = await remapVideo(video.url, {
-      keys: config.keys ?? defaultRemapKeys(),
+      ...(config.pins || !config.keys
+        ? { pins: config.pins ?? defaultSpeedPins() }
+        : { keys: config.keys }),
       ...(config.durationSec && config.durationSec > 0
         ? { durationSec: config.durationSec }
         : {}),
@@ -231,11 +261,16 @@ export const speedRampNodeSchema = defineNode<SpeedRampNodeConfig>({
     };
     return {
       output: { type: "video", value: ref } satisfies StandardizedOutput,
-      usage: { model: "mediabunny time-remap" },
+      usage: { model: "mediabunny speed-ramp" },
     };
   },
   Body: SpeedRampBody,
-  settings: { Content: SpeedRampSettings, hasOverrides },
+  settings: {
+    Content: SpeedRampSettings,
+    hasOverrides: (config) =>
+      (config.fps !== undefined && config.fps !== DEFAULT_FPS) ||
+      (config.pins !== undefined && config.pins.length > 1),
+  },
   size: {
     defaultWidth: 360,
     minWidth: 280,

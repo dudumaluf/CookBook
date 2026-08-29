@@ -8,6 +8,7 @@ vi.mock("@/lib/library/upload-asset", () => ({ uploadMediaAsset }));
 
 import { speedRampNodeSchema } from "@/components/nodes/node-speed-ramp";
 import { defaultRemapKeys } from "@/lib/media/time-remap";
+import { defaultSpeedPins } from "@/lib/media/speed-pins";
 import type { ExecContext, StandardizedOutput } from "@/types/node";
 
 function ctx(
@@ -49,17 +50,19 @@ describe("speed-ramp node", () => {
     );
   });
 
-  it("forwards the curve + duration + fps and uploads the MP4", async () => {
-    const keys = defaultRemapKeys();
+  it("forwards pins by default and uploads the MP4", async () => {
+    const pins = [
+      { srcSec: 0, speed: 1 },
+      { srcSec: 3, speed: 0.4 },
+    ];
     const result = await speedRampNodeSchema.execute!(
       ctx(
         { video: { type: "video", value: { url: "https://x/in.mp4" } } },
-        { keys, durationSec: 8, fps: 24 },
+        { pins, fps: 24 },
       ) as never,
     );
     expect(remapVideo).toHaveBeenCalledWith("https://x/in.mp4", {
-      keys,
-      durationSec: 8,
+      pins,
       fps: 24,
     });
     expect(uploadMediaAsset).toHaveBeenCalledWith(expect.any(File), "videos");
@@ -76,16 +79,21 @@ describe("speed-ramp node", () => {
     });
   });
 
-  it("omits duration when it is 0 so the encoder keeps the source length", async () => {
+  it("keeps legacy bezier keys when pins are absent", async () => {
+    const keys = defaultRemapKeys();
     await speedRampNodeSchema.execute!(
       ctx(
         { video: { type: "video", value: { url: "https://x/in.mp4" } } },
-        { durationSec: 0, fps: 30 },
+        { keys, fps: 30 },
       ) as never,
     );
     expect(remapVideo).toHaveBeenCalledWith("https://x/in.mp4", {
-      keys: expect.any(Array),
+      keys,
       fps: 30,
     });
+  });
+
+  it("defaults to a single 1× pin", () => {
+    expect(speedRampNodeSchema.defaultConfig.pins).toEqual(defaultSpeedPins());
   });
 });

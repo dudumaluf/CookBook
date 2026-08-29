@@ -743,7 +743,7 @@ Translate, rotate, and scale a single image around its center, preserving alpha 
 - **Category:** `transform`
 - **Run:** manual (Run / Run-here)
 
-Time-remap a video with a bezier curve (After Effects-style). X is output time, Y is source time — steep is faster, flat freezes, downhill reverses. Double-click the graph to add a key; drag handles to ease. Settings: output length (0 = same as source) and fps. Run encodes an MP4 you can preview and wire into Concat / Export / anything that takes `video`. Audio is dropped.
+Mark places on the source footage and set a speed per zone (0.25× slow-mo … 4× fast). Scrub the wired clip, Split at the playhead, pick a speed. Output length follows the zones. Run encodes an MP4 you can preview and wire into Concat / Export / anything that takes `video`. Audio is dropped.
 
 **Inputs**
 

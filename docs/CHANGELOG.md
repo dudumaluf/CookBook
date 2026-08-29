@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Speed Ramp: footage pins instead of a bezier graph
+
+The AE-style X/Y curve was too hard to hit precisely. The node now works like CapCut: scrub the **source** video, **Split at playhead**, set that zone to 0.25× / 0.5× / 1× / 2× / 4× (or type a number). Cuts drag on the timeline. Output length is the sum of (zone ÷ speed). Legacy bezier `keys` still encode if a saved node has no `pins`.
+
 ## 2026-08-28 — Speed Ramp curve: hover to add a key + time readout
 
 The graph used a 1×1 viewBox stretched to a wide node, so keys looked like pills and sat clipped in the corners. It now draws in pixel space with padding (round dots). Hover the curve to see **out → src** time and a ghost key; click to add. Delete still removes the selected key.
