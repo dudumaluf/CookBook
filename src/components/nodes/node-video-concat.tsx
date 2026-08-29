@@ -216,7 +216,8 @@ export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
   isCacheBusting: () => true,
   execute: async ({ config, inputs }) => {
     const n = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
-    const ordered: { src: string; reverse?: boolean }[] = [];
+    type ClipSpec = { src: string; reverse?: boolean };
+    const ordered: ClipSpec[] = [];
     for (let i = 0; i < n; i++) {
       const ref = extractInputByType(inputs, `${CLIP_PREFIX}${i}`, "video");
       if (ref?.url) {
@@ -227,11 +228,11 @@ export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
       }
     }
     // Back-compat: clips still wired to the pre-ADR-0056 `clips` multi-handle.
-    const legacy = extractInputArrayByType(inputs, "clips", "video")
+    const legacy: ClipSpec[] = extractInputArrayByType(inputs, "clips", "video")
       .map((r) => r.url)
       .filter(Boolean)
       .map((src) => ({ src }));
-    const clips = [...ordered, ...legacy];
+    const clips: ClipSpec[] = [...ordered, ...legacy];
 
     if (clips.length === 0) {
       throw new Error("Wire one or more video clips into the ordered sockets.");
