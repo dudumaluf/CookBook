@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Fix: Video Concat Run was a no-op + freeze at the cut
+
+Two stacked bugs. (1) **Run replayed the cached remux** — hash is `{kind, config, deps}`, so the "always re-encode" change never ran; the playhead stayed stuck at ~4s / 9s. `cacheVersion: 2` + `isCacheBusting` so every Run actually re-encodes. (2) **A hole at the join** — advancing by container duration (H3 Max says 5s, frames end ~4.5s) left a gap the browser stalls in. Next clip now starts at the last encoded sample; keyframe on each clip start; load via `fetchMediaBlob` (CORS); throw if a clip decodes zero frames.
+
 ## 2026-08-28 — Fix: Video Concat always re-encodes so playback crosses the cut
 
 Remux still froze in the middle (~end of clip 1) when codec/size looked compatible: GOP/SPS mismatch or a short audio track stopped the player. Concat now always decodes every clip onto one H.264 canvas timeline (letterbox if aspects differ), no audio — duration follows the picture. Lengths do not need to match. Run is slower; the join should play through.

@@ -932,7 +932,7 @@ Mux a video with a replacement audio track — video frames from `video`, soundt
 - **Run:** manual (Run / Run-here)
 - **Dynamic I/O:** yes (sockets change with config / wiring)
 
-Join video clips into one continuous MP4 (client-side remux, no re-encode). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order.
+Join video clips into one continuous MP4 (client-side re-encode onto one H.264 timeline). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order. Lengths and aspects do not need to match.
 
 **Inputs**
 

@@ -106,4 +106,9 @@ describe("video-concat node", () => {
     expect(videoConcatNodeSchema.reactive).toBe(false);
     expect(videoConcatNodeSchema.outputs[0]?.dataType).toBe("video");
   });
+
+  it("busts the exec cache so Run always re-encodes", () => {
+    expect(videoConcatNodeSchema.cacheVersion).toBe(2);
+    expect(videoConcatNodeSchema.isCacheBusting?.({})).toBe(true);
+  });
 });

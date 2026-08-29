@@ -7,9 +7,10 @@ import {
   Mp4OutputFormat,
   Output,
   QUALITY_HIGH,
-  UrlSource,
   VideoSampleSink,
 } from "mediabunny";
+
+import { fetchMediaBlob } from "./load-bitmap";
 
 /**
  * Video concatenation via mediabunny.
@@ -19,6 +20,10 @@ import {
  * and a shorter audio track all make the player stop in the "middle"
  * even when the second clip is in the file. Lengths / aspects do not
  * have to match. Audio is dropped so duration follows the picture.
+ *
+ * Offset rule: the next clip starts at the last *encoded* sample's end.
+ * Using the container duration (H3 Max often reports 5s with ~4.5s of
+ * frames) left a hole; HTML video stalls in that hole.
  */
 
 /**
@@ -34,10 +39,20 @@ export function remuxTimestamp(
   return Math.max(0, offsetSec + (packetTs - originTs));
 }
 
-function makeInput(src: Blob | string): Input {
-  const source =
-    typeof src === "string" ? new UrlSource(src) : new BlobSource(src);
-  return new Input({ formats: ALL_FORMATS, source });
+/** Where the next clip begins on the joined timeline (no gap, no overlap). */
+export function nextClipStart(
+  lastTimestamp: number,
+  lastDuration: number,
+): number {
+  return Math.max(0, lastTimestamp + lastDuration);
+}
+
+async function resolveBlob(src: Blob | string): Promise<Blob> {
+  return typeof src === "string" ? fetchMediaBlob(src) : src;
+}
+
+function makeInput(src: Blob): Input {
+  return new Input({ formats: ALL_FORMATS, source: new BlobSource(src) });
 }
 
 function even(n: number): number {
@@ -46,7 +61,7 @@ function even(n: number): number {
 }
 
 async function firstClipSize(
-  src: Blob | string,
+  src: Blob,
 ): Promise<{ width: number; height: number }> {
   const input = makeInput(src);
   try {
@@ -77,7 +92,8 @@ export async function concatVideos(
     throw new Error("No clips to concatenate.");
   }
 
-  const { width, height } = await firstClipSize(srcs[0]!);
+  const blobs = await Promise.all(srcs.map(resolveBlob));
+  const { width, height } = await firstClipSize(blobs[0]!);
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -85,26 +101,30 @@ export async function concatVideos(
   }
 
   const output = new Output({
-    format: new Mp4OutputFormat(),
+    format: new Mp4OutputFormat({ fastStart: "in-memory" }),
     target: new BufferTarget(),
   });
   const videoSource = new CanvasSource(canvas, {
     codec: "avc",
     bitrate: QUALITY_HIGH,
+    keyFrameInterval: 1,
   });
   output.addVideoTrack(videoSource);
   await output.start();
 
   let offsetSec = 0;
   let lastTs = -1;
-  for (const src of srcs) {
-    const input = makeInput(src);
+  for (let i = 0; i < blobs.length; i++) {
+    const input = makeInput(blobs[i]!);
     try {
       const vTrack = await input.getPrimaryVideoTrack();
-      if (!vTrack) continue;
+      if (!vTrack) {
+        throw new Error(`Clip ${i + 1} has no video track.`);
+      }
       const sink = new VideoSampleSink(vTrack);
       let origin: number | null = null;
-      let clipEnd = 0;
+      let frames = 0;
+      let lastDur = 0;
       for await (const sample of sink.samples()) {
         if (origin === null) origin = sample.timestamp;
         ctx.fillStyle = "#000";
@@ -120,13 +140,20 @@ export async function concatVideos(
           lastTs + 1e-4,
           remuxTimestamp(sample.timestamp, offsetSec, origin),
         );
-        await videoSource.add(t, dur);
+        await videoSource.add(
+          t,
+          dur,
+          frames === 0 ? { keyFrame: true } : undefined,
+        );
         lastTs = t;
-        clipEnd = Math.max(clipEnd, sample.timestamp - origin + dur);
+        lastDur = dur;
+        frames += 1;
         sample.close();
       }
-      const durationSec = await input.computeDuration();
-      offsetSec += Math.max(durationSec, clipEnd);
+      if (frames === 0) {
+        throw new Error(`Could not decode any frames from clip ${i + 1}.`);
+      }
+      offsetSec = nextClipStart(lastTs, lastDur);
     } finally {
       input.dispose();
     }

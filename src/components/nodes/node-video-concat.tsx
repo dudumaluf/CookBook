@@ -24,8 +24,10 @@ import { MediaPreviewVideo } from "./media-preview";
 /**
  * Video Concat — joins clips into one continuous MP4 (Slice D.2).
  *
- * Remuxes the wired clips client-side via mediabunny (no re-encode), uploads
- * the result, emits a single video. Non-reactive (heavy remux → explicit Run).
+ * Re-encodes the wired clips client-side via mediabunny onto one H.264
+ * timeline, uploads the result, emits a single video. Non-reactive
+ * (heavy encode → explicit Run). Cache-busts every Run so a logic
+ * change is never stuck behind a stale remux.
  *
  * Ordered, auto-growing ports (ADR-0056): instead of one `multiple` socket
  * (where order is invisible), it renders numbered `clip 1..N` sockets so the
@@ -123,13 +125,17 @@ export const videoConcatNodeSchema = defineNode<VideoConcatNodeConfig>({
   category: "compose",
   title: "Video Concat",
   description:
-    "Join video clips into one continuous MP4 (client-side remux, no re-encode). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order.",
+    "Join video clips into one continuous MP4 (client-side re-encode). Wire clips into the ordered `clip 1..N` sockets — they grow as you fill them; join order = socket order.",
   icon: Combine,
   inputs: clipInputs(MIN_PORTS),
   getInputs: (config) => clipInputs(config.portCount),
   outputs: [{ id: "out", label: "out", dataType: "video" }],
   defaultConfig: { portCount: MIN_PORTS },
   reactive: false,
+  // Salt + always-bust: the remux result is persisted in the exec cache.
+  // Without this, Run replays the frozen file and looks like a no-op.
+  cacheVersion: 2,
+  isCacheBusting: () => true,
   execute: async ({ config, inputs }) => {
     const n = Math.max(MIN_PORTS, config.portCount ?? MIN_PORTS);
     const ordered: string[] = [];
