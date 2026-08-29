@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-08-28 — Fix: Video Concat freeze at the first clip
+
+Joined file played ~4.5s then the scrubber stuck — the second clip never appeared. Two causes: (1) a shorter audio track makes the browser treat the file as over even when video continues; (2) different coded sizes (common across H3 Max start images) remux “successfully” then the decoder dies at the cut. **Fix:** one shared timeline (`computeDuration`); drop audio unless every clip has it; re-encode when codec/size differ. Lengths still do not need to match.
+
 ## 2026-08-28 — Fix: Video Concat GOP overlap after a negative-start clip
 
 Clamping `offset + packetTs` to ≥0 unblocked the first packet, then the *next* clip started a few ms before the previous GOP ended (`Got 4.468s, but largest timestamp is 4.48s`). Clip lengths do not have to match. **Fix:** shift each clip relative to its first packet so it starts exactly at the running offset.
