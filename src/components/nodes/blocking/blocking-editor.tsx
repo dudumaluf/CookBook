@@ -6,10 +6,13 @@ import { createPortal } from "react-dom";
 
 import { uploadMeshAsset } from "@/lib/library/upload-asset";
 import { runBlockingAgent } from "@/lib/blocking/agent";
+import { blockingTransformOp, type ViewportTransform } from "@/lib/blocking/camera-gizmo";
+import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
 import { applyBlockingOp, type BlockingOp } from "@/lib/blocking/ops";
 import { evalCameraAt, evalObjectAt } from "@/lib/blocking/evaluate";
 import {
   CAMERA_ID,
+  LOOK_AT_ID,
   type BlockingDocument,
   type PrimitiveKind,
   type Vec3,
@@ -20,7 +23,7 @@ import {
   BlockingViewport,
   type GizmoMode,
 } from "./blocking-viewport";
-import { BlockingTimeline } from "./blocking-timeline";
+import { BlockingTimeline, type TimelineKey } from "./blocking-timeline";
 
 const COMMIT_MS = 120;
 
@@ -36,20 +39,29 @@ export function BlockingEditor({
   doc: initialDoc,
   onChange,
   onClose,
+  playheadMs,
+  playing,
+  onPlayhead,
+  onPlaying,
 }: {
   doc: BlockingDocument;
   onChange: (doc: BlockingDocument) => void;
   onClose: () => void;
+  playheadMs: number;
+  playing: boolean;
+  onPlayhead: (ms: number) => void;
+  onPlaying: (playing: boolean) => void;
 }) {
   const [doc, setDoc] = useState(initialDoc);
   const [selectedId, setSelectedId] = useState<string | null>(CAMERA_ID);
-  const [playheadMs, setPlayheadMs] = useState(0);
-  const [playing, setPlaying] = useState(false);
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
+  const [shotView, setShotView] = useState(false);
+  const [linkCameraTarget, setLinkCameraTarget] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentLog, setAgentLog] = useState<string>("");
   const [importError, setImportError] = useState<string>("");
+  const [selectedKey, setSelectedKey] = useState<TimelineKey | null>(null);
 
   const docRef = useRef(doc);
   const onChangeRef = useRef(onChange);
@@ -75,37 +87,27 @@ export function BlockingEditor({
     onClose();
   }, [onClose]);
 
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = now - last;
-      last = now;
-      setPlayheadMs((p) => {
-        const next = p + dt;
-        return next >= doc.durationMs ? next % doc.durationMs : next;
-      });
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, doc.durationMs]);
-
   const onTransformEnd = useCallback(
-    (id: string, next: { position?: Vec3; rotation?: Vec3; scale?: Vec3 }) => {
-      apply({
-        op: "set_transform",
-        id,
-        ...next,
-        tMs: playheadMs,
-      });
+    (id: string, next: ViewportTransform) => {
+      apply(blockingTransformOp(id, next, playheadMs));
     },
     [apply, playheadMs],
   );
 
+  const pick = (id: string | null) => {
+    setSelectedId(id);
+    setSelectedKey(null);
+  };
+
+  const cameraSelected = selectedId === CAMERA_ID || selectedId === LOOK_AT_ID;
+  const selectedTrack =
+    selectedKey ? sceneTrack(doc, selectedKey.id, selectedKey.channel) : null;
+  const selectedKeyframe =
+    selectedKey && selectedTrack && !("error" in selectedTrack)
+      ? findKeyframe(selectedTrack, selectedKey.tMs)
+      : undefined;
   const selected =
-    selectedId === CAMERA_ID
+    !selectedId || cameraSelected
       ? null
       : doc.objects.find((o) => o.id === selectedId) ?? null;
   const camAt = evalCameraAt(doc.camera, playheadMs);
@@ -199,6 +201,41 @@ export function BlockingEditor({
             </button>
           ))}
         </div>
+        <div className="ml-2 flex items-center gap-1 text-[11px]">
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-1.5 py-0.5",
+              !shotView ? "bg-accent/30 text-foreground" : "text-muted-foreground hover:bg-foreground/[0.06]",
+            )}
+            onClick={() => setShotView(false)}
+          >
+            Orbit
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-1.5 py-0.5",
+              shotView ? "bg-accent/30 text-foreground" : "text-muted-foreground hover:bg-foreground/[0.06]",
+            )}
+            onClick={() => setShotView(true)}
+          >
+            Shot
+          </button>
+          <button
+            type="button"
+            title="Move camera and look-at together"
+            className={cn(
+              "rounded-md px-1.5 py-0.5",
+              linkCameraTarget
+                ? "bg-accent/30 text-foreground"
+                : "text-muted-foreground hover:bg-foreground/[0.06]",
+            )}
+            onClick={() => setLinkCameraTarget((v) => !v)}
+          >
+            {linkCameraTarget ? "Linked" : "Unlinked"}
+          </button>
+        </div>
         <button
           type="button"
           className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06]"
@@ -219,9 +256,21 @@ export function BlockingEditor({
                 ? "bg-accent/25"
                 : "hover:bg-foreground/[0.05]",
             )}
-            onClick={() => setSelectedId(CAMERA_ID)}
+            onClick={() => pick(CAMERA_ID)}
           >
             Camera
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded-md px-2 py-1 text-left",
+              selectedId === LOOK_AT_ID
+                ? "bg-accent/25"
+                : "hover:bg-foreground/[0.05]",
+            )}
+            onClick={() => pick(LOOK_AT_ID)}
+          >
+            Look at
           </button>
           {doc.objects.map((o) => (
             <button
@@ -232,7 +281,7 @@ export function BlockingEditor({
                 selectedId === o.id ? "bg-accent/25" : "hover:bg-foreground/[0.05]",
                 !o.visible && "opacity-50",
               )}
-              onClick={() => setSelectedId(o.id)}
+              onClick={() => pick(o.id)}
             >
               {o.name}
               <span className="ml-1 text-muted-foreground">{o.kind}</span>
@@ -246,15 +295,37 @@ export function BlockingEditor({
             playheadMs={playheadMs}
             selectedId={selectedId}
             gizmoMode={gizmoMode}
-            onSelect={setSelectedId}
+            onSelect={pick}
             onTransformEnd={onTransformEnd}
+            shotView={shotView}
+            linkCameraTarget={linkCameraTarget}
           />
         </div>
 
         <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border/40 p-2 text-[11px]">
-          {selectedId === CAMERA_ID ? (
+          {selectedKey && selectedKeyframe ? (
             <InspectorBlock
-              title="Camera"
+              title={`${selectedKey.label} key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
+              rows={(["x", "y", "z"] as const).map((axis, i) => [
+                axis,
+                selectedKeyframe.value[i]!,
+                (v: number) => {
+                  const next: Vec3 = [...selectedKeyframe.value];
+                  next[i] = v;
+                  apply({
+                    op: "set_keyframe",
+                    id: selectedKey.id,
+                    channel: selectedKey.channel,
+                    tMs: selectedKey.tMs,
+                    value: next,
+                    easing: selectedKeyframe.easing,
+                  });
+                },
+              ])}
+            />
+          ) : cameraSelected ? (
+            <InspectorBlock
+              title={selectedId === LOOK_AT_ID ? "Look at" : "Camera"}
               rows={[
                 ["fov", doc.camera.fov, (v) => apply({ op: "set_camera", fov: v })],
                 [
@@ -379,7 +450,7 @@ export function BlockingEditor({
               className="rounded-md px-2 py-1 text-destructive hover:bg-destructive/10"
               onClick={() => {
                 apply({ op: "remove_object", id: selected.id });
-                setSelectedId(CAMERA_ID);
+                pick(CAMERA_ID);
               }}
             >
               Delete
@@ -406,14 +477,34 @@ export function BlockingEditor({
         doc={doc}
         playheadMs={playheadMs}
         selectedId={selectedId}
+        selectedKey={selectedKey}
         playing={playing}
         onScrub={(ms) => {
-          setPlaying(false);
-          setPlayheadMs(ms);
+          onPlaying(false);
+          onPlayhead(ms);
         }}
-        onTogglePlay={() => setPlaying((p) => !p)}
+        onTogglePlay={() => onPlaying(!playing)}
+        onSelectKey={(key) => {
+          setSelectedKey(key);
+          setSelectedId(key.channel === "lookAt" ? LOOK_AT_ID : key.id);
+          onPlaying(false);
+          onPlayhead(key.tMs);
+        }}
+        onMoveKey={(key, toMs) => {
+          const result = apply({
+            op: "move_keyframe",
+            id: key.id,
+            channel: key.channel,
+            fromMs: key.tMs,
+            toMs,
+          });
+          if (!result.error) {
+            setSelectedKey({ ...key, tMs: Math.max(1, toMs) });
+            onPlayhead(Math.max(1, toMs));
+          }
+        }}
         onSetKey={() => {
-          if (selectedId === CAMERA_ID) {
+          if (selectedId === CAMERA_ID || selectedId === LOOK_AT_ID) {
             apply({
               op: "set_camera",
               position: camAt.position,

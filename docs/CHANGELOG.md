@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — 3D Blocking: edit-in-place agent, keyframe drag
+
+The scene agent now treats the stage as an edit: reuse existing ids, do not duplicate actors, and change lookAt without moving the camera (and the reverse). Timeline keys are clickable (inspector shows that key's stored value) and draggable to retime (`move_keyframe`; the 0ms rest pose stays).
+
+## 2026-09-16 — 3D Blocking: shot view, camera / lookAt gizmos, node scrub
+
+Orbit vs Shot on the node and in the editor. In Orbit, click the camera frustum or the yellow look-at handle and move each with the gizmo (or **Linked** to translate both). Compact playhead on the node body so you can scrub / play the previz without opening the editor. Scene ops, prompt agent, and playblast are unchanged.
+
 ## 2026-09-16 — Fix: @types/three so the Blocking viewport type-checks
 
 `three@0.182` ships no `.d.ts`. The empty `declare module "three"` stub made `THREE.WebGLRenderer` fail on Vercel `next build`. Add `@types/three@0.182.0` and drop the stub.

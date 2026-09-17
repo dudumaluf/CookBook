@@ -35,6 +35,13 @@ describe("blocking ops", () => {
 
     const cam = applyBlockingOp(added.doc, { op: "remove_object", id: CAMERA_ID });
     expect(cam.error).toMatch(/camera/i);
+
+    const stolen = applyBlockingOp(base, {
+      op: "add_primitive",
+      kind: "box",
+      id: "lookAt",
+    });
+    expect(stolen.doc.objects.some((o) => o.id === "lookAt")).toBe(false);
   });
 
   it("keyframes interpolate and sample_at matches evaluate", () => {
@@ -102,6 +109,51 @@ describe("blocking ops", () => {
       value: [0, 0, 0],
     });
     expect(bad.error).toMatch(/lookAt/);
+  });
+
+  it("moves a key's time without changing its value", () => {
+    const seeded = applyBlockingOps(createDefaultDocument(), [
+      { op: "add_primitive", kind: "box", id: "box", position: [0, 0.5, 0] },
+      {
+        op: "set_keyframe",
+        id: "box",
+        channel: "position",
+        tMs: 1000,
+        value: [2, 0.5, 0],
+      },
+    ]);
+    const moved = applyBlockingOp(seeded.doc, {
+      op: "move_keyframe",
+      id: "box",
+      channel: "position",
+      fromMs: 1000,
+      toMs: 3000,
+    });
+    expect(moved.error).toBeUndefined();
+    const keys = moved.doc.objects.find((o) => o.id === "box")!.tracks.position;
+    expect(keys.some((k) => k.tMs === 3000 && k.value[0] === 2)).toBe(true);
+    expect(keys.some((k) => k.tMs === 1000)).toBe(false);
+
+    const rest = applyBlockingOp(moved.doc, {
+      op: "move_keyframe",
+      id: "box",
+      channel: "position",
+      fromMs: 0,
+      toMs: 500,
+    });
+    expect(rest.error).toMatch(/0ms/);
+  });
+
+  it("set_transform on lookAt does not move the camera", () => {
+    const base = createDefaultDocument();
+    const before = base.camera.tracks.position[0]!.value;
+    const { doc } = applyBlockingOp(base, {
+      op: "set_transform",
+      id: "lookAt",
+      position: [3, 1, 0],
+    });
+    expect(doc.camera.lookAt[0]?.value).toEqual([3, 1, 0]);
+    expect(doc.camera.tracks.position[0]?.value).toEqual(before);
   });
 
   it("read_scene is compact", () => {

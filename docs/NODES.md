@@ -761,7 +761,7 @@ Mark places on the source footage and set a speed per zone (0.25× slow-mo … 4
 - **Category:** `transform`
 - **Run:** manual (Run / Run-here)
 
-Previz stage for reference-to-video. Add primitives (capsule = person) or import GLB/OBJ/FBX, keyframe PSR + camera (position / lookAt / fov), or prompt the in-node scene agent. Run playblasts an MP4. Wire Hunyuan meshes into `mesh`. No lights or rigs.
+Previz stage for reference-to-video. Add primitives (capsule = person) or import GLB/OBJ/FBX, keyframe PSR + camera (position / lookAt / fov), or prompt the in-node scene agent (it edits existing ids; camera and lookAt are independent). **Shot** looks through the playblast camera; **Orbit** lets you click the camera or the look-at handle and move them (optionally linked). Timeline keys drag to retime; click a key to edit its stored value. Scrub / play on the node body. Run playblasts an MP4. Wire Hunyuan meshes into `mesh`. No lights or rigs.
 
 **Inputs**
 

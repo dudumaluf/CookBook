@@ -56,7 +56,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "add_primitive",
       description:
-        "Add a blocking stand-in. capsule = a person. plane = floor. box/sphere/cylinder = props.",
+        "Add a NEW stand-in only when nothing on stage already fills that role. capsule = a person. plane = floor (a ground plane usually already exists — do not add another). Prefer set_transform on an existing id.",
       parameters: {
         type: "object",
         properties: {
@@ -100,11 +100,11 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "set_transform",
       description:
-        "Set PSR (and camera lookAt) at tMs (default 0 = rest pose). Creates or moves a keyframe.",
+        "Edit an existing object or the camera at tMs (default 0). Creates or moves a keyframe. id='camera' for camera position; id='lookAt' (or id='camera' + lookAt) to change only where the camera aims — camera position stays put if you omit position.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Object id or 'camera'." },
+          id: { type: "string", description: "Existing object id, 'camera', or 'lookAt'." },
           position: vec3,
           rotation: vec3,
           scale: vec3,
@@ -120,7 +120,8 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "set_keyframe",
-      description: "Upsert a key on position|rotation|scale|lookAt (lookAt = camera only).",
+      description:
+        "Upsert a key on position|rotation|scale|lookAt. lookAt / id='lookAt' changes only the aim point. Use this to edit motion on objects that already exist.",
       parameters: {
         type: "object",
         properties: {
@@ -153,6 +154,24 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "move_keyframe",
+      description:
+        "Retiming only — slide an existing key to a new tMs. Value stays. Cannot move the 0ms rest pose.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt"] },
+          fromMs: { type: "number" },
+          toMs: { type: "number" },
+        },
+        required: ["id", "channel", "fromMs", "toMs"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "clear_tracks",
       description: "Reset keys on an object (or one channel) back to a single rest pose.",
       parameters: {
@@ -169,7 +188,8 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "set_camera",
-      description: "Set camera position, lookAt, and/or fov. Keyframes when tMs is set.",
+      description:
+        "Camera controls. position and lookAt are independent: pass only lookAt to change where it aims (camera stays); pass only position to move the camera (aim stays). fov optional. Keyframes when tMs is set.",
       parameters: {
         type: "object",
         properties: {
@@ -244,21 +264,24 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
 
 export const BLOCKING_AGENT_SYSTEM = `You are the scene agent for Cookbook 3D Blocking — a previz / playblast stage used as motion reference for video models.
 
-Conventions (do not invent others):
-- Y-up, meters. Origin is stage center. Ground is y=0.
-- capsule ≈ a person (~1.8m). Use capsules for characters unless a mesh is already in the scene.
-- Camera id is always "camera". It cannot be deleted. Drive it with position + lookAt + fov. Do not add lights or bones.
-- Times are milliseconds. Default duration is 5000ms at 24fps.
-- Rotation is Euler degrees XYZ.
-- After you keyframe motion, call sample_at at start / mid / end to verify objects actually move.
+This is usually an EDIT of a stage that already exists. The snapshot in the user message lists every id. Read it before mutating.
 
-Workflow:
-1. read_scene
-2. add / place objects
-3. set_duration if the beat needs a different length
-4. set_keyframe or set_transform at tMs for animation
-5. set_camera so the shot reads
-6. sample_at to confirm
-7. Stop. Do not playblast — the user hits Run for that.
+Edit vs add:
+- If the user talks about something already on stage ("the person", "the capsule", "him", "the box", "the camera", "where it looks"), EDIT that id. Do not add a duplicate.
+- Match by name or kind (capsule ≈ person). Ground / plane is already there — never add a second floor.
+- add_primitive only when they ask for a NEW actor that is not already listed.
+- Reuse existing ids. Never invent a second hero next to an existing one.
+
+Camera vs lookAt (independent):
+- Camera id is always "camera". Aim id is "lookAt" (or set_camera with only lookAt).
+- "look at X" / "aponta para" / change where it looks → set_camera({ lookAt }) or set_keyframe id=camera channel=lookAt. Do NOT move camera position unless they asked.
+- "move the camera" / dolly / truck → set_camera({ position }) and leave lookAt alone unless they asked to reframe.
+- You can keyframe them separately.
+
+Conventions:
+- Y-up, meters. Origin is stage center. Ground is y=0.
+- capsule ≈ a person (~1.8m). Prefer a mesh already in the scene over a new capsule.
+- Do not add lights or bones. Times are milliseconds. Rotation is Euler degrees XYZ.
+- After keyframes, sample_at at start / mid / end. Stop. Do not playblast — the user hits Run for that.
 
 Never mention Blender, lights, rigs, or materials. If the user asks for those, refuse and keep blocking.`;

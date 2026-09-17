@@ -347,7 +347,11 @@ See [`docs/COOKBOOK-LIBRARY.md`](./COOKBOOK-LIBRARY.md) for the full design + ro
 
 - **`Speed Ramp` node (`speed-ramp`)** — `src/components/nodes/node-speed-ramp.tsx`. Footage pins (`pins: { srcSec, speed }[]`): constant speed from each cut to the next. Scrub the source, Split at the playhead, set 0.25×–4× (or a number). `fps` 24/30/60. Run calls `remapVideo` with pins (legacy `keys` bezier still encodes if `pins` is absent). Audio dropped.
 
-- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs.
+- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs. **Shot** = playblast camera POV; **Orbit** = free view with gizmos on objects, `camera`, and the `lookAt` handle (`LOOK_AT_ID`). **Linked** translates camera + lookAt together. Node body has a compact playhead.
+
+- **`LOOK_AT_ID`** — `"lookAt"`. Editor pick id for the camera point of interest. Not a scene object; reserved so `add_primitive` / sanitize cannot steal it. Agent can `set_transform` / `set_keyframe` with this id to aim the camera without moving it.
+
+- **`move_keyframe`** — Blocking scene op. Slides an existing key to a new `tMs` without changing its value. The 0ms rest pose cannot move.
 
 - **`Video Cut` node (`video-cut`)** — `src/components/nodes/node-video-cut.tsx`. Footage pins (`pins: { srcSec, keep }[]`): keep or ripple-delete each zone. Same scrub / Split / drag-cut UI as Speed Ramp; selected zone is Keep or Cut out. Leftover keep zones encode as one MP4 via `cutVideo`. Identity (every zone keep) passes the source URL through. `fps` 24/30/60. Audio dropped. Distinct from Video Slicer (hard trim / window split).
 

@@ -97,6 +97,18 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
       }
       return { op: "remove_keyframe", id: a.id, channel, tMs: a.tMs };
     }
+    case "move_keyframe": {
+      const channel = asChannel(a.channel);
+      if (
+        typeof a.id !== "string" ||
+        !channel ||
+        typeof a.fromMs !== "number" ||
+        typeof a.toMs !== "number"
+      ) {
+        return { error: "move_keyframe needs id, channel, fromMs, toMs." };
+      }
+      return { op: "move_keyframe", id: a.id, channel, fromMs: a.fromMs, toMs: a.toMs };
+    }
     case "clear_tracks":
       if (typeof a.id !== "string") return { error: "clear_tracks needs id." };
       return {

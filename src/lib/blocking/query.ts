@@ -1,6 +1,7 @@
 import { CAMERA_ID, type BlockingDocument } from "@/types/blocking";
 
 import { evalCameraAt, evalDocumentAt, evalObjectAt } from "./evaluate";
+import { keyTimes } from "./keys";
 
 /**
  * Read-only scene views for the agent. Compact — never dump every keyframe
@@ -23,9 +24,10 @@ export function readScene(
       fov: snap.camera.fov,
       position: snap.camera.position,
       lookAt: snap.camera.lookAt,
+      note: "position and lookAt are independent",
       keys: {
-        position: doc.camera.tracks.position.length,
-        lookAt: doc.camera.lookAt.length,
+        position: keyTimes(doc.camera.tracks.position),
+        lookAt: keyTimes(doc.camera.lookAt),
       },
     },
     objects: snap.objects.map(({ object, transform }) => ({
@@ -39,9 +41,9 @@ export function readScene(
       ...(object.meshUrl ? { meshUrl: object.meshUrl } : {}),
       ...(object.clip ? { clip: object.clip } : {}),
       keys: {
-        position: object.tracks.position.length,
-        rotation: object.tracks.rotation.length,
-        scale: object.tracks.scale.length,
+        position: keyTimes(object.tracks.position),
+        rotation: keyTimes(object.tracks.rotation),
+        scale: keyTimes(object.tracks.scale),
       },
     })),
   };

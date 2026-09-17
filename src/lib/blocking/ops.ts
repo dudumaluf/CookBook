@@ -1,6 +1,8 @@
 import {
   CAMERA_ID,
+  LOOK_AT_ID,
   cloneVec3,
+  isReservedBlockingId,
   emptyTracks,
   isPrimitiveKind,
   newBlockingId,
@@ -18,6 +20,13 @@ import {
   type TransformChannel,
   type Vec3,
 } from "@/types/blocking";
+
+import {
+  moveKeyframeTime,
+  sceneTrack,
+  trackFallback,
+  writeSceneTrack,
+} from "./keys";
 
 /**
  * Scene ops — the MCP surface. UI, in-node agent, and assistant tools
@@ -60,6 +69,13 @@ export type BlockingOp =
       id: string;
       channel: CameraChannel;
       tMs: number;
+    }
+  | {
+      op: "move_keyframe";
+      id: string;
+      channel: CameraChannel;
+      fromMs: number;
+      toMs: number;
     }
   | { op: "clear_tracks"; id: string; channel?: CameraChannel }
   | {
@@ -161,7 +177,7 @@ export function applyBlockingOp(
       return { doc, error: `Unknown primitive kind.` };
     }
     const id =
-      typeof op.id === "string" && op.id && op.id !== CAMERA_ID
+      typeof op.id === "string" && op.id && !isReservedBlockingId(op.id)
         ? op.id
         : newBlockingId(op.kind);
     if (doc.objects.some((o) => o.id === id)) {
@@ -189,7 +205,7 @@ export function applyBlockingOp(
   }
 
   if (op.op === "remove_object") {
-    if (op.id === CAMERA_ID) {
+    if (op.id === CAMERA_ID || op.id === LOOK_AT_ID) {
       return { doc, error: "The camera cannot be removed." };
     }
     if (!doc.objects.some((o) => o.id === op.id)) {
@@ -225,6 +241,19 @@ export function applyBlockingOp(
 
   if (op.op === "set_transform") {
     const tMs = op.tMs ?? 0;
+    if (op.id === LOOK_AT_ID) {
+      const look = op.lookAt ?? op.position;
+      if (!look) return { doc, error: "lookAt needs a value." };
+      return {
+        doc: sanitizeBlockingDocument({
+          ...doc,
+          camera: {
+            ...doc.camera,
+            lookAt: upsertKey(doc.camera.lookAt, tMs, look, easing),
+          },
+        }),
+      };
+    }
     if (op.id === CAMERA_ID) {
       let cam = doc.camera;
       if (op.position) {
@@ -263,6 +292,17 @@ export function applyBlockingOp(
 
   if (op.op === "set_keyframe") {
     const tMs = Math.max(0, op.tMs);
+    if (op.id === LOOK_AT_ID) {
+      return {
+        doc: sanitizeBlockingDocument({
+          ...doc,
+          camera: {
+            ...doc.camera,
+            lookAt: upsertKey(doc.camera.lookAt, tMs, op.value, easing),
+          },
+        }),
+      };
+    }
     if (op.id === CAMERA_ID) {
       let cam = doc.camera;
       if (op.channel === "lookAt") {
@@ -322,6 +362,21 @@ export function applyBlockingOp(
     }));
     if (!found) return { doc, error: `No object "${op.id}".` };
     return { doc: sanitizeBlockingDocument(next) };
+  }
+
+  if (op.op === "move_keyframe") {
+    const track = sceneTrack(doc, op.id, op.channel);
+    if ("error" in track) return { doc, error: track.error };
+    const moved = moveKeyframeTime(
+      track,
+      op.fromMs,
+      op.toMs,
+      trackFallback(op.channel),
+    );
+    if ("error" in moved) return { doc, error: moved.error };
+    return {
+      doc: sanitizeBlockingDocument(writeSceneTrack(doc, op.id, op.channel, moved)),
+    };
   }
 
   if (op.op === "clear_tracks") {
@@ -445,7 +500,7 @@ export function applyBlockingOp(
     const url = op.url.trim();
     if (!url) return { doc, error: "import_mesh needs a url." };
     const id =
-      typeof op.id === "string" && op.id && op.id !== CAMERA_ID
+      typeof op.id === "string" && op.id && !isReservedBlockingId(op.id)
         ? op.id
         : newBlockingId("mesh");
     if (doc.objects.some((o) => o.id === id)) {

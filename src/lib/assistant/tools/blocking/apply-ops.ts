@@ -20,7 +20,7 @@ const argsSchema = z
 export const blockingApplyOpsTool: AssistantTool = {
   name: "blocking_apply_ops",
   description:
-    "Mutate a 3D Blocking scene through scene ops (add_primitive, set_keyframe, set_camera, …). NEVER write config.scene via update_node_config. Each op is `{ op: \"add_primitive\" | …, ...fields }` matching the in-editor agent tools. Returns compact scene after apply.",
+    "Mutate a 3D Blocking scene through scene ops. Prefer editing existing ids (set_transform / set_keyframe / set_camera / move_keyframe). Camera position and lookAt are independent — pass only lookAt to change the aim. add_primitive only for a NEW actor that is not already on stage. NEVER write config.scene via update_node_config.",
   parameters: {
     type: "object",
     properties: {

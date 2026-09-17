@@ -68,6 +68,12 @@ export interface BlockingDocument {
 }
 
 export const CAMERA_ID = "camera";
+/** Editor-only pick id for the camera lookAt handle. Not a scene object. */
+export const LOOK_AT_ID = "lookAt";
+
+export function isReservedBlockingId(id: string): boolean {
+  return id === CAMERA_ID || id === LOOK_AT_ID;
+}
 
 export const DEFAULT_DURATION_MS = 5_000;
 export const DEFAULT_FPS = 24;
@@ -237,7 +243,7 @@ function sanitizeClip(raw: unknown): BlockingClip | undefined {
 export function sanitizeObject(raw: unknown): BlockingObject | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.id !== "string" || r.id.length === 0 || r.id === CAMERA_ID) {
+  if (typeof r.id !== "string" || r.id.length === 0 || isReservedBlockingId(r.id)) {
     return null;
   }
   if (!isObjectKind(r.kind)) return null;

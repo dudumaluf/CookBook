@@ -7,8 +7,10 @@ import { useId, useState } from "react";
 import { defineNode } from "@/lib/engine/define-node";
 import { extractInputArrayByType } from "@/lib/engine/extract-input";
 import { runBlockingAgent } from "@/lib/blocking/agent";
-import { ensureWiredMeshes } from "@/lib/blocking/ops";
+import { blockingTransformOp, type ViewportTransform } from "@/lib/blocking/camera-gizmo";
+import { applyBlockingOp, ensureWiredMeshes } from "@/lib/blocking/ops";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
+import { cn } from "@/lib/utils";
 
 const BlockingEditor = dynamic(
   () =>
@@ -24,11 +26,19 @@ const BlockingViewport = dynamic(
     ),
   { ssr: false },
 );
+import {
+  BlockingTimeline,
+  type TimelineKey,
+} from "@/components/nodes/blocking/blocking-timeline";
+import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
+import { useBlockingPlayhead } from "@/components/nodes/blocking/use-playhead";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import {
+  LOOK_AT_ID,
   createDefaultDocument,
   sanitizeBlockingDocument,
   type BlockingDocument,
+  type Vec3,
 } from "@/types/blocking";
 import type { NodeBodyProps, StandardizedOutput, VideoRef } from "@/types/node";
 
@@ -66,6 +76,13 @@ function Blocking3dBody({
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState("");
+  const [shotView, setShotView] = useState(true);
+  const [linkCameraTarget, setLinkCameraTarget] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<TimelineKey | null>(null);
+  const { playheadMs, setPlayheadMs, playing, setPlaying } = useBlockingPlayhead(
+    scene.durationMs,
+  );
 
   const commitScene = (next: BlockingDocument) => {
     updateConfig({
@@ -74,6 +91,11 @@ function Blocking3dBody({
       width: next.width,
       height: next.height,
     });
+  };
+
+  const onTransformEnd = (id: string, next: ViewportTransform) => {
+    const result = applyBlockingOp(scene, blockingTransformOp(id, next, playheadMs));
+    commitScene(result.doc);
   };
 
   return (
@@ -87,7 +109,10 @@ function Blocking3dBody({
           type="button"
           className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-foreground/[0.06] hover:text-foreground"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            setPlaying(false);
+            setOpen(true);
+          }}
         >
           <Maximize2 className="h-3 w-3" />
           Open editor
@@ -101,13 +126,105 @@ function Blocking3dBody({
       >
         <BlockingViewport
           doc={scene}
-          playheadMs={0}
-          selectedId={null}
+          playheadMs={playheadMs}
+          selectedId={selectedId}
           gizmoMode="translate"
-          onSelect={() => undefined}
-          onTransformEnd={() => undefined}
-          shotView
+          onSelect={(id) => {
+            setSelectedId(id);
+            setSelectedKey(null);
+          }}
+          onTransformEnd={onTransformEnd}
+          shotView={shotView}
+          linkCameraTarget={linkCameraTarget}
         />
+        <div className="absolute left-1 top-1 flex items-center gap-0.5 text-[10px]">
+          <button
+            type="button"
+            className={cn(
+              "rounded px-1.5 py-0.5",
+              shotView ? "bg-background/80 text-foreground" : "bg-black/40 text-white/80",
+            )}
+            onClick={() => setShotView(true)}
+          >
+            Shot
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "rounded px-1.5 py-0.5",
+              !shotView ? "bg-background/80 text-foreground" : "bg-black/40 text-white/80",
+            )}
+            onClick={() => setShotView(false)}
+          >
+            Orbit
+          </button>
+          {!shotView ? (
+            <button
+              type="button"
+              className={cn(
+                "rounded px-1.5 py-0.5",
+                linkCameraTarget
+                  ? "bg-background/80 text-foreground"
+                  : "bg-black/40 text-white/80",
+              )}
+              onClick={() => setLinkCameraTarget((v) => !v)}
+            >
+              {linkCameraTarget ? "Linked" : "Unlinked"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div onPointerDown={(e) => e.stopPropagation()}>
+        <BlockingTimeline
+          doc={scene}
+          playheadMs={playheadMs}
+          selectedId={selectedId}
+          selectedKey={selectedKey}
+          playing={playing}
+          compact
+          onScrub={(ms) => {
+            setPlaying(false);
+            setPlayheadMs(ms);
+          }}
+          onTogglePlay={() => setPlaying((p) => !p)}
+          onSelectKey={(key) => {
+            setSelectedKey(key);
+            setSelectedId(key.channel === "lookAt" ? LOOK_AT_ID : key.id);
+            setPlaying(false);
+            setPlayheadMs(key.tMs);
+          }}
+          onMoveKey={(key, toMs) => {
+            const result = applyBlockingOp(scene, {
+              op: "move_keyframe",
+              id: key.id,
+              channel: key.channel,
+              fromMs: key.tMs,
+              toMs,
+            });
+            commitScene(result.doc);
+            if (!result.error) {
+              setSelectedKey({ ...key, tMs: Math.max(1, toMs) });
+              setPlayheadMs(Math.max(1, toMs));
+            }
+          }}
+        />
+        {selectedKey ? (
+          <NodeKeyFields
+            scene={scene}
+            selectedKey={selectedKey}
+            onChange={(value) => {
+              const result = applyBlockingOp(scene, {
+                op: "set_keyframe",
+                id: selectedKey.id,
+                channel: selectedKey.channel,
+                tMs: selectedKey.tMs,
+                value,
+              });
+              commitScene(result.doc);
+            }}
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-1">
@@ -184,6 +301,10 @@ function Blocking3dBody({
           doc={scene}
           onChange={commitScene}
           onClose={() => setOpen(false)}
+          playheadMs={playheadMs}
+          playing={playing}
+          onPlayhead={setPlayheadMs}
+          onPlaying={setPlaying}
         />
       ) : null}
     </div>
@@ -218,6 +339,42 @@ function Blocking3dSettings({
           <option value="60">60</option>
         </select>
       </div>
+    </div>
+  );
+}
+
+function NodeKeyFields({
+  scene,
+  selectedKey,
+  onChange,
+}: {
+  scene: BlockingDocument;
+  selectedKey: TimelineKey;
+  onChange: (value: Vec3) => void;
+}) {
+  const track = sceneTrack(scene, selectedKey.id, selectedKey.channel);
+  const key =
+    track && !("error" in track) ? findKeyframe(track, selectedKey.tMs) : undefined;
+  if (!key) return null;
+  return (
+    <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+      <span className="w-10 shrink-0">
+        {selectedKey.label} {(selectedKey.tMs / 1000).toFixed(2)}s
+      </span>
+      {(["x", "y", "z"] as const).map((axis, i) => (
+        <input
+          key={axis}
+          type="number"
+          step={0.1}
+          value={Number(key.value[i]!.toFixed(3))}
+          onChange={(e) => {
+            const next: Vec3 = [...key.value];
+            next[i] = Number(e.target.value);
+            onChange(next);
+          }}
+          className="h-6 w-full rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
+        />
+      ))}
     </div>
   );
 }
