@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — Fix: hide TransformControls via getHelper(), not .visible
+
+`@types/three@0.182` types `TransformControls` as a non-Object3D. `gizmo.visible` failed Vercel `next build`. Shot view already toggles `gizmoHelper.visible`.
+
 ## 2026-09-16 — 3D Blocking: edit-in-place agent, keyframe drag
 
 The scene agent now treats the stage as an edit: reuse existing ids, do not duplicate actors, and change lookAt without moving the camera (and the reverse). Timeline keys are clickable (inspector shows that key's stored value) and draggable to retime (`move_keyframe`; the 0ms rest pose stays).

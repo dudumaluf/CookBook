@@ -278,7 +278,6 @@ export function BlockingViewport({
       lookAtHandle.visible = !throughShot;
       camBody.visible = !throughShot;
       aimLine.visible = !throughShot;
-      gizmo.visible = !throughShot;
       gizmo.enabled = !throughShot;
       gizmoHelper.visible = !throughShot;
       orbit.enabled = !throughShot && !gizmo.dragging;
