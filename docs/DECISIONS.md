@@ -3601,4 +3601,23 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 
 - **Consequences / next**: If Fal ships an audio- or video-input variant of this model, add the socket(s) + request fields then (a new ADR, or amend this one). The `lipsync` capability is currently only reachable through the images + prompt (e.g. a talking-portrait reference), not a separate audio track.
 
+- **Update (2026-09-16)**: Fal shipped **Gemini Omni Flash 1.1** with a documented `reference_video_urls` field + resolution. That variant lives on the same node — see **ADR-0093**. This ADR still holds for the original Flash endpoint (image + text in only). Edit mode is still the unversioned Flash edit route.
+
+
+## ADR-0093: Gemini Omni Flash 1.1 is a version on the existing node, not a second node
+
+- **Status**: Accepted (2026-09-16).
+
+- **Context**: Fal shipped **Gemini Omni Flash 1.1** (`google/gemini-omni-flash/v1.1/reference-to-video`) with a documented schema that the original Flash endpoint did not have: `resolution` (`360p` / `720p` / `1080p` / `4k`) and `reference_video_urls` (up to three clips, each ≤3s). The user asked for 1.1 reference-to-video first, as either a new node or an addition to `gemini-omni-video`. 1.1 text-to-video / image-to-video / edit are out of scope for this slice.
+
+- **Decision**: Extend the existing **Gemini Omni Flash** node with a **`version` setting** (`"1.1"` | `"flash"`), default **1.1**. Same pattern as Seedance's model-tier dropdown (ADR-0078): one node, dispatch in a pure helper ([`gemini-omni-input.ts`](src/lib/fal/gemini-omni-input.ts)). Concretely:
+  - **1.1 reference** hits `google/gemini-omni-flash/v1.1/reference-to-video` and exposes resolution + auto-growing `<VIDEO_REF_N>` sockets (cap 3) plus `<VIDEO_REF[]>` (handle id `videos`, so it never collides with edit mode's `video` socket). At least one image **or** video is required.
+  - **Flash reference** stays on `google/gemini-omni-flash/reference-to-video` (ADR-0092: image + text only). Video sockets and resolution are hidden / dropped from the Fal payload.
+  - **Edit** is still `google/gemini-omni-flash/edit` — 1.1 edit is deferred.
+  - Missing `version` on a persisted node resolves to 1.1 (same as the new default). Pick Flash in settings to keep the original model.
+
+- **Why this shape**: 1.1 is a superset of the same reference-to-video job (prompt + refs → clip with native audio). A second node would duplicate chrome, history, and the IMAGE_REF tag scheme. A version dropdown keeps Flash available for A/B without a graph migration.
+
+- **Consequences / next**: 1.1 text-to-video, image-to-video, and edit can land as additional modes / endpoints on this same node when we want them. Audio-in is still not in the documented 1.1 reference schema.
+
 

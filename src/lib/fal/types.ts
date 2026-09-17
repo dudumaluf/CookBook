@@ -1192,22 +1192,26 @@ export type Sam31VideoStatusResponse =
 /* ────────── Gemini Omni Flash (reference images + prompt → video) ────────── */
 
 /**
- * Fal `google/gemini-omni-flash/reference-to-video` — Google's Gemini Omni
- * Flash reference-to-video. Feed a text prompt + one or more reference images
- * and it renders a short clip WITH native audio, binding images to roles you
- * name inline in the prompt via `<IMAGE_REF_0>`, `<IMAGE_REF_1>`, … tags.
+ * Fal Gemini Omni — two reference-to-video generations on one node
+ * (ADR-0093), plus the original edit endpoint:
+ *   - `flash` — `google/gemini-omni-flash/reference-to-video`
+ *     (image + text in; audio comes OUT)
+ *   - `1.1`   — `google/gemini-omni-flash/v1.1/reference-to-video`
+ *     (images and/or ≤3s reference videos + text; resolution 360p–4K)
+ *   - edit    — `google/gemini-omni-flash/edit` (unchanged; not 1.1 yet)
  *
- * The documented `reference-to-video` input schema is `prompt` + `image_urls`
- * (both required) + `aspect_ratio` + `duration` — there is NO audio/video URL
- * input field despite the model's "omni" framing, so this node is image + text
- * only (the audio comes OUT, not in). Long-running render → async queue
- * (submit + poll, ADR-0057), same shape as Seedance / DWPose. Pricing is
- * token-based (~$0.13 / second of 720p video).
+ * Bind images with `<IMAGE_REF_0>`… and 1.1 videos with `<VIDEO_REF_0>`…
+ * Async queue (ADR-0057). Flash pricing is token-based (~$0.13/s at 720p);
+ * 1.1 is metered by output second × resolution.
  */
 export const GEMINI_OMNI_REFERENCE_ENDPOINT =
   "google/gemini-omni-flash/reference-to-video";
 /** @deprecated Use GEMINI_OMNI_REFERENCE_ENDPOINT */
 export const GEMINI_OMNI_ENDPOINT = GEMINI_OMNI_REFERENCE_ENDPOINT;
+
+/** Fal `google/gemini-omni-flash/v1.1/reference-to-video`. */
+export const GEMINI_OMNI_V11_REFERENCE_ENDPOINT =
+  "google/gemini-omni-flash/v1.1/reference-to-video";
 
 /** Fal `google/gemini-omni-flash/edit` — conversational video edit (v2v). */
 export const GEMINI_OMNI_EDIT_ENDPOINT = "google/gemini-omni-flash/edit";
@@ -1216,16 +1220,40 @@ export const GEMINI_OMNI_MODES = ["reference", "edit"] as const;
 export type GeminiOmniMode = (typeof GEMINI_OMNI_MODES)[number];
 export const GEMINI_OMNI_MODE_DEFAULT: GeminiOmniMode = "reference";
 
+/** Reference-to-video generation. Edit mode ignores this (still Flash edit). */
+export const GEMINI_OMNI_VERSIONS = ["1.1", "flash"] as const;
+export type GeminiOmniVersion = (typeof GEMINI_OMNI_VERSIONS)[number];
+export const GEMINI_OMNI_VERSION_DEFAULT: GeminiOmniVersion = "1.1";
+export const GEMINI_OMNI_VERSION_LABELS: Record<GeminiOmniVersion, string> = {
+  "1.1": "Flash 1.1",
+  flash: "Flash",
+};
+
 export const GEMINI_OMNI_ASPECT_RATIOS = ["16:9", "9:16"] as const;
 export type GeminiOmniAspectRatio = (typeof GEMINI_OMNI_ASPECT_RATIOS)[number];
 export const GEMINI_OMNI_ASPECT_DEFAULT: GeminiOmniAspectRatio = "16:9";
+
+export const GEMINI_OMNI_RESOLUTIONS = ["360p", "720p", "1080p", "4k"] as const;
+export type GeminiOmniResolution = (typeof GEMINI_OMNI_RESOLUTIONS)[number];
+export const GEMINI_OMNI_RESOLUTION_DEFAULT: GeminiOmniResolution = "720p";
 
 export const GEMINI_OMNI_DURATION_MIN = 3;
 export const GEMINI_OMNI_DURATION_MAX = 10;
 export const GEMINI_OMNI_DURATION_DEFAULT = 8;
 
-/** Approx cost in USD per second of generated 720p video (Fal pricing). */
+/** Approx cost in USD per second of generated 720p video (Flash / token-based). */
 export const GEMINI_OMNI_USD_PER_SECOND = 0.13;
+
+/** Fal 1.1 list price: USD per second of output, by resolution. */
+export const GEMINI_OMNI_V11_USD_PER_SECOND: Record<
+  GeminiOmniResolution,
+  number
+> = {
+  "360p": 0.03,
+  "720p": 0.1,
+  "1080p": 0.15,
+  "4k": 0.3,
+};
 
 /**
  * Max reference images we expose. Fal's schema documents no hard maximum, but
@@ -1235,15 +1263,25 @@ export const GEMINI_OMNI_USD_PER_SECOND = 0.13;
  */
 export const GEMINI_OMNI_MAX_IMAGES = 4;
 
+/** Fal 1.1 `reference_video_urls`: up to three clips, each ≤ 3s. */
+export const GEMINI_OMNI_MAX_VIDEOS = 3;
+export const GEMINI_OMNI_MAX_REF_VIDEO_MS = 3_000;
+
 export const geminiOmniReferenceRequestSchema = z
   .object({
     mode: z.literal("reference").optional(),
+    version: z.enum(GEMINI_OMNI_VERSIONS).optional(),
     prompt: z.string().min(1),
-    /** Reference images (`<IMAGE_REF_0>`..). At least one is required. */
+    /** Reference images (`<IMAGE_REF_0>`..). Required on Flash; optional on 1.1 if a video is wired. */
     imageUrls: z
       .array(z.string().url())
-      .min(1)
-      .max(GEMINI_OMNI_MAX_IMAGES),
+      .max(GEMINI_OMNI_MAX_IMAGES)
+      .optional(),
+    /** 1.1 only — reference videos (`<VIDEO_REF_0>`..), each ≤ 3s. */
+    videoUrls: z
+      .array(z.string().url())
+      .max(GEMINI_OMNI_MAX_VIDEOS)
+      .optional(),
     aspectRatio: z.enum(GEMINI_OMNI_ASPECT_RATIOS).optional(),
     duration: z
       .number()
@@ -1251,8 +1289,29 @@ export const geminiOmniReferenceRequestSchema = z
       .min(GEMINI_OMNI_DURATION_MIN)
       .max(GEMINI_OMNI_DURATION_MAX)
       .optional(),
+    /** 1.1 only. */
+    resolution: z.enum(GEMINI_OMNI_RESOLUTIONS).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((val, ctx) => {
+    const version = val.version ?? GEMINI_OMNI_VERSION_DEFAULT;
+    const nImg = val.imageUrls?.length ?? 0;
+    const nVid = val.videoUrls?.length ?? 0;
+    if (version === "flash" && nImg < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one reference image is required",
+        path: ["imageUrls"],
+      });
+    }
+    if (version === "1.1" && nImg < 1 && nVid < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one reference image or video is required",
+        path: ["imageUrls"],
+      });
+    }
+  });
 
 export type GeminiOmniReferenceRequest = z.infer<
   typeof geminiOmniReferenceRequestSchema

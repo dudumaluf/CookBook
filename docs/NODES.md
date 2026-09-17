@@ -361,11 +361,11 @@ Estimate poses in a video with DWPose (Fal) and draw the result back onto the cl
 - **Run:** manual (Run / Run-here)
 - **Dynamic I/O:** yes (sockets change with config / wiring)
 
-Google Gemini Omni Flash in two modes. Reference: generate a short clip WITH native audio from reference images + a prompt (bind images with <IMAGE_REF_0>, <IMAGE_REF_1>, …; the <IMAGE_REF[]> socket fans a whole image array in). Edit: revise an existing clip with a natural-language instruction (video-to-video, preserves scene coherence across turns). Settings: mode, and in reference mode aspect ratio (16:9 / 9:16) + duration (3–10s). Cost is token-based (~$0.13 per second of 720p video).
+Google Gemini Omni in two modes. Reference: generate a short clip WITH native audio from a prompt + reference images (bind with <IMAGE_REF_0>, …; the <IMAGE_REF[]> socket fans a whole image array in). Model setting picks Flash or Flash 1.1 — 1.1 adds resolution (360p–4K) and optional <VIDEO_REF_N> clips (up to 3, each ≤3s). Edit: revise an existing clip with a natural-language instruction (Flash edit; preserves scene coherence). Settings: mode, model, and in reference mode aspect ratio (16:9 / 9:16) + duration (3–10s). 1.1 is metered by the second × resolution (~$0.10/s at 720p).
 
 **Inputs**
 
-- **reference mode:** `prompt` (text), numbered `<IMAGE_REF_N>` (image), `<IMAGE_REF[]>` (image array)
+- **reference mode:** `prompt` (text), numbered `<IMAGE_REF_N>` (image), `<IMAGE_REF[]>` (image array); **1.1 also** numbered `<VIDEO_REF_N>` (video) + `<VIDEO_REF[]>` (video array)
 - **edit mode:** `prompt` (text), `video` (video)
 
 **Outputs**

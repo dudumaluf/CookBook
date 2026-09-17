@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — Gemini Omni Flash 1.1 reference-to-video
+
+Extended the existing **Gemini Omni Flash** node with Fal's **1.1** reference-to-video (`google/gemini-omni-flash/v1.1/reference-to-video`, ADR-0093). A **Model** setting picks Flash 1.1 (default) or the original Flash. 1.1 adds resolution (360p / 720p / 1080p / 4K; ~$0.03–$0.30/s) and optional `<VIDEO_REF_N>` sockets (up to 3 clips, each ≤3s) plus a `<VIDEO_REF[]>` array socket. Edit mode is unchanged (still Flash edit). Existing graphs without a version field resolve to 1.1.
+
 ## 2026-08-28 — Speed Ramp: footage pins instead of a bezier graph
 
 The AE-style X/Y curve was too hard to hit precisely. The node now works like CapCut: scrub the **source** video, **Split at playhead**, set that zone to 0.25× / 0.5× / 1× / 2× / 4× (or type a number). Cuts drag on the timeline. Output length is the sum of (zone ÷ speed). Legacy bezier `keys` still encode if a saved node has no `pins`.

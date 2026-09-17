@@ -5,19 +5,20 @@ import { MissingCredentialsError } from "@/lib/byok/resolver";
 
 import { buildFalClient } from "./client-factory";
 import {
+  buildGeminiOmniInput,
+  pickGeminiOmniEndpoint,
+} from "./gemini-omni-input";
+import {
   describeFalError,
-  GEMINI_OMNI_EDIT_ENDPOINT,
-  GEMINI_OMNI_REFERENCE_ENDPOINT,
-  type GeminiOmniEditRequest,
   type GeminiOmniRequest,
   type GeminiOmniStatusResponse,
   type GeminiOmniSubmitResponse,
 } from "./types";
 
 /**
- * Server-only Gemini Omni Flash wrapper — reference-to-video and edit modes.
- * Same async-queue pattern as the other Fal video nodes (submit returns a
- * request id, the client polls until the clip is ready, ADR-0057).
+ * Server-only Gemini Omni wrapper — Flash + 1.1 reference-to-video, plus
+ * Flash edit. Same async-queue pattern as the other Fal video nodes
+ * (submit returns a request id, the client polls until ready, ADR-0057).
  */
 
 type FalErrorCode =
@@ -30,33 +31,6 @@ type FalErrorCode =
 function annotate(err: Error, code: FalErrorCode): Error {
   (err as Error & { code?: FalErrorCode }).code = code;
   return err;
-}
-
-function isEditRequest(req: GeminiOmniRequest): req is GeminiOmniEditRequest {
-  return req.mode === "edit";
-}
-
-function endpointFor(req: GeminiOmniRequest): string {
-  return isEditRequest(req)
-    ? GEMINI_OMNI_EDIT_ENDPOINT
-    : GEMINI_OMNI_REFERENCE_ENDPOINT;
-}
-
-function buildInput(req: GeminiOmniRequest): Record<string, unknown> {
-  if (isEditRequest(req)) {
-    return {
-      prompt: req.prompt,
-      video_url: req.videoUrl,
-    };
-  }
-
-  const input: Record<string, unknown> = {
-    prompt: req.prompt,
-    image_urls: req.imageUrls,
-  };
-  if (req.aspectRatio) input.aspect_ratio = req.aspectRatio;
-  if (req.duration !== undefined) input.duration = req.duration;
-  return input;
 }
 
 interface GeminiOmniRawFile {
@@ -90,10 +64,10 @@ export async function submitGeminiOmni(
   if (signal.aborted) {
     throw annotate(new Error("Request cancelled"), "aborted");
   }
-  const endpoint = endpointFor(req);
+  const endpoint = pickGeminiOmniEndpoint(req);
   try {
     const res = await fal.queue.submit(endpoint, {
-      input: buildInput(req),
+      input: buildGeminiOmniInput(req),
     });
     return { requestId: res.request_id, endpoint };
   } catch (err) {
