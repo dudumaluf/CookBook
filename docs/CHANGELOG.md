@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — Fix: pin three@0.182 so Vercel install resolves
+
+`@google/model-viewer@4.2.0` peers `three@^0.182.0`. The Blocking node had pulled `^0.186.0`, so production `npm install` failed with ERESOLVE. Pin `three` to `0.182.0` (the APIs Blocking uses are the same).
+
 ## 2026-09-16 — New node: 3D Blocking (previz / playblast)
 
 Added **3D Blocking** (`blocking-3d`). A scene document (primitives + imported meshes, PSR and camera keyframes) with a fullscreen Three.js editor and an in-node prompt agent. The same scene ops drive the UI, the agent, and assistant tools (`blocking_read_scene` / `blocking_apply_ops`) — do not dump `config.scene` via `update_node_config`. Run playblasts an MP4 for Seedance / Omni reference. Hunyuan `mesh` wires in. Import GLB/GLTF/OBJ; FBX is best-effort. No lights, no rigs. ADR-0094.
