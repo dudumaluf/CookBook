@@ -10,12 +10,22 @@ import {
 } from "@/types/blocking";
 
 describe("blocking ops", () => {
-  it("sanitizes junk into a default stage with a ground plane", () => {
+  it("sanitizes junk into an empty stage (grid only, no default ground mesh)", () => {
     const doc = sanitizeBlockingDocument(undefined);
     expect(doc.version).toBe(1);
-    expect(doc.objects.some((o) => o.kind === "plane")).toBe(true);
+    expect(doc.objects).toEqual([]);
     expect(doc.camera.fov).toBeGreaterThan(0);
     expect(doc.durationMs).toBe(5000);
+  });
+
+  it("keeps an existing ground plane and allows removing it", () => {
+    const withFloor = sanitizeBlockingDocument({
+      objects: [{ id: "ground", kind: "plane", name: "Ground" }],
+    });
+    expect(withFloor.objects.some((o) => o.id === "ground")).toBe(true);
+    const gone = applyBlockingOp(withFloor, { op: "remove_object", id: "ground" });
+    expect(gone.error).toBeUndefined();
+    expect(gone.doc.objects.some((o) => o.id === "ground")).toBe(false);
   });
 
   it("adds a capsule and can remove it; camera is protected", () => {

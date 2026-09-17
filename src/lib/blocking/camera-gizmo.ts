@@ -27,6 +27,32 @@ export function translateLinked(
   };
 }
 
+export function cameraPairSelected(ids: readonly string[]): boolean {
+  return ids.includes(CAMERA_ID) && ids.includes(LOOK_AT_ID);
+}
+
+/** Translate camera and lookAt by the same delta (grouped / both selected). */
+export function groupTranslateCamera(
+  cam: { position: Vec3; lookAt: Vec3 },
+  which: "position" | "lookAt",
+  next: Vec3,
+  grouped: boolean,
+): { position: Vec3; lookAt: Vec3 } {
+  if (!grouped) {
+    return which === "position"
+      ? { position: next, lookAt: cam.lookAt }
+      : { position: cam.position, lookAt: next };
+  }
+  const delta = subVec3(
+    next,
+    which === "position" ? cam.position : cam.lookAt,
+  );
+  return {
+    position: addVec3(cam.position, delta),
+    lookAt: addVec3(cam.lookAt, delta),
+  };
+}
+
 /** Point of interest along camera forward at the previous lookAt distance. */
 export function lookAtAlongForward(
   position: Vec3,
@@ -89,12 +115,7 @@ export function extraTransformOps(
   const dRot = next.rotation ? subVec3(next.rotation, before.rotation) : null;
   const ops: BlockingOp[] = [];
   for (const id of selectedIds) {
-    if (
-      id === primaryId ||
-      id === CAMERA_ID ||
-      id === LOOK_AT_ID ||
-      id === "ground"
-    ) {
+    if (id === primaryId || id === CAMERA_ID || id === LOOK_AT_ID) {
       continue;
     }
     const obj = doc.objects.find((o) => o.id === id);

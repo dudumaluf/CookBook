@@ -1,10 +1,8 @@
 import { CAMERA_ID, LOOK_AT_ID, type CameraChannel } from "@/types/blocking";
 import type { BlockingOp } from "@/lib/blocking/ops";
 
-export const GROUND_ID = "ground";
-
 export function isLockedBlockingId(id: string): boolean {
-  return id === CAMERA_ID || id === LOOK_AT_ID || id === GROUND_ID;
+  return id === CAMERA_ID || id === LOOK_AT_ID;
 }
 
 export function deleteBlockingOps(args: {

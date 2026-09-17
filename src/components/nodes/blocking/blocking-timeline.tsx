@@ -153,10 +153,7 @@ export function BlockingTimeline({
               key={`${m.label}-${m.channel}-${m.tMs}-${i}`}
               type="button"
               title={`${m.label} @ ${formatRampTime(m.tMs / 1000)} — drag to retime`}
-              className={cn(
-                "absolute top-1/2 z-20 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-sm",
-                active ? "bg-foreground" : "bg-accent",
-              )}
+              className="absolute inset-y-0 z-20 w-2 -translate-x-1/2"
               style={{ left: `${(live / dur) * 100}%` }}
               onPointerDown={(e) => {
                 e.stopPropagation();
@@ -180,7 +177,14 @@ export function BlockingTimeline({
                 window.addEventListener("pointermove", move);
                 window.addEventListener("pointerup", up);
               }}
-            />
+            >
+              <span
+                className={cn(
+                  "mx-auto block h-full w-[2px]",
+                  active ? "bg-foreground" : "bg-accent",
+                )}
+              />
+            </button>
           );
         })}
         <div

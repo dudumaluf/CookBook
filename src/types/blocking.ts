@@ -348,7 +348,7 @@ export function createDefaultDocument(): BlockingDocument {
     width: DEFAULT_WIDTH,
     height: DEFAULT_HEIGHT,
     camera: defaultCamera(),
-    objects: [defaultGround()],
+    objects: [],
   };
 }
 
@@ -359,7 +359,7 @@ export function sanitizeBlockingDocument(raw: unknown): BlockingDocument {
     ? r.objects
         .map(sanitizeObject)
         .filter((o): o is BlockingObject => o !== null)
-    : [defaultGround()];
+    : [];
   const seen = new Set<string>();
   const uniq: BlockingObject[] = [];
   for (const o of objects) {
@@ -367,7 +367,6 @@ export function sanitizeBlockingDocument(raw: unknown): BlockingDocument {
     seen.add(o.id);
     uniq.push(o);
   }
-  if (uniq.length === 0) uniq.push(defaultGround());
   return {
     version: BLOCKING_DOCUMENT_VERSION,
     durationMs: clampDurationMs(r.durationMs),

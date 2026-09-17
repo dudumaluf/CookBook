@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-17 — 3D Blocking: thinner timeline keys
+
+Keyframe marks are 2px ticks (playhead is 1px) so stacked keys stay readable. The hit target stays a bit wider so they are still easy to grab.
+
+## 2026-09-17 — 3D Blocking: group-move camera + lookAt
+
+Selecting Camera and Look at together treats them as one: changing pos/look X/Y/Z (or dragging the gizmo) translates both by the same delta so the aim offset stays.
+
+## 2026-09-17 — 3D Blocking: no default ground mesh
+
+New scenes start with the grid only. The old Ground plane is a regular object — Delete / trash removes it. Add a Plane if you want a visible floor. Existing scenes that already have Ground keep it until you delete it.
+
 ## 2026-09-17 — 3D Blocking: gizmos, multi-select, no text highlight
 
 Re-attach TransformControls after the scene sync so picking an object in the outliner or viewport shows the gizmo. Shift / ⌘-click selects several objects (Delete and gizmo move apply to all). Editor chrome is `select-none` so a drag does not highlight titles.

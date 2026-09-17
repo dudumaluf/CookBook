@@ -5,8 +5,6 @@ import { Trash2 } from "lucide-react";
 import { CAMERA_ID, LOOK_AT_ID, type BlockingDocument } from "@/types/blocking";
 import { cn } from "@/lib/utils";
 
-import { GROUND_ID } from "./editor-actions";
-
 const DRAG = "application/x-cookbook-blocking-child";
 
 function Row({
@@ -149,11 +147,7 @@ export function BlockingOutliner({
             droppable
             onPick={onPick}
             onParent={onParent}
-            onDelete={
-              o.id !== GROUND_ID && onDelete
-                ? () => onDelete(o.id)
-                : undefined
-            }
+            onDelete={onDelete ? () => onDelete(o.id) : undefined}
           />
           {camParent === o.id ? (
             <Row

@@ -56,7 +56,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "add_primitive",
       description:
-        "Add a NEW stand-in only when nothing on stage already fills that role. capsule = a person. plane = floor (a ground plane usually already exists — do not add another). Prefer set_transform on an existing id.",
+        "Add a NEW stand-in only when nothing on stage already fills that role. capsule = a person. plane = a floor mesh if they asked for one (the grid is already the ground reference — do not add a plane unless they want a visible floor). Prefer set_transform on an existing id.",
       parameters: {
         type: "object",
         properties: {
@@ -284,7 +284,7 @@ This is usually an EDIT of a stage that already exists. The snapshot in the user
 
 Edit vs add:
 - If the user talks about something already on stage ("the person", "the capsule", "him", "the box", "the camera", "where it looks"), EDIT that id. Do not add a duplicate.
-- Match by name or kind (capsule ≈ person). Ground / plane is already there — never add a second floor.
+- Match by name or kind (capsule ≈ person). The grid is the floor reference — only add a plane if they asked for a visible floor mesh.
 - add_primitive only when they ask for a NEW actor that is not already listed.
 - Reuse existing ids. Never invent a second hero next to an existing one.
 
@@ -297,7 +297,7 @@ Camera vs lookAt (independent):
 - set_parent id=camera|lookAt onto an existing object to make them follow it (dolly with a character, aim stuck on a prop). parentId=null to unparent. Do not add a new object just to parent.
 
 Conventions:
-- Y-up, meters. Origin is stage center. Ground is y=0.
+- Y-up, meters. Origin is stage center. The grid is y=0.
 - capsule ≈ a person (~1.8m). Prefer a mesh already in the scene over a new capsule.
 - Do not add lights or bones. Times are milliseconds. Rotation is Euler degrees XYZ.
 - After keyframes, sample_at at start / mid / end. Stop. Do not playblast — the user hits Run for that.

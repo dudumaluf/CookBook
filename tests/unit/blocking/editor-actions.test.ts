@@ -37,7 +37,7 @@ describe("deleteBlockingSelection", () => {
     ).toEqual({ op: "remove_object", id: "hero" });
   });
 
-  it("never deletes camera, lookAt, or ground", () => {
+  it("never deletes camera or lookAt; ground is a normal object", () => {
     expect(
       deleteBlockingSelection({ selectedId: CAMERA_ID, selectedKey: null }),
     ).toBeNull();
@@ -46,7 +46,7 @@ describe("deleteBlockingSelection", () => {
     ).toBeNull();
     expect(
       deleteBlockingSelection({ selectedId: "ground", selectedKey: null }),
-    ).toBeNull();
+    ).toEqual({ op: "remove_object", id: "ground" });
   });
 
   it("deletes every unlocked id in a multi-selection", () => {
@@ -57,6 +57,7 @@ describe("deleteBlockingSelection", () => {
       }),
     ).toEqual([
       { op: "remove_object", id: "hero" },
+      { op: "remove_object", id: "ground" },
       { op: "remove_object", id: "box" },
     ]);
   });

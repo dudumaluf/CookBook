@@ -18,7 +18,9 @@ import { uploadMeshAsset } from "@/lib/library/upload-asset";
 import { runBlockingAgent } from "@/lib/blocking/agent";
 import {
   blockingTransformOp,
+  cameraPairSelected,
   extraTransformOps,
+  groupTranslateCamera,
   type ViewportTransform,
 } from "@/lib/blocking/camera-gizmo";
 import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
@@ -258,6 +260,7 @@ export function BlockingEditor({
   };
 
   const cameraSelected = selectedId === CAMERA_ID || selectedId === LOOK_AT_ID;
+  const pairGrouped = cameraPairSelected(selectedIds);
   const selectedTrack =
     selectedKey ? sceneTrack(doc, selectedKey.id, selectedKey.channel) : null;
   const selectedKeyframe =
@@ -285,6 +288,29 @@ export function BlockingEditor({
       : doc.objects.find((o) => o.id === selectedId) ?? null;
   const camAt = evalCameraAt(doc.camera, playheadMs, doc.objects);
   const objAt = selected ? evalObjectAt(selected, playheadMs) : null;
+
+  const moveCamPoint = (which: "position" | "lookAt", next: Vec3) => {
+    const grouped = groupTranslateCamera(camAt, which, next, pairGrouped);
+    if (!pairGrouped) {
+      if (which === "position") {
+        apply({
+          op: "set_transform",
+          id: CAMERA_ID,
+          position: next,
+          tMs: playheadMs,
+        });
+        return;
+      }
+      apply({ op: "set_camera", lookAt: next, tMs: playheadMs });
+      return;
+    }
+    apply({
+      op: "set_camera",
+      position: grouped.position,
+      lookAt: grouped.lookAt,
+      tMs: playheadMs,
+    });
+  };
 
   const runPrompt = async () => {
     const text = prompt.trim();
@@ -470,7 +496,7 @@ export function BlockingEditor({
             onSelect={pick}
             onTransformEnd={onTransformEnd}
             shotView={shotView}
-            linkCameraTarget={linkCameraTarget}
+            linkCameraTarget={linkCameraTarget || pairGrouped}
           />
         </div>
 
@@ -525,7 +551,13 @@ export function BlockingEditor({
             <InspectorBlock
               onScrubStart={beginScrub}
               onScrubEnd={endScrub}
-              title={selectedId === LOOK_AT_ID ? "Look at" : "Camera"}
+              title={
+                pairGrouped
+                  ? "Camera + Look at"
+                  : selectedId === LOOK_AT_ID
+                    ? "Look at"
+                    : "Camera"
+              }
               rows={[
                 [
                   "fov",
@@ -541,64 +573,37 @@ export function BlockingEditor({
                   "pos x",
                   camAt.position[0],
                   (v) =>
-                    apply({
-                      op: "set_transform",
-                      id: CAMERA_ID,
-                      position: [v, camAt.position[1], camAt.position[2]],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("position", [v, camAt.position[1], camAt.position[2]]),
                 ],
                 [
                   "pos y",
                   camAt.position[1],
                   (v) =>
-                    apply({
-                      op: "set_transform",
-                      id: CAMERA_ID,
-                      position: [camAt.position[0], v, camAt.position[2]],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("position", [camAt.position[0], v, camAt.position[2]]),
                 ],
                 [
                   "pos z",
                   camAt.position[2],
                   (v) =>
-                    apply({
-                      op: "set_transform",
-                      id: CAMERA_ID,
-                      position: [camAt.position[0], camAt.position[1], v],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("position", [camAt.position[0], camAt.position[1], v]),
                 ],
                 [
                   "look x",
                   camAt.lookAt[0],
                   (v) =>
-                    apply({
-                      op: "set_camera",
-                      lookAt: [v, camAt.lookAt[1], camAt.lookAt[2]],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("lookAt", [v, camAt.lookAt[1], camAt.lookAt[2]]),
                 ],
                 [
                   "look y",
                   camAt.lookAt[1],
                   (v) =>
-                    apply({
-                      op: "set_camera",
-                      lookAt: [camAt.lookAt[0], v, camAt.lookAt[2]],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("lookAt", [camAt.lookAt[0], v, camAt.lookAt[2]]),
                 ],
                 [
                   "look z",
                   camAt.lookAt[2],
                   (v) =>
-                    apply({
-                      op: "set_camera",
-                      lookAt: [camAt.lookAt[0], camAt.lookAt[1], v],
-                      tMs: playheadMs,
-                    }),
+                    moveCamPoint("lookAt", [camAt.lookAt[0], camAt.lookAt[1], v]),
                 ],
               ]}
             />

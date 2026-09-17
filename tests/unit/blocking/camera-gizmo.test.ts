@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   blockingTransformOp,
   extraTransformOps,
+  groupTranslateCamera,
   lookAtAlongForward,
   translateLinked,
 } from "@/lib/blocking/camera-gizmo";
@@ -14,6 +15,18 @@ describe("camera gizmo helpers", () => {
     const next = translateLinked([0, 2, 7], [1, 2, 7], [0, 1, 0], false);
     expect(next.moved).toEqual([1, 2, 7]);
     expect(next.other).toEqual([0, 1, 0]);
+  });
+
+  it("group-translates camera and lookAt from either handle", () => {
+    const cam = { position: [0, 2, 7] as const, lookAt: [0, 1, 0] as const };
+    const fromCam = groupTranslateCamera(cam, "position", [2, 2, 7], true);
+    expect(fromCam.position).toEqual([2, 2, 7]);
+    expect(fromCam.lookAt).toEqual([2, 1, 0]);
+    const fromLook = groupTranslateCamera(cam, "lookAt", [1, 1, 0], true);
+    expect(fromLook.position).toEqual([1, 2, 7]);
+    expect(fromLook.lookAt).toEqual([1, 1, 0]);
+    const solo = groupTranslateCamera(cam, "position", [2, 2, 7], false);
+    expect(solo.lookAt).toEqual([0, 1, 0]);
   });
 
   it("keeps camera and lookAt locked when linked", () => {
