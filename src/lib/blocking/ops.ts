@@ -22,11 +22,16 @@ import {
 } from "@/types/blocking";
 
 import {
+  rebakeCameraAttach,
+  toStoredPoint,
+} from "./evaluate";
+import {
   moveKeyframeTime,
   sceneTrack,
   trackFallback,
   writeSceneTrack,
 } from "./keys";
+import { attachOf } from "./parent";
 
 /**
  * Scene ops — the MCP surface. UI, in-node agent, and assistant tools
@@ -87,6 +92,11 @@ export type BlockingOp =
       easing?: Easing;
     }
   | { op: "set_duration"; durationMs: number }
+  | {
+      op: "set_parent";
+      id: string;
+      parentId: string | null;
+    }
   | { op: "set_fps"; fps: number }
   | { op: "set_size"; width?: number; height?: number }
   | {
@@ -211,9 +221,17 @@ export function applyBlockingOp(
     if (!doc.objects.some((o) => o.id === op.id)) {
       return { doc, error: `No object "${op.id}".` };
     }
+    let camera = doc.camera;
+    if (camera.parentId === op.id) {
+      camera = rebakeCameraAttach({ ...doc, camera }, "position", null);
+    }
+    if (camera.lookAtParentId === op.id) {
+      camera = rebakeCameraAttach({ ...doc, camera }, "lookAt", null);
+    }
     return {
       doc: sanitizeBlockingDocument({
         ...doc,
+        camera,
         objects: doc.objects.filter((o) => o.id !== op.id),
       }),
     };
@@ -249,7 +267,12 @@ export function applyBlockingOp(
           ...doc,
           camera: {
             ...doc.camera,
-            lookAt: upsertKey(doc.camera.lookAt, tMs, look, easing),
+            lookAt: upsertKey(
+              doc.camera.lookAt,
+              tMs,
+              toStoredPoint(doc.objects, doc.camera, "lookAt", look, tMs),
+              easing,
+            ),
           },
         }),
       };
@@ -261,7 +284,12 @@ export function applyBlockingOp(
           ...cam,
           tracks: {
             ...cam.tracks,
-            position: upsertKey(cam.tracks.position, tMs, op.position, easing),
+            position: upsertKey(
+              cam.tracks.position,
+              tMs,
+              toStoredPoint(doc.objects, cam, "position", op.position, tMs),
+              easing,
+            ),
           },
         };
       }
@@ -275,7 +303,15 @@ export function applyBlockingOp(
         };
       }
       if (op.lookAt) {
-        cam = { ...cam, lookAt: upsertKey(cam.lookAt, tMs, op.lookAt, easing) };
+        cam = {
+          ...cam,
+          lookAt: upsertKey(
+            cam.lookAt,
+            tMs,
+            toStoredPoint(doc.objects, cam, "lookAt", op.lookAt, tMs),
+            easing,
+          ),
+        };
       }
       return { doc: sanitizeBlockingDocument({ ...doc, camera: cam }) };
     }
@@ -298,7 +334,12 @@ export function applyBlockingOp(
           ...doc,
           camera: {
             ...doc.camera,
-            lookAt: upsertKey(doc.camera.lookAt, tMs, op.value, easing),
+            lookAt: upsertKey(
+              doc.camera.lookAt,
+              tMs,
+              toStoredPoint(doc.objects, doc.camera, "lookAt", op.value, tMs),
+              easing,
+            ),
           },
         }),
       };
@@ -306,7 +347,28 @@ export function applyBlockingOp(
     if (op.id === CAMERA_ID) {
       let cam = doc.camera;
       if (op.channel === "lookAt") {
-        cam = { ...cam, lookAt: upsertKey(cam.lookAt, tMs, op.value, easing) };
+        cam = {
+          ...cam,
+          lookAt: upsertKey(
+            cam.lookAt,
+            tMs,
+            toStoredPoint(doc.objects, cam, "lookAt", op.value, tMs),
+            easing,
+          ),
+        };
+      } else if (op.channel === "position") {
+        cam = {
+          ...cam,
+          tracks: {
+            ...cam.tracks,
+            position: upsertKey(
+              cam.tracks.position,
+              tMs,
+              toStoredPoint(doc.objects, cam, "position", op.value, tMs),
+              easing,
+            ),
+          },
+        };
       } else {
         cam = {
           ...cam,
@@ -466,14 +528,48 @@ export function applyBlockingOp(
         ...cam,
         tracks: {
           ...cam.tracks,
-          position: upsertKey(cam.tracks.position, tMs, op.position, easing),
+          position: upsertKey(
+            cam.tracks.position,
+            tMs,
+            toStoredPoint(doc.objects, cam, "position", op.position, tMs),
+            easing,
+          ),
         },
       };
     }
     if (op.lookAt) {
-      cam = { ...cam, lookAt: upsertKey(cam.lookAt, tMs, op.lookAt, easing) };
+      cam = {
+        ...cam,
+        lookAt: upsertKey(
+          cam.lookAt,
+          tMs,
+          toStoredPoint(doc.objects, cam, "lookAt", op.lookAt, tMs),
+          easing,
+        ),
+      };
     }
     return { doc: sanitizeBlockingDocument({ ...doc, camera: cam }) };
+  }
+
+  if (op.op === "set_parent") {
+    const attach = attachOf(op.id, op.id === LOOK_AT_ID ? "lookAt" : "position");
+    if (!attach) {
+      return { doc, error: "Only camera and lookAt can be parented." };
+    }
+    if (op.parentId !== null) {
+      if (isReservedBlockingId(op.parentId) || !doc.objects.some((o) => o.id === op.parentId)) {
+        return { doc, error: `No parent object "${op.parentId}".` };
+      }
+    }
+    const current =
+      attach === "lookAt" ? doc.camera.lookAtParentId : doc.camera.parentId;
+    if ((current ?? null) === (op.parentId ?? null)) return { doc };
+    return {
+      doc: sanitizeBlockingDocument({
+        ...doc,
+        camera: rebakeCameraAttach(doc, attach, op.parentId),
+      }),
+    };
   }
 
   if (op.op === "set_duration") {

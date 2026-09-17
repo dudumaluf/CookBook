@@ -111,7 +111,7 @@ export class BlockingWorld {
       }
     }
 
-    const cam = evalCameraAt(doc.camera, tMs);
+    const cam = evalCameraAt(doc.camera, tMs, doc.objects);
     this.playblastCamera.fov = cam.fov;
     this.playblastCamera.near = cam.near;
     this.playblastCamera.far = cam.far;

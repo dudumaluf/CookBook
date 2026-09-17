@@ -205,6 +205,22 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "set_parent",
+      description:
+        "Parent the camera body (id='camera') or the aim (id='lookAt') to an existing object so they follow it. parentId=null unparents. World pose is preserved at the moment of parenting.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", enum: ["camera", "lookAt"] },
+          parentId: { type: "string", description: "Object id, or omit/null to unparent." },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "set_duration",
       description: "Timeline length in milliseconds (200–60000).",
       parameters: {
@@ -277,6 +293,7 @@ Camera vs lookAt (independent):
 - "look at X" / "aponta para" / change where it looks → set_camera({ lookAt }) or set_keyframe id=camera channel=lookAt. Do NOT move camera position unless they asked.
 - "move the camera" / dolly / truck → set_camera({ position }) and leave lookAt alone unless they asked to reframe.
 - You can keyframe them separately.
+- set_parent id=camera|lookAt onto an existing object to make them follow it (dolly with a character, aim stuck on a prop). parentId=null to unparent. Do not add a new object just to parent.
 
 Conventions:
 - Y-up, meters. Origin is stage center. Ground is y=0.

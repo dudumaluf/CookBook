@@ -260,7 +260,11 @@ export function BlockingViewport({
     renderer.domElement.addEventListener("click", onClick);
 
     const placeChrome = () => {
-      const cam = evalCameraAt(docRef.current.camera, playheadRef.current);
+      const cam = evalCameraAt(
+        docRef.current.camera,
+        playheadRef.current,
+        docRef.current.objects,
+      );
       lookAtHandle.position.set(cam.lookAt[0], cam.lookAt[1], cam.lookAt[2]);
       const pos = world.playblastCamera.position;
       const pts = aimGeom.getAttribute("position");
@@ -348,7 +352,7 @@ export function BlockingViewport({
     if (!world) return;
     void world.sync(doc, playheadMs).then(() => {
       if (!handle || draggingRef.current) return;
-      const cam = evalCameraAt(doc.camera, playheadMs);
+      const cam = evalCameraAt(doc.camera, playheadMs, doc.objects);
       handle.position.set(cam.lookAt[0], cam.lookAt[1], cam.lookAt[2]);
     });
   }, [doc, playheadMs]);

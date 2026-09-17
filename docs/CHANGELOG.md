@@ -2,6 +2,14 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-17 — 3D Blocking editor: Delete + undo/redo
+
+Delete / Backspace in the fullscreen editor remove the selected object or keyframe, not the graph node. Cmd/Ctrl+Z undo and Shift+Z / Y redo the scene (including after a prompt). Trash icon on hover in the outliner; no Delete button in properties. Camera, look-at, ground, and the 0ms rest pose stay.
+
+## 2026-09-17 — 3D Blocking: parent camera / lookAt to an object
+
+Drag Camera or Look at onto an object in the outliner (or `set_parent`) so they follow that object. World pose is preserved at parent/unparent. Drop on Stage to detach. Object-under-object hierarchy is not in this pass.
+
 ## 2026-09-16 — Fix: hide TransformControls via getHelper(), not .visible
 
 `@types/three@0.182` types `TransformControls` as a non-Object3D. `gizmo.visible` failed Vercel `next build`. Shot view already toggles `gizmoHelper.visible`.

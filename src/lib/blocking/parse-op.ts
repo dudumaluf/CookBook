@@ -116,6 +116,13 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
         id: a.id,
         ...(asChannel(a.channel) ? { channel: asChannel(a.channel) } : {}),
       };
+    case "set_parent":
+      if (typeof a.id !== "string") return { error: "set_parent needs id." };
+      return {
+        op: "set_parent",
+        id: a.id,
+        parentId: typeof a.parentId === "string" ? a.parentId : null,
+      };
     case "set_camera":
       return {
         op: "set_camera",

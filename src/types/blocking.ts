@@ -55,6 +55,10 @@ export interface BlockingCamera {
   far: number;
   tracks: TransformTracks;
   lookAt: Keyframe[];
+  /** If set, camera position keys are local to this object. */
+  parentId?: string;
+  /** If set, lookAt keys are local to this object. */
+  lookAtParentId?: string;
 }
 
 export interface BlockingDocument {
@@ -281,16 +285,29 @@ export function defaultCamera(): BlockingCamera {
   };
 }
 
-export function sanitizeCamera(raw: unknown): BlockingCamera {
+export function sanitizeCamera(
+  raw: unknown,
+  objectIds?: ReadonlySet<string>,
+): BlockingCamera {
   const fallback = defaultCamera();
   if (!raw || typeof raw !== "object") return fallback;
   const r = raw as Record<string, unknown>;
+  const parentId =
+    typeof r.parentId === "string" && objectIds?.has(r.parentId)
+      ? r.parentId
+      : undefined;
+  const lookAtParentId =
+    typeof r.lookAtParentId === "string" && objectIds?.has(r.lookAtParentId)
+      ? r.lookAtParentId
+      : undefined;
   return {
     fov: clamp(asNum(r.fov, fallback.fov), 10, 120),
     near: clamp(asNum(r.near, fallback.near), 0.01, 10),
     far: clamp(asNum(r.far, fallback.far), 20, 2000),
     tracks: sanitizeTracks(r.tracks, DEFAULT_CAMERA_POS),
     lookAt: sanitizeTrack(r.lookAt, DEFAULT_CAMERA_LOOK),
+    ...(parentId ? { parentId } : {}),
+    ...(lookAtParentId ? { lookAtParentId } : {}),
   };
 }
 
@@ -338,7 +355,7 @@ export function sanitizeBlockingDocument(raw: unknown): BlockingDocument {
     fps: clampFps(r.fps),
     width: clampSizeAxis(r.width, DEFAULT_WIDTH),
     height: clampSizeAxis(r.height, DEFAULT_HEIGHT),
-    camera: sanitizeCamera(r.camera),
+    camera: sanitizeCamera(r.camera, seen),
     objects: uniq,
   };
 }

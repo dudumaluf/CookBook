@@ -10,6 +10,14 @@ import {
   type Vec3,
 } from "@/types/blocking";
 
+import {
+  localToWorld,
+  parentIdOf,
+  parentObject,
+  worldToLocal,
+  type CameraAttach,
+} from "./parent";
+
 /**
  * Shared interpolation. Viewport, timeline, playblast, and `sample_at`
  * all call these — if they disagree, the tools are lying.
@@ -83,13 +91,70 @@ export function evalObjectAt(
 export function evalCameraAt(
   cam: BlockingCamera,
   tMs: number,
+  objects: readonly BlockingObject[] = [],
 ): EvaluatedCamera {
+  const localPos = evalTrack(cam.tracks.position, tMs, [0, 2.2, 7]);
+  const localLook = evalTrack(cam.lookAt, tMs, [0, 1, 0]);
   return {
-    position: evalTrack(cam.tracks.position, tMs, [0, 2.2, 7]),
-    lookAt: evalTrack(cam.lookAt, tMs, [0, 1, 0]),
+    position: toWorldPoint(objects, cam, "position", localPos, tMs),
+    lookAt: toWorldPoint(objects, cam, "lookAt", localLook, tMs),
     fov: cam.fov,
     near: cam.near,
     far: cam.far,
+  };
+}
+
+export function toWorldPoint(
+  objects: readonly BlockingObject[],
+  cam: BlockingCamera,
+  attach: CameraAttach,
+  stored: Vec3,
+  tMs: number,
+): Vec3 {
+  const parent = parentObject(objects, parentIdOf(cam, attach));
+  if (!parent) return stored;
+  return localToWorld(evalObjectAt(parent, tMs), stored);
+}
+
+export function toStoredPoint(
+  objects: readonly BlockingObject[],
+  cam: BlockingCamera,
+  attach: CameraAttach,
+  world: Vec3,
+  tMs: number,
+): Vec3 {
+  const parent = parentObject(objects, parentIdOf(cam, attach));
+  if (!parent) return world;
+  return worldToLocal(evalObjectAt(parent, tMs), world);
+}
+
+export function rebakeCameraAttach(
+  doc: BlockingDocument,
+  attach: CameraAttach,
+  parentId: string | null,
+): BlockingCamera {
+  const cam = doc.camera;
+  const nextCam: BlockingCamera =
+    attach === "lookAt"
+      ? { ...cam, lookAtParentId: parentId ?? undefined }
+      : { ...cam, parentId: parentId ?? undefined };
+  const mapKeys = (keys: Keyframe[]) =>
+    keys.map((k) => ({
+      ...k,
+      value: toStoredPoint(
+        doc.objects,
+        nextCam,
+        attach,
+        toWorldPoint(doc.objects, cam, attach, k.value, k.tMs),
+        k.tMs,
+      ),
+    }));
+  if (attach === "lookAt") {
+    return { ...nextCam, lookAt: mapKeys(cam.lookAt) };
+  }
+  return {
+    ...nextCam,
+    tracks: { ...cam.tracks, position: mapKeys(cam.tracks.position) },
   };
 }
 
@@ -102,7 +167,7 @@ export function evalDocumentAt(
 } {
   const t = Math.min(Math.max(0, tMs), doc.durationMs);
   return {
-    camera: evalCameraAt(doc.camera, t),
+    camera: evalCameraAt(doc.camera, t, doc.objects),
     objects: doc.objects.map((object) => ({
       id: object.id,
       object,

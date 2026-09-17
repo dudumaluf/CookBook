@@ -24,7 +24,9 @@ export function readScene(
       fov: snap.camera.fov,
       position: snap.camera.position,
       lookAt: snap.camera.lookAt,
-      note: "position and lookAt are independent",
+      note: "position and lookAt are independent; parentId / lookAtParentId follow an object",
+      parentId: doc.camera.parentId ?? null,
+      lookAtParentId: doc.camera.lookAtParentId ?? null,
       keys: {
         position: keyTimes(doc.camera.tracks.position),
         lookAt: keyTimes(doc.camera.lookAt),
@@ -56,7 +58,7 @@ export function sampleAt(
 ): Record<string, unknown> {
   const t = Math.min(Math.max(0, tMs), doc.durationMs);
   if (!id || id === CAMERA_ID) {
-    const camera = evalCameraAt(doc.camera, t);
+    const camera = evalCameraAt(doc.camera, t, doc.objects);
     if (id === CAMERA_ID) return { tMs: t, camera };
     return {
       tMs: t,

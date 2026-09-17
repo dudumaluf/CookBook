@@ -1,6 +1,16 @@
 "use client";
 
-import { Box, Circle, Cylinder, Loader2, Square, UserRound, X } from "lucide-react";
+import {
+  Box,
+  Circle,
+  Cylinder,
+  Loader2,
+  Redo2,
+  Square,
+  Undo2,
+  UserRound,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -9,7 +19,8 @@ import { runBlockingAgent } from "@/lib/blocking/agent";
 import { blockingTransformOp, type ViewportTransform } from "@/lib/blocking/camera-gizmo";
 import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
 import { applyBlockingOp, type BlockingOp } from "@/lib/blocking/ops";
-import { evalCameraAt, evalObjectAt } from "@/lib/blocking/evaluate";
+import { evalCameraAt, evalObjectAt, toWorldPoint } from "@/lib/blocking/evaluate";
+import { attachOf } from "@/lib/blocking/parent";
 import {
   CAMERA_ID,
   LOOK_AT_ID,
@@ -23,7 +34,13 @@ import {
   BlockingViewport,
   type GizmoMode,
 } from "./blocking-viewport";
+import { BlockingOutliner } from "./blocking-outliner";
 import { BlockingTimeline, type TimelineKey } from "./blocking-timeline";
+import {
+  deleteBlockingSelection,
+  isTypingTarget,
+} from "./editor-actions";
+import { useSceneHistory } from "./use-scene-history";
 
 const COMMIT_MS = 120;
 
@@ -62,12 +79,25 @@ export function BlockingEditor({
   const [agentLog, setAgentLog] = useState<string>("");
   const [importError, setImportError] = useState<string>("");
   const [selectedKey, setSelectedKey] = useState<TimelineKey | null>(null);
+  const { push, undo, redo, canUndo, canRedo } = useSceneHistory(initialDoc);
 
   const docRef = useRef(doc);
   const onChangeRef = useRef(onChange);
+  const selectedIdRef = useRef(selectedId);
+  const selectedKeyRef = useRef(selectedKey);
+  const applyRef = useRef<(op: BlockingOp) => ReturnType<typeof applyBlockingOp>>(
+    () => ({ doc: initialDoc }),
+  );
+  const undoRef = useRef(undo);
+  const redoRef = useRef(redo);
+  const closeRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     docRef.current = doc;
     onChangeRef.current = onChange;
+    selectedIdRef.current = selectedId;
+    selectedKeyRef.current = selectedKey;
+    undoRef.current = undo;
+    redoRef.current = redo;
   });
   useEffect(() => {
     const t = setTimeout(() => onChangeRef.current(docRef.current), COMMIT_MS);
@@ -75,17 +105,81 @@ export function BlockingEditor({
   }, [doc]);
 
   const apply = useCallback((op: BlockingOp) => {
-    const next = applyBlockingOp(docRef.current, op);
+    const prev = docRef.current;
+    const next = applyBlockingOp(prev, op);
     if (next.error) setImportError(next.error);
-    setDoc(next.doc);
+    else setImportError("");
+    if (next.doc !== prev) {
+      setDoc(next.doc);
+      push(next.doc);
+    }
     if (next.createdId) setSelectedId(next.createdId);
     return next;
-  }, []);
+  }, [push]);
+  applyRef.current = apply;
 
   const close = useCallback(() => {
     onChangeRef.current(docRef.current);
     onClose();
   }, [onClose]);
+  closeRef.current = close;
+
+  const restore = (next: BlockingDocument | null) => {
+    if (!next) return;
+    setDoc(next);
+    setSelectedKey(null);
+  };
+
+  const deleteSelected = () => {
+    const op = deleteBlockingSelection({
+      selectedId: selectedIdRef.current,
+      selectedKey: selectedKeyRef.current,
+    });
+    if (!op) return;
+    const result = applyRef.current(op);
+    if (result.error) return;
+    if (op.op === "remove_keyframe") {
+      setSelectedKey(null);
+      return;
+    }
+    setSelectedId(CAMERA_ID);
+    setSelectedKey(null);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      const typing = isTypingTarget(e.target);
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key.toLowerCase() === "z") {
+        if (typing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        restore(e.shiftKey ? redoRef.current() : undoRef.current());
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "y") {
+        if (typing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        restore(redoRef.current());
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (typing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        deleteSelected();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
 
   const onTransformEnd = useCallback(
     (id: string, next: ViewportTransform) => {
@@ -106,11 +200,26 @@ export function BlockingEditor({
     selectedKey && selectedTrack && !("error" in selectedTrack)
       ? findKeyframe(selectedTrack, selectedKey.tMs)
       : undefined;
+  const selectedKeyWorld =
+    selectedKey && selectedKeyframe
+      ? (() => {
+          const attach = attachOf(selectedKey.id, selectedKey.channel);
+          return attach
+            ? toWorldPoint(
+                doc.objects,
+                doc.camera,
+                attach,
+                selectedKeyframe.value,
+                selectedKey.tMs,
+              )
+            : selectedKeyframe.value;
+        })()
+      : undefined;
   const selected =
     !selectedId || cameraSelected
       ? null
       : doc.objects.find((o) => o.id === selectedId) ?? null;
-  const camAt = evalCameraAt(doc.camera, playheadMs);
+  const camAt = evalCameraAt(doc.camera, playheadMs, doc.objects);
   const objAt = selected ? evalObjectAt(selected, playheadMs) : null;
 
   const runPrompt = async () => {
@@ -120,8 +229,11 @@ export function BlockingEditor({
     setAgentLog("");
     const ac = new AbortController();
     try {
-      const result = await runBlockingAgent(doc, text, ac.signal);
-      setDoc(result.doc);
+      const result = await runBlockingAgent(docRef.current, text, ac.signal);
+      if (result.doc !== docRef.current) {
+        setDoc(result.doc);
+        push(result.doc);
+      }
       const lines = result.trace.map((s) => s.name).join(" → ");
       setAgentLog(result.text || lines || "Scene updated.");
     } catch (err) {
@@ -147,12 +259,9 @@ export function BlockingEditor({
 
   return createPortal(
     <div
+      data-blocking-editor=""
       className="fixed inset-0 z-[80] flex flex-col bg-background text-foreground"
       onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          close();
-        }
         e.stopPropagation();
       }}
     >
@@ -236,58 +345,51 @@ export function BlockingEditor({
             {linkCameraTarget ? "Linked" : "Unlinked"}
           </button>
         </div>
-        <button
-          type="button"
-          className="ml-auto rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06]"
-          onClick={close}
-          aria-label="Close editor"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            title="Undo"
+            aria-label="Undo"
+            disabled={!canUndo}
+            className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06] disabled:opacity-30"
+            onClick={() => restore(undo())}
+          >
+            <Undo2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="Redo"
+            aria-label="Redo"
+            disabled={!canRedo}
+            className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06] disabled:opacity-30"
+            onClick={() => restore(redo())}
+          >
+            <Redo2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="rounded-md p-1 text-muted-foreground hover:bg-foreground/[0.06]"
+            onClick={close}
+            aria-label="Close editor"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-48 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border/40 p-2 text-[11px]">
-          <button
-            type="button"
-            className={cn(
-              "rounded-md px-2 py-1 text-left",
-              selectedId === CAMERA_ID
-                ? "bg-accent/25"
-                : "hover:bg-foreground/[0.05]",
-            )}
-            onClick={() => pick(CAMERA_ID)}
-          >
-            Camera
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded-md px-2 py-1 text-left",
-              selectedId === LOOK_AT_ID
-                ? "bg-accent/25"
-                : "hover:bg-foreground/[0.05]",
-            )}
-            onClick={() => pick(LOOK_AT_ID)}
-          >
-            Look at
-          </button>
-          {doc.objects.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className={cn(
-                "rounded-md px-2 py-1 text-left",
-                selectedId === o.id ? "bg-accent/25" : "hover:bg-foreground/[0.05]",
-                !o.visible && "opacity-50",
-              )}
-              onClick={() => pick(o.id)}
-            >
-              {o.name}
-              <span className="ml-1 text-muted-foreground">{o.kind}</span>
-            </button>
-          ))}
-        </aside>
+        <BlockingOutliner
+          doc={doc}
+          selectedId={selectedId}
+          onPick={pick}
+          onParent={(child, parentId) => {
+            apply({ op: "set_parent", id: child, parentId });
+          }}
+          onDelete={(id) => {
+            const result = apply({ op: "remove_object", id });
+            if (!result.error && selectedId === id) pick(CAMERA_ID);
+          }}
+        />
 
         <div className="relative min-w-0 flex-1">
           <BlockingViewport
@@ -303,14 +405,14 @@ export function BlockingEditor({
         </div>
 
         <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border/40 p-2 text-[11px]">
-          {selectedKey && selectedKeyframe ? (
+          {selectedKey && selectedKeyframe && selectedKeyWorld ? (
             <InspectorBlock
               title={`${selectedKey.label} key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
               rows={(["x", "y", "z"] as const).map((axis, i) => [
                 axis,
-                selectedKeyframe.value[i]!,
+                selectedKeyWorld[i]!,
                 (v: number) => {
-                  const next: Vec3 = [...selectedKeyframe.value];
+                  const next: Vec3 = [...selectedKeyWorld];
                   next[i] = v;
                   apply({
                     op: "set_keyframe",
@@ -444,18 +546,6 @@ export function BlockingEditor({
           ) : (
             <p className="text-muted-foreground">Select an object.</p>
           )}
-          {selected && selected.id !== "ground" ? (
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-destructive hover:bg-destructive/10"
-              onClick={() => {
-                apply({ op: "remove_object", id: selected.id });
-                pick(CAMERA_ID);
-              }}
-            >
-              Delete
-            </button>
-          ) : null}
           <label className="mt-2 flex flex-col gap-1 text-muted-foreground">
             Duration (s)
             <input

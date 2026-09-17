@@ -347,9 +347,11 @@ See [`docs/COOKBOOK-LIBRARY.md`](./COOKBOOK-LIBRARY.md) for the full design + ro
 
 - **`Speed Ramp` node (`speed-ramp`)** — `src/components/nodes/node-speed-ramp.tsx`. Footage pins (`pins: { srcSec, speed }[]`): constant speed from each cut to the next. Scrub the source, Split at the playhead, set 0.25×–4× (or a number). `fps` 24/30/60. Run calls `remapVideo` with pins (legacy `keys` bezier still encodes if `pins` is absent). Audio dropped.
 
-- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs. **Shot** = playblast camera POV; **Orbit** = free view with gizmos on objects, `camera`, and the `lookAt` handle (`LOOK_AT_ID`). **Linked** translates camera + lookAt together. Node body has a compact playhead.
+- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs. **Shot** = playblast camera POV; **Orbit** = free view with gizmos on objects, `camera`, and the `lookAt` handle (`LOOK_AT_ID`). **Linked** translates camera + lookAt together. Node body has a compact playhead. Fullscreen editor: Delete/Backspace delete the selected object or key (not the graph node); Cmd/Ctrl+Z / Shift+Z undo/redo the scene including prompt results.
 
 - **`LOOK_AT_ID`** — `"lookAt"`. Editor pick id for the camera point of interest. Not a scene object; reserved so `add_primitive` / sanitize cannot steal it. Agent can `set_transform` / `set_keyframe` with this id to aim the camera without moving it.
+
+- **`set_parent`** — Blocking scene op. Parent `camera` or `lookAt` to an object (`parentId`) or `null` to unparent. Stored keys become local to the parent; evaluate/playblast still return world. Deleting the parent unparents and rebakes world keys.
 
 - **`move_keyframe`** — Blocking scene op. Slides an existing key to a new `tMs` without changing its value. The 0ms rest pose cannot move.
 

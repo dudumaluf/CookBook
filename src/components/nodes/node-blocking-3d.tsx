@@ -30,7 +30,9 @@ import {
   BlockingTimeline,
   type TimelineKey,
 } from "@/components/nodes/blocking/blocking-timeline";
+import { toWorldPoint } from "@/lib/blocking/evaluate";
 import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
+import { attachOf } from "@/lib/blocking/parent";
 import { useBlockingPlayhead } from "@/components/nodes/blocking/use-playhead";
 import { useExecutionStore } from "@/lib/stores/execution-store";
 import {
@@ -356,6 +358,10 @@ function NodeKeyFields({
   const key =
     track && !("error" in track) ? findKeyframe(track, selectedKey.tMs) : undefined;
   if (!key) return null;
+  const attach = attachOf(selectedKey.id, selectedKey.channel);
+  const shown = attach
+    ? toWorldPoint(scene.objects, scene.camera, attach, key.value, selectedKey.tMs)
+    : key.value;
   return (
     <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
       <span className="w-10 shrink-0">
@@ -366,9 +372,9 @@ function NodeKeyFields({
           key={axis}
           type="number"
           step={0.1}
-          value={Number(key.value[i]!.toFixed(3))}
+          value={Number(shown[i]!.toFixed(3))}
           onChange={(e) => {
-            const next: Vec3 = [...key.value];
+            const next: Vec3 = [...shown];
             next[i] = Number(e.target.value);
             onChange(next);
           }}

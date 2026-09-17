@@ -125,6 +125,22 @@ describe("tryHandleDeleteKey", () => {
     },
   );
 
+  it("ignores Delete while the Blocking editor is open", () => {
+    const mark = document.createElement("div");
+    mark.setAttribute("data-blocking-editor", "");
+    document.body.appendChild(mark);
+    const removeNode = vi.fn();
+    try {
+      const handled = tryHandleDeleteKey(makeEvent({ key: "Delete" }), () =>
+        mockState({ selectedNodeIds: ["n1"], removeNode }),
+      );
+      expect(handled).toBe(false);
+      expect(removeNode).not.toHaveBeenCalled();
+    } finally {
+      mark.remove();
+    }
+  });
+
   it("ignores Backspace when target is contentEditable", () => {
     const removeNode = vi.fn();
     const handled = tryHandleDeleteKey(

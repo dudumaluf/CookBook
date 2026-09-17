@@ -84,6 +84,13 @@ export function tryHandleDeleteKey(
   getState: () => DeleteKeyTarget,
 ): boolean {
   if (event.key !== "Backspace" && event.key !== "Delete") return false;
+  if (
+    typeof document !== "undefined" &&
+    document.querySelector("[data-blocking-editor]")
+  ) {
+    // Fullscreen Blocking editor owns Delete / Backspace.
+    return false;
+  }
   const target = event.target as HTMLElement | null;
   if (target) {
     const tag = target.tagName;
