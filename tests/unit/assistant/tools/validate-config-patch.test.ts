@@ -56,6 +56,13 @@ describe("validateConfigPatch", () => {
     expect(err).toContain("delimiter");
   });
 
+  it("rejects blocking-3d scene dumps and points at blocking_apply_ops", () => {
+    const err = validateConfigPatch("blocking-3d", { scene: { version: 1 } });
+    expect(err).toBeTruthy();
+    expect(err).toContain("blocking_apply_ops");
+    expect(validateConfigPatch("blocking-3d", { fps: 30 })).toBeNull();
+  });
+
   it("does not reject array.delimiter (the real field)", () => {
     expect(
       validateConfigPatch("array", { delimiter: "**", trim: true }),

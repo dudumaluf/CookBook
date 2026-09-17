@@ -2,9 +2,17 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — New node: 3D Blocking (previz / playblast)
+
+Added **3D Blocking** (`blocking-3d`). A scene document (primitives + imported meshes, PSR and camera keyframes) with a fullscreen Three.js editor and an in-node prompt agent. The same scene ops drive the UI, the agent, and assistant tools (`blocking_read_scene` / `blocking_apply_ops`) — do not dump `config.scene` via `update_node_config`. Run playblasts an MP4 for Seedance / Omni reference. Hunyuan `mesh` wires in. Import GLB/GLTF/OBJ; FBX is best-effort. No lights, no rigs. ADR-0094.
+
 ## 2026-09-16 — Gemini Omni Flash 1.1 reference-to-video
 
 Extended the existing **Gemini Omni Flash** node with Fal's **1.1** reference-to-video (`google/gemini-omni-flash/v1.1/reference-to-video`, ADR-0093). A **Model** setting picks Flash 1.1 (default) or the original Flash. 1.1 adds resolution (360p / 720p / 1080p / 4K; ~$0.03–$0.30/s) and optional `<VIDEO_REF_N>` sockets (up to 3 clips, each ≤3s) plus a `<VIDEO_REF[]>` array socket. Edit mode is unchanged (still Flash edit). Existing graphs without a version field resolve to 1.1.
+
+## 2026-08-30 — New node: Video Cut (ripple-delete ranges)
+
+Added **Video Cut** (`video-cut`). Same footage-pin UI as Speed Ramp: scrub the source, Split at the playhead, Keep or Cut out that zone. Cut the start, the end, or a middle range — leftovers join into one MP4. Identity (nothing cut) passes the source through. Audio is dropped. Parked for later: preview the first/last frame of a middle cut so you can match similar shots at the join.
 
 ## 2026-08-28 — Speed Ramp: footage pins instead of a bezier graph
 

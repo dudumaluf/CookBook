@@ -54,6 +54,8 @@ import { unpackCompositeTool } from "./recipe/unpack-composite";
 import { updateCompositeToLatestTool } from "./recipe/update-composite-to-latest";
 import { applyPendingRefactorTool } from "./refactor/apply-pending-refactor";
 import { proposeRefactorTool } from "./refactor/propose-refactor";
+import { blockingApplyOpsTool } from "./blocking/apply-ops";
+import { blockingReadSceneTool } from "./blocking/read-scene";
 import { cancelRunTool } from "./run/cancel-run";
 import { runFromTool } from "./run/run-from";
 import { runWorkflowTool } from "./run/run-workflow";
@@ -224,6 +226,8 @@ const tools: AssistantTool[] = [
   pinGenerationTool,
   deleteGenerationTool,
   setGenerationTitleTool,
+  blockingReadSceneTool,
+  blockingApplyOpsTool,
 ];
 
 /**

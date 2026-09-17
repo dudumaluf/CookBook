@@ -2,7 +2,7 @@
 
 Catalog of every registered node: what it does, inputs, and outputs.
 
-**53 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
+**55 nodes** · source of truth for registration: [`src/lib/engine/all-nodes.ts`](../src/lib/engine/all-nodes.ts).
 
 > When I/O is dynamic (auto-growing sockets / mode switches), the list is the usual default snapshot — check the node settings for variants.
 
@@ -45,8 +45,9 @@ Catalog of every registered node: what it does, inputs, and outputs.
 
 - [Marlin](#marlin) (`fal-marlin`)
 
-### Transform (18)
+### Transform (20)
 
+- [3D Blocking](#3d-blocking) (`blocking-3d`)
 - [Array](#array) (`array`)
 - [Audio Isolation](#audio-isolation) (`fal-audio-isolation`)
 - [Audio Slicer](#audio-slicer) (`audio-slicer`)
@@ -63,6 +64,7 @@ Catalog of every registered node: what it does, inputs, and outputs.
 - [Speed Ramp](#speed-ramp) (`speed-ramp`)
 - [Track Recompose](#track-recompose) (`track-recompose`)
 - [Transform](#transform) (`image-transform`)
+- [Video Cut](#video-cut) (`video-cut`)
 - [Video Pad](#video-pad) (`video-pad`)
 - [Video Slicer](#video-slicer) (`video-slicer`)
 
@@ -744,6 +746,38 @@ Translate, rotate, and scale a single image around its center, preserving alpha 
 - **Run:** manual (Run / Run-here)
 
 Mark places on the source footage and set a speed per zone (0.25× slow-mo … 4× fast). Scrub the wired clip, Split at the playhead, pick a speed. Output length follows the zones. Run encodes an MP4 you can preview and wire into Concat / Export / anything that takes `video`. Audio is dropped.
+
+**Inputs**
+
+- `video` (video)
+
+**Outputs**
+
+- `out` (video)
+
+### 3D Blocking
+
+- **Kind:** `blocking-3d`
+- **Category:** `transform`
+- **Run:** manual (Run / Run-here)
+
+Previz stage for reference-to-video. Add primitives (capsule = person) or import GLB/OBJ/FBX, keyframe PSR + camera (position / lookAt / fov), or prompt the in-node scene agent. Run playblasts an MP4. Wire Hunyuan meshes into `mesh`. No lights or rigs.
+
+**Inputs**
+
+- `mesh` (mesh, multiple)
+
+**Outputs**
+
+- `out` (video)
+
+### Video Cut
+
+- **Kind:** `video-cut`
+- **Category:** `transform`
+- **Run:** manual (Run / Run-here)
+
+Mark zones on the source footage and cut them out (start, end, or a middle range). Leftover keep zones join into one clip (ripple delete). Same footage-pin UI as Speed Ramp: scrub the wired clip, Split at the playhead, Keep or Cut out that zone. Run encodes an MP4. Audio is dropped. If nothing is marked Cut out, the source URL passes through.
 
 **Inputs**
 

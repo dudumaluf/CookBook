@@ -179,6 +179,11 @@ const kindPitfallsMap: Record<string, string[]> = {
     `Needs a wired \`prompt\` AND a start \`image\` (the first frame). Optional \`end\` image is first-to-last keyframe only — it does not replace the start still.`,
     `\`config.resolution\` is \`"480P"\` or \`"768P"\` (capital P). Duration is 5–15 seconds. \`promptExpansionMode\` is \`disabled\` / \`balanced\` / \`quality\` — quality can add ~30s before Fal starts rendering.`,
   ],
+  "blocking-3d": [
+    `The scene lives in \`config.scene\` but you MUST NOT patch it via \`update_node_config\`. Use \`blocking_read_scene\` + \`blocking_apply_ops\` (add_primitive, set_keyframe, set_camera, …).`,
+    `Output is a playblast VIDEO for Seedance/Omni reference — Run encodes it. Prompting the node mutates the stage; it does not spend a video model.`,
+    `capsule = a person. Y-up, meters. No lights, no rigs. Import GLB/OBJ/FBX or wire Hunyuan \`mesh\` into the mesh socket.`,
+  ],
   "fal-veed-subtitles": [
     `Needs a \`video\` input wired (the source clip) — it transcribes that clip's audio and burns styled subtitles back onto it. Output is a \`video\`. Non-reactive + bills per minute, so it needs a Run.`,
     `\`config.preset\` is REQUIRED (defaults to "simple"). Presets come in two pricing tiers: BASIC (1x) — simple, plain, beans, corpo, boo, shadeplay, casper, capri, lowkey, vinta, diego, ali, slay, kitty, hustle, karl, sprout, flex, mint, rizz, vegas — and DYNAMIC (2x) — glass, whisper, glide2, fusion, glide, terminal, handwritten, backdrop, backdrop2. Picking a dynamic preset DOUBLES the price; prefer a basic one unless the richer look is wanted.`,

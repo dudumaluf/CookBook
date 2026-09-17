@@ -185,7 +185,7 @@ Supabase auth, projects/assets sync, Vercel deploy. Architecture is already clou
 
 - Multi-user collaboration / real-time editing.
 - Audio nodes (synthesis, music gen).
-- 3D object manipulation node (mentioned in briefing, parked).
+- 3D object manipulation node — shipped as **3D Blocking** (`blocking-3d`, ADR-0094): previz + playblast, not a DCC.
 - Public sharing of recipes.
 - Mobile / touch UI.
 

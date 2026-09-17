@@ -3621,3 +3621,21 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 - **Consequences / next**: 1.1 text-to-video, image-to-video, and edit can land as additional modes / endpoints on this same node when we want them. Audio-in is still not in the documented 1.1 reference schema.
 
 
+## ADR-0094: 3D Blocking is a scene document + ops bus; playblast is the only graph output
+
+- **Status**: Accepted (2026-09-16).
+
+- **Context**: The user wants Blender-MCP-style natural-language previz inside Cookbook — place primitives / imported meshes, keyframe PSR and camera, then emit a video for Seedance / Omni reference. Embedding Blender (or driving a desktop Blender via MCP) does not fit Vercel / the browser graph. Dumping a whole scene through `update_node_config` (shallow merge) would wreck the document.
+
+- **Decision**:
+  - **`BlockingDocument`** (`src/types/blocking.ts`) is the source of truth on `config.scene`. Sanitize on load. Camera is undeletable. Conventions: Y-up, meters; capsule = person; no user lights/rigs (renderer has a fixed hemisphere + key).
+  - **One reducer** `applyBlockingOp` is the MCP surface. UI gizmos, the in-node prompt agent (`runBlockingAgent` + `callOpenRouter` tools), and assistant tools (`blocking_read_scene`, `blocking_apply_ops`) all call it. Interpolation (`evaluate.ts`) is shared by viewport, timeline, playblast, and `sample_at`.
+  - **`update_node_config` must not write `scene`** — `validateConfigPatch` rejects it and points at `blocking_apply_ops`.
+  - **`execute()` only playblasts** (Three.js WebGL → mediabunny `CanvasSource` → `uploadMediaAsset`). Prompting is interactive and mutates the document; it is not Run.
+  - **Import** stores a URL (GLB/GLTF first-class, OBJ static, FBX best-effort). Hunyuan `mesh` inputs auto-add via `ensureWiredMeshes`. Library `3dObject` stays deferred.
+
+- **Why this shape**: A closed op list is what makes NL reliable (the LLM cannot invent lights or bones). Sharing evaluate() between the agent and the renderer is the anti-lie guarantee. Playblast-as-video reuses the existing reference-to-video graph instead of inventing a `mesh` consumer chain.
+
+- **Consequences / next**: FBX will fail on some files — tell the user to export GLB. No retarget. Editor is a fullscreen portal (Composer pattern). `three` is a new direct dependency.
+
+

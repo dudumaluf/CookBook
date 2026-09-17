@@ -80,6 +80,7 @@ const KIND_ALLOWED_KEYS: Record<string, ReadonlySet<string>> = {
   ]),
   "resize-image": new Set(["mode", "width", "height", "background"]),
   "resize-video": new Set(["mode", "width", "height"]),
+  "blocking-3d": new Set(["fps", "width", "height"]),
 };
 
 export function validateConfigPatch(
@@ -97,6 +98,9 @@ export function validateConfigPatch(
         ", ",
       )}. Got "${value}". Note: the Fal endpoint id (e.g. "fal-ai/nano-banana-2") is a server-side detail — use the literal "nano-banana-2".`;
     }
+  }
+  if (kind === "blocking-3d" && "scene" in patch) {
+    return `update_node_config rejected: do not write \`scene\` JSON. Mutate the stage with \`blocking_apply_ops\` (and inspect it with \`blocking_read_scene\`).`;
   }
   if (kind === "array" && "separator" in patch) {
     return `update_node_config rejected: array node has no \`separator\` field — use \`delimiter\` instead. The array splits its upstream text by \`config.delimiter\` (default ","); set that to "**" / "---" / etc. to change the split character. Call read_node_schema with kind="array" if you need the full config shape.`;

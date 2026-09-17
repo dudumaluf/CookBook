@@ -102,7 +102,7 @@ function extensionFor(filename: string, mime: string, fallback: string): string 
 
 /** Build a content-addressed key: `users/<uid>/<folder>/<hash>.<ext>`. */
 function buildContentKey(
-  folder: "images" | "videos" | "audio",
+  folder: "images" | "videos" | "audio" | "meshes",
   hash: string,
   ext: string,
   userId?: string,
@@ -155,7 +155,7 @@ export function buildObjectKey(filename: string, userId?: string): string {
  * namespaces (`videos/...`, `audio/...`) instead of `images/...`.
  */
 export function buildMediaObjectKey(
-  folder: "images" | "videos" | "audio",
+  folder: "images" | "videos" | "audio" | "meshes",
   filename: string,
   userId?: string,
 ): string {
@@ -371,6 +371,42 @@ export function uploadAudioFromUrl(
   filenameHint?: string,
 ): Promise<UploadedMediaDescriptor> {
   return uploadMediaFromUrl(url, "audio", filenameHint);
+}
+
+/** Upload a GLB / GLTF / OBJ / FBX into `meshes/` (3D Blocking imports). */
+export async function uploadMeshAsset(file: File): Promise<UploadedMediaDescriptor> {
+  const supabase = getSupabaseClient();
+  const bucket = getAssetsBucket();
+  const userId = (await supabase.auth.getUser()).data.user?.id;
+  const hash = await contentHashHex(file);
+  const key = hash
+    ? buildContentKey(
+        "meshes",
+        hash,
+        extensionFor(file.name, file.type, "glb"),
+        userId,
+      )
+    : buildMediaObjectKey("meshes", file.name, userId);
+
+  const { error } = await supabase.storage.from(bucket).upload(key, file, {
+    contentType: file.type || "application/octet-stream",
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error && !isAlreadyExistsError(error)) {
+    throw new Error(error.message || "Supabase upload failed");
+  }
+  const { data } = supabase.storage.from(bucket).getPublicUrl(key);
+  if (!data.publicUrl) {
+    throw new Error("Supabase returned no public URL for the upload");
+  }
+  return {
+    bucket,
+    key,
+    url: data.publicUrl,
+    mime: file.type || "application/octet-stream",
+    sizeBytes: file.size,
+  };
 }
 
 /**

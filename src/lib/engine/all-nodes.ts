@@ -51,6 +51,8 @@ import { videoConcatNodeSchema } from "@/components/nodes/node-video-concat";
 import { videoPadNodeSchema } from "@/components/nodes/node-video-pad";
 import { videoSlicerNodeSchema } from "@/components/nodes/node-video-slicer";
 import { speedRampNodeSchema } from "@/components/nodes/node-speed-ramp";
+import { videoCutNodeSchema } from "@/components/nodes/node-video-cut";
+import { blocking3dNodeSchema } from "@/components/nodes/node-blocking-3d";
 
 import { nodeRegistry } from "./registry";
 
@@ -101,6 +103,8 @@ export function registerAllNodes(): void {
   nodeRegistry.register(audioSlicerNodeSchema);
   nodeRegistry.register(videoSlicerNodeSchema);
   nodeRegistry.register(speedRampNodeSchema);
+  nodeRegistry.register(videoCutNodeSchema);
+  nodeRegistry.register(blocking3dNodeSchema);
   nodeRegistry.register(frameExtractNodeSchema);
   nodeRegistry.register(framesExtractNodeSchema);
   nodeRegistry.register(videoConcatNodeSchema);
