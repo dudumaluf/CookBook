@@ -2,6 +2,10 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-16 — Fix: @types/three so the Blocking viewport type-checks
+
+`three@0.182` ships no `.d.ts`. The empty `declare module "three"` stub made `THREE.WebGLRenderer` fail on Vercel `next build`. Add `@types/three@0.182.0` and drop the stub.
+
 ## 2026-09-16 — Fix: pin three@0.182 so Vercel install resolves
 
 `@google/model-viewer@4.2.0` peers `three@^0.182.0`. The Blocking node had pulled `^0.186.0`, so production `npm install` failed with ERESOLVE. Pin `three` to `0.182.0` (the APIs Blocking uses are the same).

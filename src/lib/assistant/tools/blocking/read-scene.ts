@@ -4,7 +4,7 @@ import { readScene } from "@/lib/blocking/query";
 import { sanitizeBlockingDocument } from "@/types/blocking";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 
-import type { AssistantTool } from "../../index";
+import type { AssistantTool } from "../index";
 
 const argsSchema = z
   .object({

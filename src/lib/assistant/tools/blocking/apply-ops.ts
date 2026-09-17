@@ -7,7 +7,7 @@ import { useCanvasUiStore } from "@/lib/stores/canvas-ui-store";
 import { useWorkflowStore } from "@/lib/stores/workflow-store";
 import { sanitizeBlockingDocument } from "@/types/blocking";
 
-import type { AssistantTool } from "../../index";
+import type { AssistantTool } from "../index";
 import { resolveBlockingNode } from "./read-scene";
 
 const argsSchema = z
