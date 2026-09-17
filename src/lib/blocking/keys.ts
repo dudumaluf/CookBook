@@ -4,11 +4,16 @@ import {
   sanitizeTrack,
   VEC3_ONE,
   VEC3_ZERO,
+  type BlockingCamera,
   type BlockingDocument,
+  type BlockingObject,
   type CameraChannel,
   type Keyframe,
+  type PoseKey,
   type Vec3,
 } from "@/types/blocking";
+
+import { removePoseChannel, upsertPose } from "./pose";
 
 export function findKeyframe(
   keys: readonly Keyframe[],
@@ -77,6 +82,47 @@ export function sceneTrack(
   return obj.tracks[channel];
 }
 
+export function poseKeysOf(
+  doc: BlockingDocument,
+  id: string,
+): PoseKey[] | { error: string } {
+  if (id === LOOK_AT_ID || id === CAMERA_ID) return doc.camera.poseKeys;
+  const obj = doc.objects.find((o) => o.id === id);
+  if (!obj) return { error: `No object "${id}".` };
+  return obj.poseKeys;
+}
+
+function posesFromTrack(
+  poses: PoseKey[],
+  channel: CameraChannel,
+  keys: Keyframe[],
+): PoseKey[] {
+  let next = poses.map((p) => {
+    const copy = { ...p };
+    if (channel === "fov") delete copy.fov;
+    else delete copy[channel];
+    return copy;
+  });
+  next = next.filter(
+    (p) =>
+      p.position ||
+      p.rotation ||
+      p.scale ||
+      p.lookAt ||
+      p.fov !== undefined ||
+      p.tMs === 0,
+  );
+  for (const k of keys) {
+    next = upsertPose(
+      next,
+      k.tMs,
+      channel === "fov" ? { fov: k.value[0], easing: k.easing } : { [channel]: k.value, easing: k.easing },
+      k.easing,
+    );
+  }
+  return next;
+}
+
 export function writeSceneTrack(
   doc: BlockingDocument,
   id: string,
@@ -84,27 +130,58 @@ export function writeSceneTrack(
   keys: Keyframe[],
 ): BlockingDocument {
   if (id === LOOK_AT_ID || (id === CAMERA_ID && channel === "lookAt")) {
-    return { ...doc, camera: { ...doc.camera, lookAt: keys } };
+    const poseKeys = posesFromTrack(doc.camera.poseKeys, "lookAt", keys);
+    return writeCamera(doc, { ...doc.camera, lookAt: keys, poseKeys });
   }
   if (id === CAMERA_ID && channel === "fov") {
-    return { ...doc, camera: { ...doc.camera, fovKeys: keys } };
+    const poseKeys = posesFromTrack(doc.camera.poseKeys, "fov", keys);
+    return writeCamera(doc, { ...doc.camera, fovKeys: keys, poseKeys });
   }
   if (id === CAMERA_ID) {
-    return {
-      ...doc,
-      camera: {
-        ...doc.camera,
-        tracks: { ...doc.camera.tracks, [channel]: keys },
-      },
-    };
+    const poseKeys = posesFromTrack(doc.camera.poseKeys, channel, keys);
+    return writeCamera(doc, {
+      ...doc.camera,
+      poseKeys,
+      tracks: { ...doc.camera.tracks, [channel]: keys },
+    });
   }
   if (channel === "lookAt" || channel === "fov") return doc;
   return {
     ...doc,
     objects: doc.objects.map((o) =>
       o.id === id
-        ? { ...o, tracks: { ...o.tracks, [channel]: keys } }
+        ? {
+            ...o,
+            poseKeys: posesFromTrack(o.poseKeys, channel, keys),
+            tracks: { ...o.tracks, [channel]: keys },
+          }
         : o,
     ),
   };
+}
+
+export function writeCamera(
+  doc: BlockingDocument,
+  cam: BlockingCamera,
+): BlockingDocument {
+  const cameras = doc.cameras.some((c) => c.id === cam.id)
+    ? doc.cameras.map((c) => (c.id === cam.id ? cam : c))
+    : [...doc.cameras, cam];
+  const primary = cameras.find((c) => c.id === CAMERA_ID) ?? cameras[0]!;
+  return { ...doc, cameras, camera: cam.id === primary.id ? cam : primary };
+}
+
+export function writeObjectPoses(
+  obj: BlockingObject,
+  poseKeys: PoseKey[],
+): BlockingObject {
+  return { ...obj, poseKeys };
+}
+
+export function dropPoseChannel(
+  poses: PoseKey[],
+  tMs: number,
+  channel: CameraChannel,
+): PoseKey[] {
+  return removePoseChannel(poses, tMs, channel);
 }

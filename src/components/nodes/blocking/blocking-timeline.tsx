@@ -9,6 +9,7 @@ import {
   type BlockingDocument,
   type CameraChannel,
 } from "@/types/blocking";
+import { poseTimes } from "@/lib/blocking/pose";
 import { cn } from "@/lib/utils";
 
 export interface TimelineKey {
@@ -61,24 +62,16 @@ export function BlockingTimeline({
   };
 
   const marks: TimelineKey[] = [];
-  const pushKeys = (
-    keys: { tMs: number }[],
-    id: string,
-    channel: CameraChannel,
-    label: string,
-  ) => {
-    for (const k of keys) marks.push({ id, channel, tMs: k.tMs, label });
-  };
   if (!selectedId || selectedId === CAMERA_ID || selectedId === LOOK_AT_ID) {
-    pushKeys(doc.camera.tracks.position, CAMERA_ID, "position", "P");
-    pushKeys(doc.camera.lookAt, CAMERA_ID, "lookAt", "L");
-    pushKeys(doc.camera.fovKeys ?? [], CAMERA_ID, "fov", "F");
+    for (const tMs of poseTimes(doc.camera.poseKeys)) {
+      marks.push({ id: CAMERA_ID, channel: "position", tMs, label: "Pose" });
+    }
   } else {
     const obj = doc.objects.find((o) => o.id === selectedId);
     if (obj) {
-      pushKeys(obj.tracks.position, obj.id, "position", "P");
-      pushKeys(obj.tracks.rotation, obj.id, "rotation", "R");
-      pushKeys(obj.tracks.scale, obj.id, "scale", "S");
+      for (const tMs of poseTimes(obj.poseKeys)) {
+        marks.push({ id: obj.id, channel: "position", tMs, label: "Pose" });
+      }
     }
   }
 

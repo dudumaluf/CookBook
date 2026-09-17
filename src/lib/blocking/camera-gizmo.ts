@@ -2,6 +2,7 @@ import { CAMERA_ID, LOOK_AT_ID, type BlockingDocument, type Vec3 } from "@/types
 
 import { evalObjectAt } from "./evaluate";
 import type { BlockingOp } from "./ops";
+import { isDescendant } from "./parent";
 
 export function addVec3(a: Vec3, b: Vec3): Vec3 {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -110,7 +111,7 @@ export function extraTransformOps(
 ): BlockingOp[] {
   const primary = doc.objects.find((o) => o.id === primaryId);
   if (!primary) return [];
-  const before = evalObjectAt(primary, tMs);
+  const before = evalObjectAt(primary, tMs, doc.objects);
   const dPos = next.position ? subVec3(next.position, before.position) : null;
   const dRot = next.rotation ? subVec3(next.rotation, before.rotation) : null;
   const ops: BlockingOp[] = [];
@@ -118,9 +119,15 @@ export function extraTransformOps(
     if (id === primaryId || id === CAMERA_ID || id === LOOK_AT_ID) {
       continue;
     }
+    if (
+      isDescendant(doc.objects, id, primaryId) ||
+      isDescendant(doc.objects, primaryId, id)
+    ) {
+      continue;
+    }
     const obj = doc.objects.find((o) => o.id === id);
     if (!obj) continue;
-    const at = evalObjectAt(obj, tMs);
+    const at = evalObjectAt(obj, tMs, doc.objects);
     ops.push({
       op: "set_transform",
       id,

@@ -3638,4 +3638,6 @@ The cursor lists all have exactly 5 slices. We picked 5 because it's a sweet spo
 
 - **Consequences / next**: FBX will fail on some files — tell the user to export GLB. No retarget. Editor is a fullscreen portal (Composer pattern). `three` is a new direct dependency.
 
+- **Addendum (2026-09-17)**: `poseKeys` is the source of truth (legacy `tracks` migrate and stay derived). Shot list + `cameras[]` drive playblast cuts. VAT consume is `vat-bake/2` in-place morphs; bake/author stays a later library dock. Auto-key is off; inspector circles key one channel.
+
 

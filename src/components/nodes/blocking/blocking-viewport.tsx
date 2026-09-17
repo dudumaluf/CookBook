@@ -11,6 +11,7 @@ import {
   type ViewportTransform,
 } from "@/lib/blocking/camera-gizmo";
 import { evalCameraAt } from "@/lib/blocking/evaluate";
+import { cameraAtDoc } from "@/lib/blocking/shots";
 import { BlockingWorld } from "@/lib/blocking/world";
 import { CAMERA_ID, LOOK_AT_ID, type BlockingDocument, type Vec3 } from "@/types/blocking";
 
@@ -241,7 +242,7 @@ export function BlockingViewport({
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, viewCam);
       const hits = raycaster.intersectObjects(
-        [...world.nodes.values(), lookAtHandle, camBody, helper],
+        [...world.pickables(), lookAtHandle, camBody, helper],
         true,
       );
       const hit = hits[0]?.object;
@@ -258,17 +259,24 @@ export function BlockingViewport({
         return;
       }
       let cur: THREE.Object3D | null = hit;
-      while (cur && !world.nodes.has(cur.name) && cur.parent) cur = cur.parent;
-      onSelectRef.current(
-        cur && world.nodes.has(cur.name) ? cur.name : null,
-        additive,
-      );
+      while (cur) {
+        if (typeof cur.userData.sourceId === "string") {
+          onSelectRef.current(cur.userData.sourceId, additive);
+          return;
+        }
+        if (world.nodes.has(cur.name)) {
+          onSelectRef.current(cur.name, additive);
+          return;
+        }
+        cur = cur.parent;
+      }
+      onSelectRef.current(null, additive);
     };
     renderer.domElement.addEventListener("click", onClick);
 
     const placeChrome = () => {
       const cam = evalCameraAt(
-        docRef.current.camera,
+        cameraAtDoc(docRef.current, playheadRef.current),
         playheadRef.current,
         docRef.current.objects,
       );
@@ -361,7 +369,7 @@ export function BlockingViewport({
     void world.sync(doc, playheadMs).then(() => {
       if (draggingRef.current) return;
       if (handle) {
-        const cam = evalCameraAt(doc.camera, playheadMs, doc.objects);
+        const cam = evalCameraAt(cameraAtDoc(doc, playheadMs), playheadMs, doc.objects);
         handle.position.set(cam.lookAt[0], cam.lookAt[1], cam.lookAt[2]);
       }
       if (shotView) {

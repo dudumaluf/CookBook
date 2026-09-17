@@ -63,6 +63,96 @@ describe("blocking parent", () => {
     const after = evalCameraAt(moved.doc.camera, 0, moved.doc.objects);
     expect(after.position).toEqual(camBefore.position);
     expect(after.lookAt[0]).toBeCloseTo(camBefore.lookAt[0] + 3);
-    expect(evalObjectAt(moved.doc.objects.find((o) => o.id === "hero")!, 0).position[0]).toBe(3);
+    expect(
+      evalObjectAt(moved.doc.objects.find((o) => o.id === "hero")!, 0, moved.doc.objects)
+        .position[0],
+    ).toBe(3);
+  });
+
+  it("parents a sphere to a keyframed capsule so the eye rides translation and yaw", () => {
+    const seeded = applyBlockingOps(createDefaultDocument(), [
+      { op: "add_primitive", kind: "capsule", id: "hero", position: [0, 1, 0] },
+      {
+        op: "set_keyframe",
+        id: "hero",
+        channel: "position",
+        tMs: 1000,
+        value: [4, 1, 0],
+      },
+      {
+        op: "set_keyframe",
+        id: "hero",
+        channel: "rotation",
+        tMs: 1000,
+        value: [0, 90, 0],
+      },
+      { op: "add_primitive", kind: "sphere", id: "eye", position: [0.25, 1.6, 0.2] },
+    ]);
+    const before = evalObjectAt(
+      seeded.doc.objects.find((o) => o.id === "eye")!,
+      0,
+      seeded.doc.objects,
+    );
+    const parented = applyBlockingOp(seeded.doc, {
+      op: "set_parent",
+      id: "eye",
+      parentId: "hero",
+    });
+    expect(parented.error).toBeUndefined();
+    expect(parented.doc.objects.find((o) => o.id === "eye")?.parentId).toBe("hero");
+    const still = evalObjectAt(
+      parented.doc.objects.find((o) => o.id === "eye")!,
+      0,
+      parented.doc.objects,
+    );
+    expect(still.position[0]).toBeCloseTo(before.position[0]);
+    expect(still.position[1]).toBeCloseTo(before.position[1]);
+    expect(still.position[2]).toBeCloseTo(before.position[2]);
+
+    const atEnd = evalObjectAt(
+      parented.doc.objects.find((o) => o.id === "eye")!,
+      1000,
+      parented.doc.objects,
+    );
+    expect(atEnd.position[0]).toBeCloseTo(4 + before.position[2]);
+    expect(atEnd.position[1]).toBeCloseTo(before.position[1]);
+    expect(atEnd.position[2]).toBeCloseTo(0 - (before.position[0] - 0));
+  });
+
+  it("rejects parenting an object to its descendant", () => {
+    const seeded = applyBlockingOps(createDefaultDocument(), [
+      { op: "add_primitive", kind: "capsule", id: "hero" },
+      { op: "add_primitive", kind: "sphere", id: "eye" },
+    ]);
+    const parented = applyBlockingOp(seeded.doc, {
+      op: "set_parent",
+      id: "eye",
+      parentId: "hero",
+    });
+    const cycle = applyBlockingOp(parented.doc, {
+      op: "set_parent",
+      id: "hero",
+      parentId: "eye",
+    });
+    expect(cycle.error).toMatch(/descendant/i);
+    expect(cycle.doc.objects.find((o) => o.id === "hero")?.parentId).toBeUndefined();
+  });
+
+  it("rebakes a child to world when its parent is deleted", () => {
+    const seeded = applyBlockingOps(createDefaultDocument(), [
+      { op: "add_primitive", kind: "capsule", id: "hero", position: [3, 1, 0] },
+      { op: "add_primitive", kind: "sphere", id: "eye", position: [3.25, 1.6, 0.2] },
+    ]);
+    const parented = applyBlockingOp(seeded.doc, {
+      op: "set_parent",
+      id: "eye",
+      parentId: "hero",
+    });
+    const gone = applyBlockingOp(parented.doc, { op: "remove_object", id: "hero" });
+    const eye = gone.doc.objects.find((o) => o.id === "eye")!;
+    expect(eye.parentId).toBeUndefined();
+    const world = evalObjectAt(eye, 0, gone.doc.objects);
+    expect(world.position[0]).toBeCloseTo(3.25);
+    expect(world.position[1]).toBeCloseTo(1.6);
   });
 });

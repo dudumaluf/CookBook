@@ -2,6 +2,18 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-17 — 3D Blocking: pose keys, shots, dope sheet, figure, VAT consume
+
+Intentional keying: one pose tick per object per time (`poseKeys`; old tracks migrate). Inspector groups P/R/S (XYZ on one line) with a key-circle per group. Scrub never writes; Key / circle / Auto-key (off) insert. Multi-cam `cameras[]` + shot partition; presets (wide/medium/close/ots/profile) write a camera pose; playblast follows the cut list. Dope sheet is one row per object. Agent macros: `add_figure`, `apply_locomotion`, spatial ops, shot JPEG note. Instancer draws as `InstancedMesh`. Sample VAT pack (`vat-bake/2`) + clip state keys. Escape deselects; W/E/R gizmos; Cmd+W closes.
+
+## 2026-09-17 — 3D Blocking: color + instancer / effectors
+
+Each object can have a hex color. An **Instancer** (C4D Cloner-style) clones its children in linear, grid (columns × rows on the floor), or scatter mode. Parent **Effectors** onto it to jitter position / rotation / scale independently (random or step). Count and spacing are live.
+
+## 2026-09-17 — 3D Blocking: parent any object under any object
+
+Outliner drag (or `set_parent`) puts spheres, props, meshes — anything — inside another object so they ride its keys. World pose is preserved at parent/unparent; deleting a parent rebakes children to world. Camera / lookAt parenting is unchanged. Drop on Stage to unparent.
+
 ## 2026-09-17 — 3D Blocking: thinner timeline keys
 
 Keyframe marks are 2px ticks (playhead is 1px) so stacked keys stay readable. The hit target stays a bit wider so they are still easy to grab.

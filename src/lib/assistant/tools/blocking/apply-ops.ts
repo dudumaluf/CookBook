@@ -20,7 +20,7 @@ const argsSchema = z
 export const blockingApplyOpsTool: AssistantTool = {
   name: "blocking_apply_ops",
   description:
-    "Mutate a 3D Blocking scene through scene ops. Prefer editing existing ids (set_transform / set_keyframe / set_camera / set_parent / move_keyframe). Camera position and lookAt are independent — pass only lookAt to change the aim. set_parent attaches camera or lookAt to an object. add_primitive only for a NEW actor that is not already on stage. NEVER write config.scene via update_node_config.",
+    "Mutate a 3D Blocking scene through scene ops. Prefer editing existing ids (set_transform / set_keyframe / upsert_pose / set_camera / set_parent / apply_preset / add_figure / apply_locomotion / add_shot). Camera position and lookAt are independent — pass only lookAt to change the aim. set_parent attaches any object (or camera / lookAt) to another so they move together. Instancer = cloner; effector = jitter clones. add_primitive only for a NEW actor. NEVER write config.scene via update_node_config.",
   parameters: {
     type: "object",
     properties: {

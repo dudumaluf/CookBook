@@ -1,7 +1,6 @@
 import { CAMERA_ID, type BlockingDocument } from "@/types/blocking";
 
 import { evalCameraAt, evalDocumentAt, evalObjectAt } from "./evaluate";
-import { keyTimes } from "./keys";
 
 /**
  * Read-only scene views for the agent. Compact — never dump every keyframe
@@ -27,27 +26,28 @@ export function readScene(
       note: "position and lookAt are independent; parentId / lookAtParentId follow an object",
       parentId: doc.camera.parentId ?? null,
       lookAtParentId: doc.camera.lookAtParentId ?? null,
-      keys: {
-        position: keyTimes(doc.camera.tracks.position),
-        lookAt: keyTimes(doc.camera.lookAt),
-        fov: keyTimes(doc.camera.fovKeys),
-      },
+      keys: doc.camera.poseKeys.map((p) => p.tMs),
     },
+    cameras: doc.cameras.map((c) => ({ id: c.id, keys: c.poseKeys.map((p) => p.tMs) })),
+    shots: doc.shots,
     objects: snap.objects.map(({ object, transform }) => ({
       id: object.id,
       name: object.name,
       kind: object.kind,
       visible: object.visible,
+      parentId: object.parentId ?? null,
+      ...(object.color ? { color: object.color } : {}),
+      ...(object.instancer ? { instancer: object.instancer } : {}),
+      ...(object.effector ? { effector: object.effector } : {}),
       position: transform.position,
       rotation: transform.rotation,
       scale: transform.scale,
       ...(object.meshUrl ? { meshUrl: object.meshUrl } : {}),
       ...(object.clip ? { clip: object.clip } : {}),
-      keys: {
-        position: keyTimes(object.tracks.position),
-        rotation: keyTimes(object.tracks.rotation),
-        scale: keyTimes(object.tracks.scale),
-      },
+      keys: object.poseKeys.map((p) => p.tMs),
+      ...(object.vat
+        ? { vatClips: object.vat.clips.map((c) => c.name), vatKeys: object.vat.clipKeys }
+        : {}),
     })),
   };
 }
@@ -67,13 +67,13 @@ export function sampleAt(
       objects: doc.objects.map((object) => ({
         id: object.id,
         name: object.name,
-        ...evalObjectAt(object, t),
+        ...evalObjectAt(object, t, doc.objects),
       })),
     };
   }
   const object = doc.objects.find((o) => o.id === id);
   if (!object) return { tMs: t, error: `No object "${id}".` };
-  return { tMs: t, id, name: object.name, ...evalObjectAt(object, t) };
+  return { tMs: t, id, name: object.name, ...evalObjectAt(object, t, doc.objects) };
 }
 
 export function listObjects(doc: BlockingDocument): { id: string; name: string; kind: string }[] {

@@ -347,13 +347,25 @@ See [`docs/COOKBOOK-LIBRARY.md`](./COOKBOOK-LIBRARY.md) for the full design + ro
 
 - **`Speed Ramp` node (`speed-ramp`)** — `src/components/nodes/node-speed-ramp.tsx`. Footage pins (`pins: { srcSec, speed }[]`): constant speed from each cut to the next. Scrub the source, Split at the playhead, set 0.25×–4× (or a number). `fps` 24/30/60. Run calls `remapVideo` with pins (legacy `keys` bezier still encodes if `pins` is absent). Audio dropped.
 
-- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; the grid is the floor (no default Ground mesh). capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs. **Shot** = playblast camera POV; **Orbit** = free view with gizmos on objects, `camera`, and the `lookAt` handle (`LOOK_AT_ID`). **Linked** translates camera + lookAt together. Node body has a compact playhead. Fullscreen editor: Delete/Backspace delete the selected object or key (not the graph node); Cmd/Ctrl+Z / Shift+Z undo/redo the scene including prompt results. Number fields click-to-type or drag-horizontally to scrub (Shift = finer). Camera FOV is keyframed (`fovKeys`; timeline mark `F`). Shift / ⌘-click multi-selects objects (Delete + gizmo move the set).
+- **`3D Blocking` node (`blocking-3d`)** — `src/components/nodes/node-blocking-3d.tsx`. Previz stage stored as `BlockingDocument` (`src/types/blocking.ts`). Mutations go through `applyBlockingOp` (UI + in-node agent + `blocking_apply_ops`). Run calls `playblastScene` → MP4. Y-up meters; the grid is the floor (no default Ground mesh). capsule = character stand-in. Import GLB/OBJ/FBX; wire Hunyuan mesh. No lights/rigs. **Shot** = playblast camera POV; **Orbit** = free view with gizmos on objects, `camera`, and the `lookAt` handle (`LOOK_AT_ID`). **Linked** translates camera + lookAt together. Node body has a compact playhead. Fullscreen editor: Delete/Backspace delete the selected object or key (not the graph node); Cmd/Ctrl+Z / Shift+Z undo/redo the scene including prompt results. Number fields click-to-type or drag-horizontally to scrub (Shift = finer). **Pose keys** (`poseKeys`): one tick per object per time; inspector key-circles key P / R / S / FOV / Look at. Auto-key is a mode. **Shot list** is a partition across `cameras[]`. Dope sheet = one row per object. Parent any object under another so they move together. Optional hex **color**. **Instancer** clones children (linear / grid / scatter); **Effector** children jitter P / R / S. **VAT** consume (`kind: "vat"`, `vat-bake/2`) morphs an in-place dummy; travel stays on pose keys.
 
 - **`LOOK_AT_ID`** — `"lookAt"`. Editor pick id for the camera point of interest. Not a scene object; reserved so `add_primitive` / sanitize cannot steal it. Agent can `set_transform` / `set_keyframe` with this id to aim the camera without moving it.
 
-- **`set_parent`** — Blocking scene op. Parent `camera` or `lookAt` to an object (`parentId`) or `null` to unparent. Stored keys become local to the parent; evaluate/playblast still return world. Deleting the parent unparents and rebakes world keys.
+- **`set_parent`** — Blocking scene op. Parent any object, `camera`, or `lookAt` to an object (`parentId`) or `null` to unparent. Stored keys become local to the parent; evaluate/playblast still return world. Deleting the parent unparents and rebakes world keys. Cycles are rejected.
 
-- **`move_keyframe`** — Blocking scene op. Slides an existing key to a new `tMs` without changing its value. The 0ms rest pose cannot move.
+- **Instancer** — Blocking object kind (`instancer`). C4D Cloner-style: children (except effectors) are cloned. Modes: **linear** (count × spacing vector), **grid** (columns × rows on XZ), **scatter** (count in a spacing-sized box). `set_instancer`.
+
+- **Effector** — Blocking object kind (`effector`). Parent onto an Instancer. Type **random** or **step**; each one toggles position / rotation / scale and an amount. Stack several. `set_effector`.
+
+- **`move_keyframe`** — Blocking scene op. Slides an existing **pose** to a new `tMs` without changing its value. The 0ms rest pose cannot move.
+
+- **Pose key** — One tick on an object (or camera) at `tMs`. Channels are optional (`position` / `rotation` / `scale` / `lookAt` / `fov`). Timeline and dope sheet draw one mark if any channel exists.
+
+- **Shot list** — Partition of `0…durationMs` (`shots[]`). Each shot names a `cameraId`. Dragging a cut moves the shared boundary. Playblast and Shot view use `shotAt(tMs)`.
+
+- **Camera preset** — `wide` / `medium` / `close` / `ots` / `profile` from a subject id. Always inserts a camera pose.
+
+- **VAT clip key** — On a `kind: "vat"` object, which clip is playing (`set_vat_clip`). Separate from pose keys (travel).
 
 - **`Video Cut` node (`video-cut`)** — `src/components/nodes/node-video-cut.tsx`. Footage pins (`pins: { srcSec, keep }[]`): keep or ripple-delete each zone. Same scrub / Split / drag-cut UI as Speed Ramp; selected zone is Keep or Cut out. Leftover keep zones encode as one MP4 via `cutVideo`. Identity (every zone keep) passes the source URL through. `fps` 24/30/60. Audio dropped. Distinct from Video Slicer (hard trim / window split).
 

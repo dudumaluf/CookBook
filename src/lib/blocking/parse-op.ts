@@ -39,7 +39,10 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
   switch (name) {
     case "add_primitive": {
       if (!isPrimitiveKind(a.kind)) {
-        return { error: "add_primitive needs kind: box|sphere|capsule|cylinder|plane." };
+        return {
+          error:
+            "add_primitive needs kind: box|sphere|capsule|cylinder|plane|instancer|effector.",
+        };
       }
       return {
         op: "add_primitive",
@@ -162,6 +165,44 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
         ...(typeof a.id === "string" ? { id: a.id } : {}),
         ...(asVec3(a.position) ? { position: asVec3(a.position) } : {}),
       };
+    case "set_color":
+      if (typeof a.id !== "string") return { error: "set_color needs id." };
+      return {
+        op: "set_color",
+        id: a.id,
+        color: typeof a.color === "string" ? a.color : null,
+      };
+    case "set_instancer":
+      if (typeof a.id !== "string") return { error: "set_instancer needs id." };
+      return {
+        op: "set_instancer",
+        id: a.id,
+        patch: {
+          ...(a.mode === "linear" || a.mode === "grid" || a.mode === "scatter"
+            ? { mode: a.mode }
+            : {}),
+          ...(typeof a.count === "number" ? { count: a.count } : {}),
+          ...(typeof a.columns === "number" ? { columns: a.columns } : {}),
+          ...(typeof a.rows === "number" ? { rows: a.rows } : {}),
+          ...(asVec3(a.spacing) ? { spacing: asVec3(a.spacing) } : {}),
+          ...(typeof a.seed === "number" ? { seed: a.seed } : {}),
+        },
+      };
+    case "set_effector":
+      if (typeof a.id !== "string") return { error: "set_effector needs id." };
+      return {
+        op: "set_effector",
+        id: a.id,
+        patch: {
+          ...(a.type === "random" || a.type === "step" ? { type: a.type } : {}),
+          ...(typeof a.strength === "number" ? { strength: a.strength } : {}),
+          ...(typeof a.position === "boolean" ? { position: a.position } : {}),
+          ...(typeof a.rotation === "boolean" ? { rotation: a.rotation } : {}),
+          ...(typeof a.scale === "boolean" ? { scale: a.scale } : {}),
+          ...(asVec3(a.amount) ? { amount: asVec3(a.amount) } : {}),
+          ...(typeof a.seed === "number" ? { seed: a.seed } : {}),
+        },
+      };
     case "play_clip":
       if (typeof a.id !== "string" || typeof a.name !== "string") {
         return { error: "play_clip needs id and name." };
@@ -172,6 +213,143 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
         name: a.name,
         ...(typeof a.startMs === "number" ? { startMs: a.startMs } : {}),
         ...(typeof a.speed === "number" ? { speed: a.speed } : {}),
+      };
+    case "upsert_pose":
+      if (typeof a.id !== "string" || typeof a.tMs !== "number") {
+        return { error: "upsert_pose needs id and tMs." };
+      }
+      return {
+        op: "upsert_pose",
+        id: a.id,
+        tMs: a.tMs,
+        ...(asVec3(a.position) ? { position: asVec3(a.position) } : {}),
+        ...(asVec3(a.rotation) ? { rotation: asVec3(a.rotation) } : {}),
+        ...(asVec3(a.scale) ? { scale: asVec3(a.scale) } : {}),
+        ...(asVec3(a.lookAt) ? { lookAt: asVec3(a.lookAt) } : {}),
+        ...(typeof a.fov === "number" ? { fov: a.fov } : {}),
+        ...(asEasing(a.easing) ? { easing: asEasing(a.easing) } : {}),
+      };
+    case "remove_pose":
+      if (typeof a.id !== "string" || typeof a.tMs !== "number") {
+        return { error: "remove_pose needs id and tMs." };
+      }
+      return { op: "remove_pose", id: a.id, tMs: a.tMs };
+    case "remove_pose_channel": {
+      const channel = asChannel(a.channel);
+      if (typeof a.id !== "string" || !channel || typeof a.tMs !== "number") {
+        return { error: "remove_pose_channel needs id, channel, tMs." };
+      }
+      return { op: "remove_pose_channel", id: a.id, channel, tMs: a.tMs };
+    }
+    case "add_camera":
+      return {
+        op: "add_camera",
+        ...(typeof a.id === "string" ? { id: a.id } : {}),
+        ...(typeof a.name === "string" ? { name: a.name } : {}),
+      };
+    case "remove_camera":
+      if (typeof a.id !== "string") return { error: "remove_camera needs id." };
+      return { op: "remove_camera", id: a.id };
+    case "add_shot":
+      if (typeof a.tMs !== "number") return { error: "add_shot needs tMs." };
+      return {
+        op: "add_shot",
+        tMs: a.tMs,
+        ...(typeof a.cameraId === "string" ? { cameraId: a.cameraId } : {}),
+      };
+    case "move_shot_cut":
+      if (typeof a.afterIndex !== "number" || typeof a.toMs !== "number") {
+        return { error: "move_shot_cut needs afterIndex and toMs." };
+      }
+      return { op: "move_shot_cut", afterIndex: a.afterIndex, toMs: a.toMs };
+    case "apply_preset":
+      if (
+        a.preset !== "wide" &&
+        a.preset !== "medium" &&
+        a.preset !== "close" &&
+        a.preset !== "ots" &&
+        a.preset !== "profile"
+      ) {
+        return { error: "apply_preset needs preset wide|medium|close|ots|profile." };
+      }
+      if (typeof a.subjectId !== "string") return { error: "apply_preset needs subjectId." };
+      return {
+        op: "apply_preset",
+        preset: a.preset,
+        subjectId: a.subjectId,
+        ...(typeof a.tMs === "number" ? { tMs: a.tMs } : {}),
+        ...(typeof a.cameraId === "string" ? { cameraId: a.cameraId } : {}),
+      };
+    case "add_figure":
+      return {
+        op: "add_figure",
+        ...(typeof a.id === "string" ? { id: a.id } : {}),
+        ...(typeof a.name === "string" ? { name: a.name } : {}),
+        ...(asVec3(a.position) ? { position: asVec3(a.position) } : {}),
+      };
+    case "apply_locomotion":
+      if (typeof a.id !== "string" || !asVec3(a.from) || !asVec3(a.to)) {
+        return { error: "apply_locomotion needs id, from, to." };
+      }
+      return {
+        op: "apply_locomotion",
+        id: a.id,
+        from: asVec3(a.from)!,
+        to: asVec3(a.to)!,
+        ...(typeof a.startMs === "number" ? { startMs: a.startMs } : {}),
+        ...(typeof a.endMs === "number" ? { endMs: a.endMs } : {}),
+      };
+    case "duplicate_object":
+      if (typeof a.id !== "string") return { error: "duplicate_object needs id." };
+      return {
+        op: "duplicate_object",
+        id: a.id,
+        ...(typeof a.name === "string" ? { name: a.name } : {}),
+      };
+    case "snap_to_floor":
+      if (typeof a.id !== "string") return { error: "snap_to_floor needs id." };
+      return {
+        op: "snap_to_floor",
+        id: a.id,
+        ...(typeof a.tMs === "number" ? { tMs: a.tMs } : {}),
+      };
+    case "look_at_id":
+      if (typeof a.id !== "string" || typeof a.targetId !== "string") {
+        return { error: "look_at_id needs id and targetId." };
+      }
+      return {
+        op: "look_at_id",
+        id: a.id,
+        targetId: a.targetId,
+        ...(typeof a.tMs === "number" ? { tMs: a.tMs } : {}),
+      };
+    case "place_relative":
+      if (typeof a.id !== "string" || typeof a.targetId !== "string") {
+        return { error: "place_relative needs id and targetId." };
+      }
+      return {
+        op: "place_relative",
+        id: a.id,
+        targetId: a.targetId,
+        ...(asVec3(a.offset) ? { offset: asVec3(a.offset) } : {}),
+        ...(typeof a.tMs === "number" ? { tMs: a.tMs } : {}),
+      };
+    case "add_vat":
+      return {
+        op: "add_vat",
+        ...(typeof a.id === "string" ? { id: a.id } : {}),
+        ...(typeof a.name === "string" ? { name: a.name } : {}),
+        ...(asVec3(a.position) ? { position: asVec3(a.position) } : {}),
+      };
+    case "set_vat_clip":
+      if (typeof a.id !== "string" || typeof a.clip !== "string") {
+        return { error: "set_vat_clip needs id and clip." };
+      }
+      return {
+        op: "set_vat_clip",
+        id: a.id,
+        clip: a.clip,
+        ...(typeof a.tMs === "number" ? { tMs: a.tMs } : {}),
       };
     default:
       return { error: `Unknown op "${name}".` };

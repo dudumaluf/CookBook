@@ -27,7 +27,7 @@ function Row({
   draggable?: boolean;
   droppable?: boolean;
   onPick: (id: string, event?: React.MouseEvent) => void;
-  onParent: (child: typeof CAMERA_ID | typeof LOOK_AT_ID, parentId: string | null) => void;
+  onParent: (child: string, parentId: string | null) => void;
   onDelete?: () => void;
 }) {
   return (
@@ -60,9 +60,8 @@ function Row({
           if (!droppable) return;
           e.preventDefault();
           const child = e.dataTransfer.getData(DRAG);
-          if (child === CAMERA_ID || child === LOOK_AT_ID) {
-            onParent(child, id === "__stage" ? null : id);
-          }
+          if (!child || child === id) return;
+          onParent(child, id === "__stage" ? null : id);
         }}
       >
         {label}
@@ -86,6 +85,79 @@ function Row({
   );
 }
 
+function ObjectBranch({
+  doc,
+  parentId,
+  indent,
+  picked,
+  onPick,
+  onParent,
+  onDelete,
+}: {
+  doc: BlockingDocument;
+  parentId: string | null;
+  indent: number;
+  picked: readonly string[];
+  onPick: (id: string, event?: React.MouseEvent) => void;
+  onParent: (child: string, parentId: string | null) => void;
+  onDelete?: (id: string) => void;
+}) {
+  const camParent = doc.camera.parentId;
+  const lookParent = doc.camera.lookAtParentId;
+  const kids = doc.objects.filter((o) => (o.parentId ?? null) === parentId);
+  return (
+    <>
+      {kids.map((o) => (
+        <div key={o.id} className="flex flex-col gap-0.5">
+          <Row
+            id={o.id}
+            label={o.name}
+            hint={o.kind}
+            selected={picked.includes(o.id)}
+            indent={indent}
+            draggable
+            droppable
+            onPick={onPick}
+            onParent={onParent}
+            onDelete={onDelete ? () => onDelete(o.id) : undefined}
+          />
+          {camParent === o.id ? (
+            <Row
+              id={CAMERA_ID}
+              label="Camera"
+              selected={picked.includes(CAMERA_ID)}
+              indent={indent + 1}
+              draggable
+              onPick={onPick}
+              onParent={onParent}
+            />
+          ) : null}
+          {lookParent === o.id ? (
+            <Row
+              id={LOOK_AT_ID}
+              label="Look at"
+              selected={picked.includes(LOOK_AT_ID)}
+              indent={indent + 1}
+              draggable
+              onPick={onPick}
+              onParent={onParent}
+            />
+          ) : null}
+          <ObjectBranch
+            doc={doc}
+            parentId={o.id}
+            indent={indent + 1}
+            picked={picked}
+            onPick={onPick}
+            onParent={onParent}
+            onDelete={onDelete}
+          />
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function BlockingOutliner({
   doc,
   selectedId,
@@ -98,7 +170,7 @@ export function BlockingOutliner({
   selectedId: string | null;
   selectedIds?: readonly string[];
   onPick: (id: string, event?: React.MouseEvent) => void;
-  onParent: (child: typeof CAMERA_ID | typeof LOOK_AT_ID, parentId: string | null) => void;
+  onParent: (child: string, parentId: string | null) => void;
   onDelete?: (id: string) => void;
 }) {
   const camParent = doc.camera.parentId;
@@ -107,7 +179,8 @@ export function BlockingOutliner({
   return (
     <aside className="flex w-48 shrink-0 select-none flex-col gap-1 overflow-y-auto border-r border-border/40 p-2 text-[11px]">
       <p className="px-2 pb-1 text-[10px] text-muted-foreground">
-        Shift / ⌘ click to multi-select. Drag Camera / Look at onto an object to parent.
+        Shift / ⌘ click to multi-select. Drag any object (or Camera / Look at)
+        onto another to parent. Drop on Stage to unparent.
       </p>
       <Row
         id="__stage"
@@ -137,42 +210,15 @@ export function BlockingOutliner({
           onParent={onParent}
         />
       ) : null}
-      {doc.objects.map((o) => (
-        <div key={o.id} className="flex flex-col gap-0.5">
-          <Row
-            id={o.id}
-            label={o.name}
-            hint={o.kind}
-            selected={picked.includes(o.id)}
-            droppable
-            onPick={onPick}
-            onParent={onParent}
-            onDelete={onDelete ? () => onDelete(o.id) : undefined}
-          />
-          {camParent === o.id ? (
-            <Row
-              id={CAMERA_ID}
-              label="Camera"
-              selected={picked.includes(CAMERA_ID)}
-              indent={1}
-              draggable
-              onPick={onPick}
-              onParent={onParent}
-            />
-          ) : null}
-          {lookParent === o.id ? (
-            <Row
-              id={LOOK_AT_ID}
-              label="Look at"
-              selected={picked.includes(LOOK_AT_ID)}
-              indent={1}
-              draggable
-              onPick={onPick}
-              onParent={onParent}
-            />
-          ) : null}
-        </div>
-      ))}
+      <ObjectBranch
+        doc={doc}
+        parentId={null}
+        indent={0}
+        picked={picked}
+        onPick={onPick}
+        onParent={onParent}
+        onDelete={onDelete}
+      />
     </aside>
   );
 }

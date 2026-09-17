@@ -15,9 +15,8 @@ describe("deleteBlockingSelection", () => {
         selectedKey: { id: "hero", channel: "position", tMs: 1200 },
       }),
     ).toEqual({
-      op: "remove_keyframe",
+      op: "remove_pose",
       id: "hero",
-      channel: "position",
       tMs: 1200,
     });
   });

@@ -56,11 +56,22 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "add_primitive",
       description:
-        "Add a NEW stand-in only when nothing on stage already fills that role. capsule = a person. plane = a floor mesh if they asked for one (the grid is already the ground reference — do not add a plane unless they want a visible floor). Prefer set_transform on an existing id.",
+        "Add a NEW stand-in only when nothing on stage already fills that role. capsule = a person. plane = a floor mesh if they asked for one (the grid is already the ground reference — do not add a plane unless they want a visible floor). instancer = C4D-style cloner (parent sources under it). effector = jitter clones (parent onto an instancer). Prefer set_transform on an existing id.",
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["box", "sphere", "capsule", "cylinder", "plane"] },
+          kind: {
+            type: "string",
+            enum: [
+              "box",
+              "sphere",
+              "capsule",
+              "cylinder",
+              "plane",
+              "instancer",
+              "effector",
+            ],
+          },
           name: { type: "string" },
           id: { type: "string" },
           position: vec3,
@@ -207,12 +218,70 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "set_parent",
       description:
-        "Parent the camera body (id='camera') or the aim (id='lookAt') to an existing object so they follow it. parentId=null unparents. World pose is preserved at the moment of parenting.",
+        "Parent any object (or camera / lookAt) to another object so they follow it — eyes on a head, prop in a hand, camera dolly on a character. parentId=null unparents. World pose is preserved. Rejects cycles.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", enum: ["camera", "lookAt"] },
+          id: { type: "string", description: "Object id, or 'camera' / 'lookAt'." },
           parentId: { type: "string", description: "Object id, or omit/null to unparent." },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_color",
+      description: "Set an object's display color as #rrggbb. color=null clears it.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          color: { type: "string", description: "#rrggbb or omit/null to clear." },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_instancer",
+      description:
+        "Configure an instancer (cloner). mode=linear|grid|scatter. Linear/scatter use count; grid uses columns×rows on the floor (X/Z). spacing is the step or scatter box. Parent sources under the instancer.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          mode: { type: "string", enum: ["linear", "grid", "scatter"] },
+          count: { type: "number" },
+          columns: { type: "number" },
+          rows: { type: "number" },
+          spacing: vec3,
+          seed: { type: "number" },
+        },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_effector",
+      description:
+        "Configure an effector. Parent it to an instancer. type=random|step. Toggle position/rotation/scale independently; amount is the max delta (degrees for rotation). Stack several effectors.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          type: { type: "string", enum: ["random", "step"] },
+          strength: { type: "number" },
+          position: { type: "boolean" },
+          rotation: { type: "boolean" },
+          scale: { type: "boolean" },
+          amount: vec3,
+          seed: { type: "number" },
         },
         required: ["id"],
       },
@@ -262,6 +331,172 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "add_figure",
+      description:
+        "Add a thin primitive person (hips + torso/head/arms/legs, parented). Use when they ask for a person/figure and there is no VAT character.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          position: vec3,
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_locomotion",
+      description:
+        "Walk a figure root from A to B and swing limbs. Writes pose keys on purpose.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          from: vec3,
+          to: vec3,
+          startMs: { type: "number" },
+          endMs: { type: "number" },
+        },
+        required: ["id", "from", "to"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_preset",
+      description: "Frame a subject: wide|medium|close|ots|profile. Inserts a camera pose.",
+      parameters: {
+        type: "object",
+        properties: {
+          preset: { type: "string", enum: ["wide", "medium", "close", "ots", "profile"] },
+          subjectId: { type: "string" },
+          tMs: { type: "number" },
+          cameraId: { type: "string" },
+        },
+        required: ["preset", "subjectId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_shot",
+      description: "Split the shot list at tMs (partition, no holes). cameraId optional.",
+      parameters: {
+        type: "object",
+        properties: {
+          tMs: { type: "number" },
+          cameraId: { type: "string" },
+        },
+        required: ["tMs"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_camera",
+      description: "Add another playblast camera. Then add_shot to cut to it.",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" }, name: { type: "string" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "duplicate_object",
+      description: "Copy an existing object (same pose keys).",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" }, name: { type: "string" } },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "snap_to_floor",
+      description: "Set Y so the stand-in sits on y=0 (capsule rest at y=1).",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" }, tMs: { type: "number" } },
+        required: ["id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "look_at_id",
+      description: "Aim the camera (or yaw an object) at another object.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          targetId: { type: "string" },
+          tMs: { type: "number" },
+        },
+        required: ["id", "targetId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "place_relative",
+      description: "Move id to target + offset (meters).",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          targetId: { type: "string" },
+          offset: vec3,
+          tMs: { type: "number" },
+        },
+        required: ["id", "targetId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_vat",
+      description: "Add a sample VAT character (idle/walk in-place). Travel with pose keys.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          position: vec3,
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_vat_clip",
+      description: "Key a VAT clip (idle/walk) at tMs. Morphs toward the next clip key.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          clip: { type: "string" },
+          tMs: { type: "number" },
+        },
+        required: ["id", "clip"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "play_clip",
       description: "Play an embedded GLB/FBX animation clip on a mesh (no retarget).",
       parameters: {
@@ -294,7 +529,12 @@ Camera vs lookAt (independent):
 - "move the camera" / dolly / truck → set_camera({ position }) and leave lookAt alone unless they asked to reframe.
 - Zoom / FOV / "abre o lente" → set_camera({ fov, tMs }) or set_keyframe id=camera channel=fov. Do not move the camera unless they asked.
 - You can keyframe position, lookAt, and fov separately.
-- set_parent id=camera|lookAt onto an existing object to make them follow it (dolly with a character, aim stuck on a prop). parentId=null to unparent. Do not add a new object just to parent.
+- "person walking" → add_figure then apply_locomotion (or add_vat + set_vat_clip + pose keys if a VAT body is on stage).
+- "OTS then close-up" → apply_preset + add_shot (shot list is a partition).
+- add_camera then add_shot to cut. Presets always write a camera pose.
+- set_parent any object (or camera / lookAt) onto another so they ride its keys (eyes on a capsule, hat on a head, camera dolly). Add the child at world pose first, then set_parent. parentId=null to unparent. Do not add a new object just to parent.
+- Crowd / copies: add_primitive kind=instancer, parent the source(s) under it, set_instancer mode/count/spacing. add_primitive kind=effector, parent onto the instancer, set_effector for which channels to jitter (P/R/S). Grid is columns×rows on the floor (X/Z).
+- set_color id #rrggbb to tint a stand-in.
 
 Conventions:
 - Y-up, meters. Origin is stage center. The grid is y=0.

@@ -3,9 +3,12 @@
 import {
   Box,
   Circle,
+  Copy,
   Cylinder,
+  Diamond,
   Loader2,
   Redo2,
+  Sparkles,
   Square,
   Undo2,
   UserRound,
@@ -23,14 +26,16 @@ import {
   groupTranslateCamera,
   type ViewportTransform,
 } from "@/lib/blocking/camera-gizmo";
-import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
+import { captureShotJpeg } from "@/lib/blocking/capture";
 import { applyBlockingOp, type BlockingOp } from "@/lib/blocking/ops";
-import { evalCameraAt, evalObjectAt, toWorldPoint } from "@/lib/blocking/evaluate";
-import { attachOf } from "@/lib/blocking/parent";
+import { evalCameraAt, evalObjectAt } from "@/lib/blocking/evaluate";
+import { circleKeyMs, editTargetMs, findPose } from "@/lib/blocking/pose";
+import { CAMERA_PRESETS, type CameraPreset } from "@/lib/blocking/presets";
+import { cameraAtDoc } from "@/lib/blocking/shots";
 import {
   CAMERA_ID,
+  DEFAULT_OBJECT_HEX,
   LOOK_AT_ID,
-  fovVec,
   type BlockingDocument,
   type PrimitiveKind,
   type Vec3,
@@ -41,7 +46,14 @@ import {
   BlockingViewport,
   type GizmoMode,
 } from "./blocking-viewport";
+import { BlockingDopeSheet } from "./blocking-dopesheet";
+import {
+  FovRow,
+  XyzRow,
+  channelKeyed,
+} from "./blocking-inspector";
 import { BlockingOutliner } from "./blocking-outliner";
+import { BlockingShotStrip } from "./blocking-shot-strip";
 import { BlockingTimeline, type TimelineKey } from "./blocking-timeline";
 import {
   deleteBlockingOps,
@@ -60,6 +72,8 @@ const PRIMITIVES: { kind: PrimitiveKind; label: string; icon: typeof Box }[] = [
   { kind: "sphere", label: "Sphere", icon: Circle },
   { kind: "cylinder", label: "Cylinder", icon: Cylinder },
   { kind: "plane", label: "Plane", icon: Square },
+  { kind: "instancer", label: "Instancer", icon: Copy },
+  { kind: "effector", label: "Effector", icon: Sparkles },
 ];
 
 export function BlockingEditor({
@@ -90,6 +104,7 @@ export function BlockingEditor({
   const [agentLog, setAgentLog] = useState<string>("");
   const [importError, setImportError] = useState<string>("");
   const [selectedKey, setSelectedKey] = useState<TimelineKey | null>(null);
+  const [autoKey, setAutoKey] = useState(false);
   const { push, undo, redo, canUndo, canRedo } = useSceneHistory(initialDoc);
   const skipHistoryRef = useRef(false);
 
@@ -182,7 +197,7 @@ export function BlockingEditor({
     });
     if (ops.length === 0) return;
     applyMany(ops);
-    if (ops[0]?.op === "remove_keyframe") {
+    if (ops[0]?.op === "remove_pose" || ops[0]?.op === "remove_keyframe") {
       setSelectedKey(null);
       return;
     }
@@ -195,8 +210,31 @@ export function BlockingEditor({
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        closeRef.current();
+        setSelectedKey(null);
+        setSelectedIds([]);
         return;
+      }
+      if (!isTypingTarget(e.target)) {
+        if (e.key === "w" || e.key === "W") {
+          e.preventDefault();
+          setGizmoMode("translate");
+          return;
+        }
+        if (e.key === "e" || e.key === "E") {
+          e.preventDefault();
+          setGizmoMode("rotate");
+          return;
+        }
+        if (e.key === "r" || e.key === "R") {
+          e.preventDefault();
+          setGizmoMode("scale");
+          return;
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "w") {
+          e.preventDefault();
+          closeRef.current();
+          return;
+        }
       }
       const typing = isTypingTarget(e.target);
       const meta = e.metaKey || e.ctrlKey;
@@ -225,20 +263,50 @@ export function BlockingEditor({
     return () => document.removeEventListener("keydown", onKey, true);
   }, []);
 
+  const posesFor = (id: string) => {
+    if (id === CAMERA_ID || id === LOOK_AT_ID) return doc.camera.poseKeys;
+    return doc.objects.find((o) => o.id === id)?.poseKeys ?? [];
+  };
+
+  const writeMs = (id: string) =>
+    editTargetMs({
+      autoKey,
+      playheadMs,
+      selectedKeyT: selectedKey && (selectedKey.id === id || (id === LOOK_AT_ID && selectedKey.id === CAMERA_ID))
+        ? selectedKey.tMs
+        : selectedKey && selectedKey.id === id
+          ? selectedKey.tMs
+          : selectedKey
+            ? selectedKey.tMs
+            : null,
+      hasPoseAtPlayhead: Boolean(findPose(posesFor(id === LOOK_AT_ID ? CAMERA_ID : id), playheadMs)),
+    });
+
+  const insertMs = (_id: string) =>
+    circleKeyMs({
+      playheadMs,
+      selectedKeyT: selectedKey ? selectedKey.tMs : null,
+    });
+
   const onTransformEnd = useCallback(
     (id: string, next: ViewportTransform) => {
+      const t = writeMs(id);
+      if (t == null) {
+        setImportError("Key to pose here");
+        return;
+      }
       applyMany([
-        blockingTransformOp(id, next, playheadMs),
+        blockingTransformOp(id, next, t),
         ...extraTransformOps(
           docRef.current,
           id,
           next,
           selectedIdsRef.current,
-          playheadMs,
+          t,
         ),
       ]);
     },
-    [playheadMs],
+    [playheadMs, autoKey, selectedKey],
   );
 
   const pick = (
@@ -261,35 +329,21 @@ export function BlockingEditor({
 
   const cameraSelected = selectedId === CAMERA_ID || selectedId === LOOK_AT_ID;
   const pairGrouped = cameraPairSelected(selectedIds);
-  const selectedTrack =
-    selectedKey ? sceneTrack(doc, selectedKey.id, selectedKey.channel) : null;
-  const selectedKeyframe =
-    selectedKey && selectedTrack && !("error" in selectedTrack)
-      ? findKeyframe(selectedTrack, selectedKey.tMs)
-      : undefined;
-  const selectedKeyWorld =
-    selectedKey && selectedKeyframe
-      ? (() => {
-          const attach = attachOf(selectedKey.id, selectedKey.channel);
-          return attach
-            ? toWorldPoint(
-                doc.objects,
-                doc.camera,
-                attach,
-                selectedKeyframe.value,
-                selectedKey.tMs,
-              )
-            : selectedKeyframe.value;
-        })()
-      : undefined;
   const selected =
     !selectedId || cameraSelected
       ? null
       : doc.objects.find((o) => o.id === selectedId) ?? null;
-  const camAt = evalCameraAt(doc.camera, playheadMs, doc.objects);
-  const objAt = selected ? evalObjectAt(selected, playheadMs) : null;
+  const camAt = evalCameraAt(cameraAtDoc(doc, playheadMs), playheadMs, doc.objects);
+  const writeTarget = writeMs(selectedId === LOOK_AT_ID ? CAMERA_ID : selectedId ?? CAMERA_ID);
+  const writeHint = writeTarget == null ? "Key to pose here" : undefined;
+  const objAt = selected ? evalObjectAt(selected, playheadMs, doc.objects) : null;
 
   const moveCamPoint = (which: "position" | "lookAt", next: Vec3) => {
+    const t = writeTarget;
+    if (t == null) {
+      setImportError("Key to pose here");
+      return;
+    }
     const grouped = groupTranslateCamera(camAt, which, next, pairGrouped);
     if (!pairGrouped) {
       if (which === "position") {
@@ -297,19 +351,52 @@ export function BlockingEditor({
           op: "set_transform",
           id: CAMERA_ID,
           position: next,
-          tMs: playheadMs,
+          tMs: t,
         });
         return;
       }
-      apply({ op: "set_camera", lookAt: next, tMs: playheadMs });
+      apply({ op: "set_camera", lookAt: next, tMs: t });
       return;
     }
     apply({
       op: "set_camera",
       position: grouped.position,
       lookAt: grouped.lookAt,
-      tMs: playheadMs,
+      tMs: t,
     });
+  };
+
+  const toggleChannelKey = (
+    id: string,
+    channel: "position" | "rotation" | "scale" | "lookAt" | "fov",
+    value: Vec3 | number,
+  ) => {
+    const t = insertMs(id);
+    const poses = posesFor(id === LOOK_AT_ID ? CAMERA_ID : id);
+    if (channelKeyed(poses, t, channel)) {
+      apply({ op: "remove_pose_channel", id: id === LOOK_AT_ID ? CAMERA_ID : id, tMs: t, channel });
+      return;
+    }
+    if (channel === "fov") {
+      apply({ op: "upsert_pose", id: CAMERA_ID, tMs: t, fov: typeof value === "number" ? value : value[0] });
+      return;
+    }
+    if (channel === "lookAt") {
+      apply({
+        op: "upsert_pose",
+        id: CAMERA_ID,
+        tMs: t,
+        lookAt: value as Vec3,
+      });
+      return;
+    }
+    apply({
+      op: "upsert_pose",
+      id,
+      tMs: t,
+      [channel]: value,
+    });
+    setSelectedKey({ id, channel, tMs: t, label: "Pose" });
   };
 
   const runPrompt = async () => {
@@ -319,7 +406,14 @@ export function BlockingEditor({
     setAgentLog("");
     const ac = new AbortController();
     try {
-      const result = await runBlockingAgent(docRef.current, text, ac.signal);
+      const jpeg = await captureShotJpeg(docRef.current, playheadMs);
+      const result = await runBlockingAgent(
+        docRef.current,
+        jpeg
+          ? `${text}\n\n[shot view at ${Math.round(playheadMs)}ms attached as JPEG]`
+          : text,
+        ac.signal,
+      );
       if (result.doc !== docRef.current) {
         setDoc(result.doc);
         push(result.doc);
@@ -369,6 +463,22 @@ export function BlockingEditor({
               <Icon className="h-4 w-4" />
             </button>
           ))}
+          <button
+            type="button"
+            title="Figure"
+            className="rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-foreground/[0.06]"
+            onClick={() => apply({ op: "add_figure" })}
+          >
+            Figure
+          </button>
+          <button
+            type="button"
+            title="VAT sample"
+            className="rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-foreground/[0.06]"
+            onClick={() => apply({ op: "add_vat" })}
+          >
+            VAT
+          </button>
         </div>
         <label className="cursor-pointer rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground">
           Import GLB / OBJ / FBX
@@ -396,7 +506,7 @@ export function BlockingEditor({
               )}
               onClick={() => setGizmoMode(m)}
             >
-              {m === "translate" ? "Move" : m === "rotate" ? "Rotate" : "Scale"}
+              {m === "translate" ? "Move W" : m === "rotate" ? "Rotate E" : "Scale R"}
             </button>
           ))}
         </div>
@@ -433,6 +543,81 @@ export function BlockingEditor({
             onClick={() => setLinkCameraTarget((v) => !v)}
           >
             {linkCameraTarget ? "Linked" : "Unlinked"}
+          </button>
+        </div>
+        <div className="ml-2 flex items-center gap-1 text-[11px]">
+          {CAMERA_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className="rounded-md px-1.5 py-0.5 uppercase text-muted-foreground hover:bg-foreground/[0.06]"
+              onClick={() => {
+                const subject =
+                  selected && selected.id !== CAMERA_ID ? selected.id : doc.objects[0]?.id;
+                if (!subject) {
+                  setImportError("Select a subject for the preset.");
+                  return;
+                }
+                apply({
+                  op: "apply_preset",
+                  preset: preset as CameraPreset,
+                  subjectId: subject,
+                  tMs: playheadMs,
+                });
+              }}
+            >
+              {preset}
+            </button>
+          ))}
+        </div>
+        <div className="ml-2 flex items-center gap-1 text-[11px]">
+          <button
+            type="button"
+            title="Insert a pose at the playhead"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/[0.06]"
+            onClick={() => {
+              if (cameraSelected) {
+                apply({
+                  op: "upsert_pose",
+                  id: CAMERA_ID,
+                  tMs: playheadMs,
+                  position: camAt.position,
+                  lookAt: camAt.lookAt,
+                  fov: camAt.fov,
+                });
+              } else if (selected && objAt) {
+                apply({
+                  op: "upsert_pose",
+                  id: selected.id,
+                  tMs: playheadMs,
+                  position: objAt.position,
+                  rotation: objAt.rotation,
+                  scale: objAt.scale,
+                });
+              }
+              setSelectedKey({
+                id: cameraSelected ? CAMERA_ID : selected?.id ?? CAMERA_ID,
+                channel: "position",
+                tMs: playheadMs,
+                label: "Pose",
+              });
+            }}
+          >
+            <Diamond className="h-3 w-3" />
+            Key
+          </button>
+          <button
+            type="button"
+            title="Auto-key: gizmos insert a pose at the playhead"
+            className={cn(
+              "rounded-md px-1.5 py-0.5",
+              autoKey
+                ? "bg-accent/30 text-foreground"
+                : "text-muted-foreground hover:bg-foreground/[0.06]",
+            )}
+            onClick={() => setAutoKey((v) => !v)}
+          >
+            Auto-key
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
@@ -504,159 +689,341 @@ export function BlockingEditor({
           {selectedIds.length > 1 ? (
             <p className="text-muted-foreground">{selectedIds.length} selected</p>
           ) : null}
-          {selectedKey && selectedKeyframe && selectedKey.channel === "fov" ? (
-            <InspectorBlock
-              onScrubStart={beginScrub}
-              onScrubEnd={endScrub}
-              title={`FOV key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
-              rows={[
-                [
-                  "fov",
-                  selectedKeyframe.value[0]!,
-                  (v: number) =>
-                    apply({
-                      op: "set_keyframe",
-                      id: CAMERA_ID,
-                      channel: "fov",
-                      tMs: selectedKey.tMs,
-                      value: fovVec(v),
-                      easing: selectedKeyframe.easing,
-                    }),
-                ],
-              ]}
-            />
-          ) : selectedKey && selectedKeyframe && selectedKeyWorld ? (
-            <InspectorBlock
-              onScrubStart={beginScrub}
-              onScrubEnd={endScrub}
-              title={`${selectedKey.label} key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
-              rows={(["x", "y", "z"] as const).map((axis, i) => [
-                axis,
-                selectedKeyWorld[i]!,
-                (v: number) => {
-                  const next: Vec3 = [...selectedKeyWorld];
-                  next[i] = v;
-                  apply({
-                    op: "set_keyframe",
-                    id: selectedKey.id,
-                    channel: selectedKey.channel,
-                    tMs: selectedKey.tMs,
-                    value: next,
-                    easing: selectedKeyframe.easing,
-                  });
-                },
-              ])}
-            />
-          ) : cameraSelected ? (
-            <InspectorBlock
-              onScrubStart={beginScrub}
-              onScrubEnd={endScrub}
-              title={
-                pairGrouped
-                  ? "Camera + Look at"
-                  : selectedId === LOOK_AT_ID
-                    ? "Look at"
-                    : "Camera"
-              }
-              rows={[
-                [
-                  "fov",
-                  camAt.fov,
-                  (v) =>
-                    apply({
-                      op: "set_camera",
-                      fov: v,
-                      tMs: playheadMs,
-                    }),
-                ],
-                [
-                  "pos x",
-                  camAt.position[0],
-                  (v) =>
-                    moveCamPoint("position", [v, camAt.position[1], camAt.position[2]]),
-                ],
-                [
-                  "pos y",
-                  camAt.position[1],
-                  (v) =>
-                    moveCamPoint("position", [camAt.position[0], v, camAt.position[2]]),
-                ],
-                [
-                  "pos z",
-                  camAt.position[2],
-                  (v) =>
-                    moveCamPoint("position", [camAt.position[0], camAt.position[1], v]),
-                ],
-                [
-                  "look x",
-                  camAt.lookAt[0],
-                  (v) =>
-                    moveCamPoint("lookAt", [v, camAt.lookAt[1], camAt.lookAt[2]]),
-                ],
-                [
-                  "look y",
-                  camAt.lookAt[1],
-                  (v) =>
-                    moveCamPoint("lookAt", [camAt.lookAt[0], v, camAt.lookAt[2]]),
-                ],
-                [
-                  "look z",
-                  camAt.lookAt[2],
-                  (v) =>
-                    moveCamPoint("lookAt", [camAt.lookAt[0], camAt.lookAt[1], v]),
-                ],
-              ]}
-            />
+          {cameraSelected ? (
+            <div className="flex flex-col gap-2">
+              <p className="font-medium text-foreground">
+                {pairGrouped ? "Camera + Look at" : selectedId === LOOK_AT_ID ? "Look at" : "Camera"}
+              </p>
+              {writeHint ? <p className="text-[10px] text-muted-foreground">{writeHint}</p> : null}
+              <FovRow
+                value={camAt.fov}
+                keyed={channelKeyed(doc.camera.poseKeys, writeTarget ?? playheadMs, "fov")}
+                disabled={writeTarget == null}
+                onChange={(v) => apply({ op: "set_camera", fov: v, tMs: writeTarget ?? playheadMs })}
+                onKeyToggle={() => toggleChannelKey(CAMERA_ID, "fov", camAt.fov)}
+                onScrubStart={beginScrub}
+                onScrubEnd={endScrub}
+              />
+              <XyzRow
+                label="Camera"
+                value={camAt.position}
+                keyed={channelKeyed(doc.camera.poseKeys, writeTarget ?? playheadMs, "position")}
+                disabled={writeTarget == null}
+                onChange={(next) => moveCamPoint("position", next)}
+                onKeyToggle={() => toggleChannelKey(CAMERA_ID, "position", camAt.position)}
+                onScrubStart={beginScrub}
+                onScrubEnd={endScrub}
+              />
+              <XyzRow
+                label="Look at"
+                value={camAt.lookAt}
+                keyed={channelKeyed(doc.camera.poseKeys, writeTarget ?? playheadMs, "lookAt")}
+                disabled={writeTarget == null}
+                onChange={(next) => moveCamPoint("lookAt", next)}
+                onKeyToggle={() => toggleChannelKey(CAMERA_ID, "lookAt", camAt.lookAt)}
+                onScrubStart={beginScrub}
+                onScrubEnd={endScrub}
+              />
+            </div>
           ) : selected && objAt ? (
-            <InspectorBlock
+            <>
+            <p className="font-medium text-foreground">{selected.name}</p>
+            {writeHint ? <p className="text-[10px] text-muted-foreground">{writeHint}</p> : null}
+            <XyzRow
+              label="Position"
+              value={objAt.position}
+              keyed={channelKeyed(selected.poseKeys, writeTarget ?? playheadMs, "position")}
+              disabled={writeTarget == null}
+              onChange={(p) =>
+                apply({
+                  op: "set_transform",
+                  id: selected.id,
+                  position: p,
+                  tMs: writeTarget ?? playheadMs,
+                })
+              }
+              onKeyToggle={() => toggleChannelKey(selected.id, "position", objAt.position)}
               onScrubStart={beginScrub}
               onScrubEnd={endScrub}
-              title={selected.name}
-              rows={[
-                ...(["x", "y", "z"] as const).map((axis, i) => [
-                  `pos ${axis}`,
-                  objAt.position[i]!,
-                  (v: number) => {
-                    const p: Vec3 = [...objAt.position];
-                    p[i] = v;
-                    apply({
-                      op: "set_transform",
-                      id: selected.id,
-                      position: p,
-                      tMs: playheadMs,
-                    });
-                  },
-                ] as [string, number, (v: number) => void]),
-                ...(["x", "y", "z"] as const).map((axis, i) => [
-                  `rot ${axis}`,
-                  objAt.rotation[i]!,
-                  (v: number) => {
-                    const p: Vec3 = [...objAt.rotation];
-                    p[i] = v;
-                    apply({
-                      op: "set_transform",
-                      id: selected.id,
-                      rotation: p,
-                      tMs: playheadMs,
-                    });
-                  },
-                ] as [string, number, (v: number) => void]),
-                ...(["x", "y", "z"] as const).map((axis, i) => [
-                  `scl ${axis}`,
-                  objAt.scale[i]!,
-                  (v: number) => {
-                    const p: Vec3 = [...objAt.scale];
-                    p[i] = v;
-                    apply({
-                      op: "set_transform",
-                      id: selected.id,
-                      scale: p,
-                      tMs: playheadMs,
-                    });
-                  },
-                ] as [string, number, (v: number) => void]),
-              ]}
             />
+            <XyzRow
+              label="Rotation"
+              value={objAt.rotation}
+              keyed={channelKeyed(selected.poseKeys, writeTarget ?? playheadMs, "rotation")}
+              disabled={writeTarget == null}
+              onChange={(p) =>
+                apply({
+                  op: "set_transform",
+                  id: selected.id,
+                  rotation: p,
+                  tMs: writeTarget ?? playheadMs,
+                })
+              }
+              onKeyToggle={() => toggleChannelKey(selected.id, "rotation", objAt.rotation)}
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
+            />
+            <XyzRow
+              label="Scale"
+              value={objAt.scale}
+              keyed={channelKeyed(selected.poseKeys, writeTarget ?? playheadMs, "scale")}
+              disabled={writeTarget == null}
+              onChange={(p) =>
+                apply({
+                  op: "set_transform",
+                  id: selected.id,
+                  scale: p,
+                  tMs: writeTarget ?? playheadMs,
+                })
+              }
+              onKeyToggle={() => toggleChannelKey(selected.id, "scale", objAt.scale)}
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
+            />
+            <label className="mt-2 flex items-center gap-2 text-muted-foreground">
+              <span className="w-12 shrink-0">color</span>
+              <input
+                type="color"
+                value={selected.color ?? DEFAULT_OBJECT_HEX[selected.kind] ?? "#888888"}
+                onChange={(e) =>
+                  apply({ op: "set_color", id: selected.id, color: e.target.value })
+                }
+                className="h-6 w-10 cursor-pointer rounded-sm border border-border/60 bg-transparent"
+              />
+            </label>
+            {selected.kind === "instancer" && selected.instancer ? (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <p className="font-medium text-foreground">Instancer</p>
+                <label className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-12 shrink-0">mode</span>
+                  <select
+                    value={selected.instancer.mode}
+                    onChange={(e) =>
+                      apply({
+                        op: "set_instancer",
+                        id: selected.id,
+                        patch: {
+                          mode: e.target.value as "linear" | "grid" | "scatter",
+                        },
+                      })
+                    }
+                    className="h-6 flex-1 rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
+                  >
+                    <option value="linear">Linear</option>
+                    <option value="grid">Grid</option>
+                    <option value="scatter">Scatter</option>
+                  </select>
+                </label>
+                {selected.instancer.mode === "grid" ? (
+                  <>
+                    <InspectorBlock
+                      onScrubStart={beginScrub}
+                      onScrubEnd={endScrub}
+                      title=""
+                      rows={[
+                        [
+                          "cols",
+                          selected.instancer.columns,
+                          (v) =>
+                            apply({
+                              op: "set_instancer",
+                              id: selected.id,
+                              patch: { columns: v },
+                            }),
+                        ],
+                        [
+                          "rows",
+                          selected.instancer.rows,
+                          (v) =>
+                            apply({
+                              op: "set_instancer",
+                              id: selected.id,
+                              patch: { rows: v },
+                            }),
+                        ],
+                      ]}
+                    />
+                  </>
+                ) : (
+                  <InspectorBlock
+                    onScrubStart={beginScrub}
+                    onScrubEnd={endScrub}
+                    title=""
+                    rows={[
+                      [
+                        "count",
+                        selected.instancer.count,
+                        (v) =>
+                          apply({
+                            op: "set_instancer",
+                            id: selected.id,
+                            patch: { count: v },
+                          }),
+                      ],
+                    ]}
+                  />
+                )}
+                <InspectorBlock
+                  onScrubStart={beginScrub}
+                  onScrubEnd={endScrub}
+                  title=""
+                  rows={
+                    (["x", "y", "z"] as const).map((axis, i) => [
+                      `gap ${axis}`,
+                      selected.instancer!.spacing[i]!,
+                      (v: number) => {
+                        const spacing: Vec3 = [...selected.instancer!.spacing];
+                        spacing[i] = v;
+                        apply({
+                          op: "set_instancer",
+                          id: selected.id,
+                          patch: { spacing },
+                        });
+                      },
+                    ]) as [string, number, (v: number) => void][]
+                  }
+                />
+                {selected.instancer.mode === "scatter" ? (
+                  <InspectorBlock
+                    onScrubStart={beginScrub}
+                    onScrubEnd={endScrub}
+                    title=""
+                    rows={[
+                      [
+                        "seed",
+                        selected.instancer.seed,
+                        (v) =>
+                          apply({
+                            op: "set_instancer",
+                            id: selected.id,
+                            patch: { seed: v },
+                          }),
+                      ],
+                    ]}
+                  />
+                ) : null}
+                <p className="text-[10px] text-muted-foreground">
+                  Parent objects under this instancer. Drop an Effector on it to
+                  jitter P / R / S.
+                </p>
+              </div>
+            ) : null}
+            {selected.kind === "vat" && selected.vat ? (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <p className="font-medium text-foreground">VAT clips</p>
+                {selected.vat.clips.map((clip) => (
+                  <button
+                    key={clip.name}
+                    type="button"
+                    className="rounded-md px-1.5 py-0.5 text-left text-muted-foreground hover:bg-foreground/[0.06]"
+                    onClick={() =>
+                      apply({
+                        op: "set_vat_clip",
+                        id: selected.id,
+                        clip: clip.name,
+                        tMs: playheadMs,
+                      })
+                    }
+                  >
+                    {clip.role} · {clip.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {selected.kind === "effector" && selected.effector ? (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <p className="font-medium text-foreground">Effector</p>
+                <label className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-12 shrink-0">type</span>
+                  <select
+                    value={selected.effector.type}
+                    onChange={(e) =>
+                      apply({
+                        op: "set_effector",
+                        id: selected.id,
+                        patch: { type: e.target.value as "random" | "step" },
+                      })
+                    }
+                    className="h-6 flex-1 rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
+                  >
+                    <option value="random">Random</option>
+                    <option value="step">Step</option>
+                  </select>
+                </label>
+                {(
+                  [
+                    ["P", "position"],
+                    ["R", "rotation"],
+                    ["S", "scale"],
+                  ] as const
+                ).map(([label, key]) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2 text-muted-foreground"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.effector![key]}
+                      onChange={(e) =>
+                        apply({
+                          op: "set_effector",
+                          id: selected.id,
+                          patch: { [key]: e.target.checked },
+                        })
+                      }
+                    />
+                    affect {label}
+                  </label>
+                ))}
+                <InspectorBlock
+                  onScrubStart={beginScrub}
+                  onScrubEnd={endScrub}
+                  title=""
+                  rows={[
+                    [
+                      "str",
+                      selected.effector.strength,
+                      (v) =>
+                        apply({
+                          op: "set_effector",
+                          id: selected.id,
+                          patch: { strength: v },
+                        }),
+                    ],
+                    ...(
+                      (["x", "y", "z"] as const).map((axis, i) => [
+                        `amt ${axis}`,
+                        selected.effector!.amount[i]!,
+                        (v: number) => {
+                          const amount: Vec3 = [...selected.effector!.amount];
+                          amount[i] = v;
+                          apply({
+                            op: "set_effector",
+                            id: selected.id,
+                            patch: { amount },
+                          });
+                        },
+                      ]) as [string, number, (v: number) => void][]
+                    ),
+                    [
+                      "seed",
+                      selected.effector.seed,
+                      (v) =>
+                        apply({
+                          op: "set_effector",
+                          id: selected.id,
+                          patch: { seed: v },
+                        }),
+                    ],
+                  ]}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Parent this onto an Instancer. Stack several — each picks P / R
+                  / S.
+                </p>
+              </div>
+            ) : null}
+            </>
           ) : (
             <p className="text-muted-foreground">Select an object.</p>
           )}
@@ -728,6 +1095,33 @@ export function BlockingEditor({
           }
         }}
       />
+      <BlockingShotStrip
+        doc={doc}
+        playheadMs={playheadMs}
+        onSplit={(tMs, cameraId) => apply({ op: "add_shot", tMs, cameraId })}
+        onMoveCut={(afterIndex, toMs) => apply({ op: "move_shot_cut", afterIndex, toMs })}
+        onAddCamera={() => apply({ op: "add_camera" })}
+      />
+      <BlockingDopeSheet
+        doc={doc}
+        playheadMs={playheadMs}
+        selectedId={selectedId}
+        selectedKey={selectedKey}
+        onSelectKey={(key) => {
+          setSelectedKey(key);
+          setSelectedIds([key.id]);
+        }}
+        onMoveKey={(key, toMs) => {
+          const result = apply({
+            op: "move_keyframe",
+            id: key.id,
+            channel: key.channel,
+            fromMs: key.tMs,
+            toMs,
+          });
+          if (!result.error) setSelectedKey({ ...key, tMs: Math.max(1, toMs) });
+        }}
+      />
 
       <div className="flex items-center gap-2 border-t border-border/40 px-3 py-2">
         <input
@@ -774,7 +1168,7 @@ function InspectorBlock({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="font-medium text-foreground">{title}</p>
+      {title ? <p className="font-medium text-foreground">{title}</p> : null}
       {rows.map(([label, value, onChange]) => (
         <label
           key={label}

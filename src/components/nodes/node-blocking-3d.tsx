@@ -31,7 +31,7 @@ import {
   BlockingTimeline,
   type TimelineKey,
 } from "@/components/nodes/blocking/blocking-timeline";
-import { toWorldPoint } from "@/lib/blocking/evaluate";
+import { objectChannelWorld, toWorldPoint } from "@/lib/blocking/evaluate";
 import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
 import { attachOf } from "@/lib/blocking/parent";
 import { useBlockingPlayhead } from "@/components/nodes/blocking/use-playhead";
@@ -357,9 +357,20 @@ function NodeKeyFields({
     track && !("error" in track) ? findKeyframe(track, selectedKey.tMs) : undefined;
   if (!key) return null;
   const attach = attachOf(selectedKey.id, selectedKey.channel);
+  const obj = scene.objects.find((o) => o.id === selectedKey.id);
   const shown = attach
     ? toWorldPoint(scene.objects, scene.camera, attach, key.value, selectedKey.tMs)
-    : key.value;
+    : obj &&
+        (selectedKey.channel === "position" ||
+          selectedKey.channel === "rotation" ||
+          selectedKey.channel === "scale")
+      ? objectChannelWorld(
+          scene.objects,
+          obj,
+          selectedKey.channel,
+          selectedKey.tMs,
+        )
+      : key.value;
   return (
     <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
       <span className="w-10 shrink-0">

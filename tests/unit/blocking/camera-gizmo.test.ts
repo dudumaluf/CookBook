@@ -92,4 +92,33 @@ describe("camera gizmo helpers", () => {
       position: [3, 0.5, 0],
     });
   });
+
+  it("does not double-move a selected child when the parent is the gizmo", () => {
+    let doc = createDefaultDocument();
+    doc = applyBlockingOp(doc, {
+      op: "add_primitive",
+      kind: "capsule",
+      id: "hero",
+      position: [0, 1, 0],
+    }).doc;
+    doc = applyBlockingOp(doc, {
+      op: "add_primitive",
+      kind: "sphere",
+      id: "eye",
+      position: [0.25, 1.6, 0],
+    }).doc;
+    doc = applyBlockingOp(doc, {
+      op: "set_parent",
+      id: "eye",
+      parentId: "hero",
+    }).doc;
+    const extras = extraTransformOps(
+      doc,
+      "hero",
+      { position: [2, 1, 0] },
+      ["hero", "eye"],
+      0,
+    );
+    expect(extras).toEqual([]);
+  });
 });

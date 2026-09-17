@@ -7,16 +7,20 @@ import {
   type BlockingObject,
   type Easing,
   type Keyframe,
+  type TransformChannel,
   type Vec3,
 } from "@/types/blocking";
 
 import {
+  composeTransform,
   localToWorld,
   parentIdOf,
   parentObject,
+  uncomposeTransform,
   worldToLocal,
   type CameraAttach,
 } from "./parent";
+import { cameraAtDoc } from "./shots";
 
 /**
  * Shared interpolation. Viewport, timeline, playblast, and `sample_at`
@@ -77,7 +81,7 @@ export interface EvaluatedCamera {
   far: number;
 }
 
-export function evalObjectAt(
+export function evalLocalAt(
   obj: BlockingObject,
   tMs: number,
 ): EvaluatedTransform {
@@ -86,6 +90,20 @@ export function evalObjectAt(
     rotation: evalTrack(obj.tracks.rotation, tMs, VEC3_ZERO),
     scale: evalTrack(obj.tracks.scale, tMs, VEC3_ONE),
   };
+}
+
+export function evalObjectAt(
+  obj: BlockingObject,
+  tMs: number,
+  objects: readonly BlockingObject[] = [],
+  visiting: Set<string> = new Set(),
+): EvaluatedTransform {
+  const local = evalLocalAt(obj, tMs);
+  if (!obj.parentId || visiting.has(obj.id)) return local;
+  const parent = parentObject(objects, obj.parentId);
+  if (!parent) return local;
+  visiting.add(obj.id);
+  return composeTransform(evalObjectAt(parent, tMs, objects, visiting), local);
 }
 
 export function evalCameraAt(
@@ -113,7 +131,7 @@ export function toWorldPoint(
 ): Vec3 {
   const parent = parentObject(objects, parentIdOf(cam, attach));
   if (!parent) return stored;
-  return localToWorld(evalObjectAt(parent, tMs), stored);
+  return localToWorld(evalObjectAt(parent, tMs, objects), stored);
 }
 
 export function toStoredPoint(
@@ -125,7 +143,7 @@ export function toStoredPoint(
 ): Vec3 {
   const parent = parentObject(objects, parentIdOf(cam, attach));
   if (!parent) return world;
-  return worldToLocal(evalObjectAt(parent, tMs), world);
+  return worldToLocal(evalObjectAt(parent, tMs, objects), world);
 }
 
 export function rebakeCameraAttach(
@@ -149,11 +167,39 @@ export function rebakeCameraAttach(
         k.tMs,
       ),
     }));
+  const poseKeys = cam.poseKeys.map((p) => {
+    if (attach === "lookAt" && p.lookAt) {
+      return {
+        ...p,
+        lookAt: toStoredPoint(
+          doc.objects,
+          nextCam,
+          attach,
+          toWorldPoint(doc.objects, cam, attach, p.lookAt, p.tMs),
+          p.tMs,
+        ),
+      };
+    }
+    if (attach === "position" && p.position) {
+      return {
+        ...p,
+        position: toStoredPoint(
+          doc.objects,
+          nextCam,
+          attach,
+          toWorldPoint(doc.objects, cam, attach, p.position, p.tMs),
+          p.tMs,
+        ),
+      };
+    }
+    return p;
+  });
   if (attach === "lookAt") {
-    return { ...nextCam, lookAt: mapKeys(cam.lookAt) };
+    return { ...nextCam, lookAt: mapKeys(cam.lookAt), poseKeys };
   }
   return {
     ...nextCam,
+    poseKeys,
     tracks: { ...cam.tracks, position: mapKeys(cam.tracks.position) },
   };
 }
@@ -167,11 +213,102 @@ export function evalDocumentAt(
 } {
   const t = Math.min(Math.max(0, tMs), doc.durationMs);
   return {
-    camera: evalCameraAt(doc.camera, t, doc.objects),
+    camera: evalCameraAt(cameraAtDoc(doc, t), t, doc.objects),
     objects: doc.objects.map((object) => ({
       id: object.id,
       object,
-      transform: evalObjectAt(object, t),
+      transform: evalObjectAt(object, t, doc.objects),
     })),
+  };
+}
+
+export function toStoredObject(
+  objects: readonly BlockingObject[],
+  obj: BlockingObject,
+  world: Partial<EvaluatedTransform>,
+  tMs: number,
+): EvaluatedTransform {
+  const current = evalObjectAt(obj, tMs, objects);
+  const nextWorld: EvaluatedTransform = {
+    position: world.position ?? current.position,
+    rotation: world.rotation ?? current.rotation,
+    scale: world.scale ?? current.scale,
+  };
+  const parent = parentObject(objects, obj.parentId);
+  if (!parent) return nextWorld;
+  return uncomposeTransform(evalObjectAt(parent, tMs, objects), nextWorld);
+}
+
+export function objectChannelWorld(
+  objects: readonly BlockingObject[],
+  obj: BlockingObject,
+  channel: TransformChannel,
+  tMs: number,
+): Vec3 {
+  return evalObjectAt(obj, tMs, objects)[channel];
+}
+
+export function rebakeObjectParent(
+  doc: BlockingDocument,
+  childId: string,
+  parentId: string | null,
+): BlockingObject | null {
+  const child = doc.objects.find((o) => o.id === childId);
+  if (!child) return null;
+  const times = new Set<number>();
+  for (const k of child.poseKeys) times.add(k.tMs);
+  for (const k of child.tracks.position) times.add(k.tMs);
+  for (const k of child.tracks.rotation) times.add(k.tMs);
+  for (const k of child.tracks.scale) times.add(k.tMs);
+  if (times.size === 0) times.add(0);
+  const newParent = parentId
+    ? doc.objects.find((o) => o.id === parentId)
+    : undefined;
+  const sorted = [...times].sort((a, b) => a - b);
+  const easingAt = (keys: Keyframe[], tMs: number): Easing =>
+    keys.find((k) => Math.abs(k.tMs - tMs) < 1)?.easing ?? "linear";
+  const position: Keyframe[] = [];
+  const rotation: Keyframe[] = [];
+  const scale: Keyframe[] = [];
+  for (const tMs of sorted) {
+    const world = evalObjectAt(child, tMs, doc.objects);
+    const local = newParent
+      ? uncomposeTransform(evalObjectAt(newParent, tMs, doc.objects), world)
+      : world;
+    position.push({
+      tMs,
+      value: cloneVec3(local.position),
+      easing: easingAt(child.tracks.position, tMs),
+    });
+    rotation.push({
+      tMs,
+      value: cloneVec3(local.rotation),
+      easing: easingAt(child.tracks.rotation, tMs),
+    });
+    scale.push({
+      tMs,
+      value: cloneVec3(local.scale),
+      easing: easingAt(child.tracks.scale, tMs),
+    });
+  }
+  const { parentId: _old, ...rest } = child;
+  const poseKeys = sorted.map((tMs) => {
+    const world = evalObjectAt(child, tMs, doc.objects);
+    const local = newParent
+      ? uncomposeTransform(evalObjectAt(newParent, tMs, doc.objects), world)
+      : world;
+    return {
+      tMs,
+      position: cloneVec3(local.position),
+      rotation: cloneVec3(local.rotation),
+      scale: cloneVec3(local.scale),
+      easing: easingAt(child.tracks.position, tMs),
+    };
+  });
+  return {
+    ...rest,
+    poseKeys,
+    tracks: { position, rotation, scale },
+    ...(parentId ? { parentId } : {}),
   };
 }

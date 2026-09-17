@@ -14,9 +14,8 @@ export function deleteBlockingOps(args: {
     if (key.tMs <= 0) return [];
     return [
       {
-        op: "remove_keyframe",
+        op: "remove_pose",
         id: key.id,
-        channel: key.channel,
         tMs: key.tMs,
       },
     ];
