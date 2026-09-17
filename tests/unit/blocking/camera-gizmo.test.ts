@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   blockingTransformOp,
+  extraTransformOps,
   lookAtAlongForward,
   translateLinked,
 } from "@/lib/blocking/camera-gizmo";
-import { CAMERA_ID, LOOK_AT_ID } from "@/types/blocking";
+import { applyBlockingOp } from "@/lib/blocking/ops";
+import { CAMERA_ID, LOOK_AT_ID, createDefaultDocument } from "@/types/blocking";
 
 describe("camera gizmo helpers", () => {
   it("moves the target alone when unlocked", () => {
@@ -46,6 +48,35 @@ describe("camera gizmo helpers", () => {
       position: [4, 2, 7],
       lookAt: [0, 1, 0],
       tMs: 0,
+    });
+  });
+
+  it("applies the same move delta to the other selected objects", () => {
+    let doc = createDefaultDocument();
+    doc = applyBlockingOp(doc, {
+      op: "add_primitive",
+      kind: "box",
+      id: "a",
+      position: [0, 0.5, 0],
+    }).doc;
+    doc = applyBlockingOp(doc, {
+      op: "add_primitive",
+      kind: "box",
+      id: "b",
+      position: [2, 0.5, 0],
+    }).doc;
+    const extras = extraTransformOps(
+      doc,
+      "a",
+      { position: [1, 0.5, 0] },
+      ["a", "b"],
+      0,
+    );
+    expect(extras).toHaveLength(1);
+    expect(extras[0]).toMatchObject({
+      op: "set_transform",
+      id: "b",
+      position: [3, 0.5, 0],
     });
   });
 });

@@ -28,7 +28,7 @@ function Row({
   indent?: number;
   draggable?: boolean;
   droppable?: boolean;
-  onPick: (id: string) => void;
+  onPick: (id: string, event?: React.MouseEvent) => void;
   onParent: (child: typeof CAMERA_ID | typeof LOOK_AT_ID, parentId: string | null) => void;
   onDelete?: () => void;
 }) {
@@ -44,7 +44,10 @@ function Row({
         draggable={draggable}
         className="min-w-0 flex-1 px-2 py-1 text-left"
         style={{ paddingLeft: 8 + indent * 12 }}
-        onClick={() => onPick(id)}
+        onClick={(e) => {
+          e.preventDefault();
+          onPick(id, e);
+        }}
         onDragStart={(e) => {
           if (!draggable) return;
           e.dataTransfer.setData(DRAG, id);
@@ -88,22 +91,25 @@ function Row({
 export function BlockingOutliner({
   doc,
   selectedId,
+  selectedIds,
   onPick,
   onParent,
   onDelete,
 }: {
   doc: BlockingDocument;
   selectedId: string | null;
-  onPick: (id: string) => void;
+  selectedIds?: readonly string[];
+  onPick: (id: string, event?: React.MouseEvent) => void;
   onParent: (child: typeof CAMERA_ID | typeof LOOK_AT_ID, parentId: string | null) => void;
   onDelete?: (id: string) => void;
 }) {
   const camParent = doc.camera.parentId;
   const lookParent = doc.camera.lookAtParentId;
+  const picked = selectedIds ?? (selectedId ? [selectedId] : []);
   return (
-    <aside className="flex w-48 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border/40 p-2 text-[11px]">
+    <aside className="flex w-48 shrink-0 select-none flex-col gap-1 overflow-y-auto border-r border-border/40 p-2 text-[11px]">
       <p className="px-2 pb-1 text-[10px] text-muted-foreground">
-        Drag Camera / Look at onto an object to parent.
+        Shift / ⌘ click to multi-select. Drag Camera / Look at onto an object to parent.
       </p>
       <Row
         id="__stage"
@@ -117,7 +123,7 @@ export function BlockingOutliner({
         <Row
           id={CAMERA_ID}
           label="Camera"
-          selected={selectedId === CAMERA_ID}
+          selected={picked.includes(CAMERA_ID)}
           draggable
           onPick={onPick}
           onParent={onParent}
@@ -127,7 +133,7 @@ export function BlockingOutliner({
         <Row
           id={LOOK_AT_ID}
           label="Look at"
-          selected={selectedId === LOOK_AT_ID}
+          selected={picked.includes(LOOK_AT_ID)}
           draggable
           onPick={onPick}
           onParent={onParent}
@@ -139,7 +145,7 @@ export function BlockingOutliner({
             id={o.id}
             label={o.name}
             hint={o.kind}
-            selected={selectedId === o.id}
+            selected={picked.includes(o.id)}
             droppable
             onPick={onPick}
             onParent={onParent}
@@ -153,7 +159,7 @@ export function BlockingOutliner({
             <Row
               id={CAMERA_ID}
               label="Camera"
-              selected={selectedId === CAMERA_ID}
+              selected={picked.includes(CAMERA_ID)}
               indent={1}
               draggable
               onPick={onPick}
@@ -164,7 +170,7 @@ export function BlockingOutliner({
             <Row
               id={LOOK_AT_ID}
               label="Look at"
-              selected={selectedId === LOOK_AT_ID}
+              selected={picked.includes(LOOK_AT_ID)}
               indent={1}
               draggable
               onPick={onPick}

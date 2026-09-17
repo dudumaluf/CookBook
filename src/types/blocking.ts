@@ -19,7 +19,7 @@ export type BlockingObjectKind = PrimitiveKind | "mesh";
 
 export type TransformChannel = "position" | "rotation" | "scale";
 
-export type CameraChannel = TransformChannel | "lookAt";
+export type CameraChannel = TransformChannel | "lookAt" | "fov";
 
 export interface Keyframe {
   tMs: number;
@@ -51,6 +51,8 @@ export interface BlockingObject {
 
 export interface BlockingCamera {
   fov: number;
+  /** FOV keys as [degrees, 0, 0]. `fov` stays in sync with the 0ms rest. */
+  fovKeys: Keyframe[];
   near: number;
   far: number;
   tracks: TransformTracks;
@@ -89,6 +91,8 @@ export const MIN_FPS = 1;
 export const MAX_FPS = 60;
 export const MIN_SIZE = 256;
 export const MAX_SIZE = 1920;
+export const MIN_FOV = 10;
+export const MAX_FOV = 120;
 
 const EASINGS = new Set<string>([
   "linear",
@@ -132,6 +136,17 @@ function asNum(raw: unknown, fallback: number): number {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
+}
+
+export function fovVec(fov: number): Vec3 {
+  return [clamp(fov, MIN_FOV, MAX_FOV), 0, 0];
+}
+
+export function sanitizeFovKeys(raw: unknown, fallbackFov: number): Keyframe[] {
+  return sanitizeTrack(raw, fovVec(fallbackFov)).map((k) => ({
+    ...k,
+    value: fovVec(k.value[0]),
+  }));
 }
 
 export function clampDurationMs(raw: unknown): number {
@@ -278,6 +293,7 @@ export function sanitizeObject(raw: unknown): BlockingObject | null {
 export function defaultCamera(): BlockingCamera {
   return {
     fov: 40,
+    fovKeys: [{ tMs: 0, value: fovVec(40), easing: "linear" }],
     near: 0.1,
     far: 200,
     tracks: emptyTracks(DEFAULT_CAMERA_POS),
@@ -300,8 +316,11 @@ export function sanitizeCamera(
     typeof r.lookAtParentId === "string" && objectIds?.has(r.lookAtParentId)
       ? r.lookAtParentId
       : undefined;
+  const fov = clamp(asNum(r.fov, fallback.fov), MIN_FOV, MAX_FOV);
+  const fovKeys = sanitizeFovKeys(r.fovKeys, fov);
   return {
-    fov: clamp(asNum(r.fov, fallback.fov), 10, 120),
+    fov: fovKeys[0]!.value[0],
+    fovKeys,
     near: clamp(asNum(r.near, fallback.near), 0.01, 10),
     far: clamp(asNum(r.far, fallback.far), 20, 2000),
     tracks: sanitizeTracks(r.tracks, DEFAULT_CAMERA_POS),

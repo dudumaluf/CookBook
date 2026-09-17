@@ -2,6 +2,22 @@
 
 Date-keyed. Newest entry on top. One bullet per shipped thing.
 
+## 2026-09-17 — 3D Blocking: gizmos, multi-select, no text highlight
+
+Re-attach TransformControls after the scene sync so picking an object in the outliner or viewport shows the gizmo. Shift / ⌘-click selects several objects (Delete and gizmo move apply to all). Editor chrome is `select-none` so a drag does not highlight titles.
+
+## 2026-09-17 — 3D Blocking: keyframe camera FOV
+
+Camera FOV is a timeline channel (`F`) like position / lookAt. Change FOV at the playhead (or Key at playhead) to add a zoom key; drag to retime. Old scenes with a single `fov` number become a 0ms rest key.
+
+## 2026-09-17 — 3D Blocking: dragging a key does not move the playhead
+
+Retiming a timeline key leaves the scrub where it is. Click the bar to seek.
+
+## 2026-09-17 — 3D Blocking: drag-scrub number fields
+
+Inspector (and node-body key) number fields still accept a typed value. Click-drag horizontally on the field or its label to scrub (Shift = finer). One undo step per drag.
+
 ## 2026-09-17 — 3D Blocking editor: Delete + undo/redo
 
 Delete / Backspace in the fullscreen editor remove the selected object or keyframe, not the graph node. Cmd/Ctrl+Z undo and Shift+Z / Y redo the scene (including after a prompt). Trash icon on hover in the outliner; no Delete button in properties. Camera, look-at, ground, and the 0ms rest pose stay.

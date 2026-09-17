@@ -11,6 +11,7 @@ import { blockingTransformOp, type ViewportTransform } from "@/lib/blocking/came
 import { applyBlockingOp, ensureWiredMeshes } from "@/lib/blocking/ops";
 import { uploadMediaAsset } from "@/lib/library/upload-asset";
 import { cn } from "@/lib/utils";
+import { ScrubNumberInput } from "@/components/nodes/blocking/scrub-number-input";
 
 const BlockingEditor = dynamic(
   () =>
@@ -193,8 +194,6 @@ function Blocking3dBody({
           onSelectKey={(key) => {
             setSelectedKey(key);
             setSelectedId(key.channel === "lookAt" ? LOOK_AT_ID : key.id);
-            setPlaying(false);
-            setPlayheadMs(key.tMs);
           }}
           onMoveKey={(key, toMs) => {
             const result = applyBlockingOp(scene, {
@@ -207,7 +206,6 @@ function Blocking3dBody({
             commitScene(result.doc);
             if (!result.error) {
               setSelectedKey({ ...key, tMs: Math.max(1, toMs) });
-              setPlayheadMs(Math.max(1, toMs));
             }
           }}
         />
@@ -367,20 +365,28 @@ function NodeKeyFields({
       <span className="w-10 shrink-0">
         {selectedKey.label} {(selectedKey.tMs / 1000).toFixed(2)}s
       </span>
-      {(["x", "y", "z"] as const).map((axis, i) => (
-        <input
-          key={axis}
-          type="number"
-          step={0.1}
-          value={Number(shown[i]!.toFixed(3))}
-          onChange={(e) => {
-            const next: Vec3 = [...shown];
-            next[i] = Number(e.target.value);
-            onChange(next);
-          }}
+      {selectedKey.channel === "fov" ? (
+        <ScrubNumberInput
+          min={10}
+          max={120}
+          value={shown[0]!}
+          onChange={(v) => onChange([v, 0, 0])}
           className="h-6 w-full rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
         />
-      ))}
+      ) : (
+        (["x", "y", "z"] as const).map((axis, i) => (
+          <ScrubNumberInput
+            key={axis}
+            value={shown[i]!}
+            onChange={(v) => {
+              const next: Vec3 = [...shown];
+              next[i] = v;
+              onChange(next);
+            }}
+            className="h-6 w-full rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
+          />
+        ))
+      )}
     </div>
   );
 }

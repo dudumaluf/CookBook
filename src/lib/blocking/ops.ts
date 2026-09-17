@@ -9,6 +9,7 @@ import {
   nextObjectName,
   sanitizeBlockingDocument,
   sanitizeTrack,
+  fovVec,
   VEC3_ONE,
   VEC3_ZERO,
   type BlockingDocument,
@@ -356,6 +357,11 @@ export function applyBlockingOp(
             easing,
           ),
         };
+      } else if (op.channel === "fov") {
+        cam = {
+          ...cam,
+          fovKeys: upsertKey(cam.fovKeys ?? [], tMs, fovVec(op.value[0]), easing),
+        };
       } else if (op.channel === "position") {
         cam = {
           ...cam,
@@ -383,6 +389,9 @@ export function applyBlockingOp(
     if (op.channel === "lookAt") {
       return { doc, error: "lookAt is only valid on the camera." };
     }
+    if (op.channel === "fov") {
+      return { doc, error: "fov is only valid on the camera." };
+    }
     const channel = op.channel as TransformChannel;
     const { doc: next, found } = mapObject(doc, op.id, (o) =>
       writeChannel(o, channel, tMs, op.value, easing),
@@ -399,7 +408,9 @@ export function applyBlockingOp(
     if (op.id === CAMERA_ID) {
       let cam = doc.camera;
       if (op.channel === "lookAt") cam = { ...cam, lookAt: sanitizeTrack(drop(cam.lookAt), [0, 1, 0]) };
-      else {
+      else if (op.channel === "fov") {
+        cam = { ...cam, fovKeys: sanitizeTrack(drop(cam.fovKeys), fovVec(cam.fov)) };
+      } else {
         cam = {
           ...cam,
           tracks: {
@@ -412,6 +423,9 @@ export function applyBlockingOp(
     }
     if (op.channel === "lookAt") {
       return { doc, error: "lookAt is only valid on the camera." };
+    }
+    if (op.channel === "fov") {
+      return { doc, error: "fov is only valid on the camera." };
     }
     const channel = op.channel as TransformChannel;
     const fallback = channel === "scale" ? VEC3_ONE : VEC3_ZERO;
@@ -452,6 +466,7 @@ export function applyBlockingOp(
               ...cam,
               tracks: emptyTracks([0, 2.2, 7]),
               lookAt: [{ tMs: 0, value: [0, 1, 0], easing: "linear" }],
+              fovKeys: [{ tMs: 0, value: fovVec(cam.fov), easing: "linear" }],
             },
           }),
         };
@@ -474,6 +489,17 @@ export function applyBlockingOp(
             camera: {
               ...cam,
               lookAt: [{ tMs: 0, value: [0, 1, 0], easing: "linear" }],
+            },
+          }),
+        };
+      }
+      if (op.channel === "fov") {
+        return {
+          doc: sanitizeBlockingDocument({
+            ...doc,
+            camera: {
+              ...cam,
+              fovKeys: [{ tMs: 0, value: fovVec(cam.fov), easing: "linear" }],
             },
           }),
         };
@@ -521,7 +547,10 @@ export function applyBlockingOp(
     const tMs = op.tMs ?? 0;
     let cam = doc.camera;
     if (typeof op.fov === "number") {
-      cam = { ...cam, fov: op.fov };
+      cam = {
+        ...cam,
+        fovKeys: upsertKey(cam.fovKeys ?? [], tMs, fovVec(op.fov), easing),
+      };
     }
     if (op.position) {
       cam = {

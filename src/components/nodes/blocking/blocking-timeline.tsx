@@ -72,6 +72,7 @@ export function BlockingTimeline({
   if (!selectedId || selectedId === CAMERA_ID || selectedId === LOOK_AT_ID) {
     pushKeys(doc.camera.tracks.position, CAMERA_ID, "position", "P");
     pushKeys(doc.camera.lookAt, CAMERA_ID, "lookAt", "L");
+    pushKeys(doc.camera.fovKeys ?? [], CAMERA_ID, "fov", "F");
   } else {
     const obj = doc.objects.find((o) => o.id === selectedId);
     if (obj) {
@@ -161,7 +162,6 @@ export function BlockingTimeline({
                 e.stopPropagation();
                 e.preventDefault();
                 onSelectKey?.(m);
-                onScrub(m.tMs);
                 const startX = e.clientX;
                 let last = m.tMs;
                 let dragged = false;
@@ -169,7 +169,6 @@ export function BlockingTimeline({
                   if (Math.abs(ev.clientX - startX) > 3) dragged = true;
                   last = msAt(ev.clientX);
                   setDragMs(last);
-                  onScrub(last);
                 };
                 const up = () => {
                   window.removeEventListener("pointermove", move);

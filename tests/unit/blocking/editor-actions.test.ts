@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { deleteBlockingSelection } from "@/components/nodes/blocking/editor-actions";
+import {
+  deleteBlockingOps,
+  deleteBlockingSelection,
+  nextSelection,
+} from "@/components/nodes/blocking/editor-actions";
 import { CAMERA_ID, LOOK_AT_ID } from "@/types/blocking";
 
 describe("deleteBlockingSelection", () => {
@@ -43,5 +47,28 @@ describe("deleteBlockingSelection", () => {
     expect(
       deleteBlockingSelection({ selectedId: "ground", selectedKey: null }),
     ).toBeNull();
+  });
+
+  it("deletes every unlocked id in a multi-selection", () => {
+    expect(
+      deleteBlockingOps({
+        selectedIds: [CAMERA_ID, "hero", "ground", "box"],
+        selectedKey: null,
+      }),
+    ).toEqual([
+      { op: "remove_object", id: "hero" },
+      { op: "remove_object", id: "box" },
+    ]);
+  });
+});
+
+describe("nextSelection", () => {
+  const order = [CAMERA_ID, LOOK_AT_ID, "a", "b", "c"];
+
+  it("replaces, toggles, and ranges", () => {
+    expect(nextSelection(["a"], "c", "replace", order)).toEqual(["c"]);
+    expect(nextSelection(["a"], "c", "toggle", order)).toEqual(["a", "c"]);
+    expect(nextSelection(["a", "c"], "c", "toggle", order)).toEqual(["a"]);
+    expect(nextSelection(["a"], "c", "range", order)).toEqual(["a", "b", "c"]);
   });
 });

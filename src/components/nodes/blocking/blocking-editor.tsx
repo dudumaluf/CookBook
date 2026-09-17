@@ -16,7 +16,11 @@ import { createPortal } from "react-dom";
 
 import { uploadMeshAsset } from "@/lib/library/upload-asset";
 import { runBlockingAgent } from "@/lib/blocking/agent";
-import { blockingTransformOp, type ViewportTransform } from "@/lib/blocking/camera-gizmo";
+import {
+  blockingTransformOp,
+  extraTransformOps,
+  type ViewportTransform,
+} from "@/lib/blocking/camera-gizmo";
 import { findKeyframe, sceneTrack } from "@/lib/blocking/keys";
 import { applyBlockingOp, type BlockingOp } from "@/lib/blocking/ops";
 import { evalCameraAt, evalObjectAt, toWorldPoint } from "@/lib/blocking/evaluate";
@@ -24,6 +28,7 @@ import { attachOf } from "@/lib/blocking/parent";
 import {
   CAMERA_ID,
   LOOK_AT_ID,
+  fovVec,
   type BlockingDocument,
   type PrimitiveKind,
   type Vec3,
@@ -37,10 +42,13 @@ import {
 import { BlockingOutliner } from "./blocking-outliner";
 import { BlockingTimeline, type TimelineKey } from "./blocking-timeline";
 import {
-  deleteBlockingSelection,
+  deleteBlockingOps,
   isTypingTarget,
+  nextSelection,
+  selectionMode,
 } from "./editor-actions";
 import { useSceneHistory } from "./use-scene-history";
+import { ScrubNumberInput } from "./scrub-number-input";
 
 const COMMIT_MS = 120;
 
@@ -70,7 +78,8 @@ export function BlockingEditor({
   onPlaying: (playing: boolean) => void;
 }) {
   const [doc, setDoc] = useState(initialDoc);
-  const [selectedId, setSelectedId] = useState<string | null>(CAMERA_ID);
+  const [selectedIds, setSelectedIds] = useState<string[]>([CAMERA_ID]);
+  const selectedId = selectedIds[selectedIds.length - 1] ?? null;
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [shotView, setShotView] = useState(false);
   const [linkCameraTarget, setLinkCameraTarget] = useState(false);
@@ -80,10 +89,12 @@ export function BlockingEditor({
   const [importError, setImportError] = useState<string>("");
   const [selectedKey, setSelectedKey] = useState<TimelineKey | null>(null);
   const { push, undo, redo, canUndo, canRedo } = useSceneHistory(initialDoc);
+  const skipHistoryRef = useRef(false);
 
   const docRef = useRef(doc);
   const onChangeRef = useRef(onChange);
   const selectedIdRef = useRef(selectedId);
+  const selectedIdsRef = useRef(selectedIds);
   const selectedKeyRef = useRef(selectedKey);
   const applyRef = useRef<(op: BlockingOp) => ReturnType<typeof applyBlockingOp>>(
     () => ({ doc: initialDoc }),
@@ -95,6 +106,7 @@ export function BlockingEditor({
     docRef.current = doc;
     onChangeRef.current = onChange;
     selectedIdRef.current = selectedId;
+    selectedIdsRef.current = selectedIds;
     selectedKeyRef.current = selectedKey;
     undoRef.current = undo;
     redoRef.current = redo;
@@ -111,18 +123,49 @@ export function BlockingEditor({
     else setImportError("");
     if (next.doc !== prev) {
       setDoc(next.doc);
-      push(next.doc);
+      if (!skipHistoryRef.current) push(next.doc);
     }
-    if (next.createdId) setSelectedId(next.createdId);
+    if (next.createdId) setSelectedIds([next.createdId]);
     return next;
   }, [push]);
   applyRef.current = apply;
+
+  const applyMany = (ops: BlockingOp[]) => {
+    if (ops.length === 0) return;
+    let cur = docRef.current;
+    let error: string | undefined;
+    let createdId: string | undefined;
+    for (const op of ops) {
+      const next = applyBlockingOp(cur, op);
+      if (next.error) {
+        error = next.error;
+        break;
+      }
+      cur = next.doc;
+      if (next.createdId) createdId = next.createdId;
+    }
+    if (error) setImportError(error);
+    else setImportError("");
+    if (cur !== docRef.current) {
+      setDoc(cur);
+      push(cur);
+    }
+    if (createdId) setSelectedIds([createdId]);
+  };
 
   const close = useCallback(() => {
     onChangeRef.current(docRef.current);
     onClose();
   }, [onClose]);
   closeRef.current = close;
+
+  const beginScrub = () => {
+    skipHistoryRef.current = true;
+  };
+  const endScrub = () => {
+    skipHistoryRef.current = false;
+    push(docRef.current);
+  };
 
   const restore = (next: BlockingDocument | null) => {
     if (!next) return;
@@ -131,18 +174,17 @@ export function BlockingEditor({
   };
 
   const deleteSelected = () => {
-    const op = deleteBlockingSelection({
-      selectedId: selectedIdRef.current,
+    const ops = deleteBlockingOps({
+      selectedIds: selectedIdsRef.current,
       selectedKey: selectedKeyRef.current,
     });
-    if (!op) return;
-    const result = applyRef.current(op);
-    if (result.error) return;
-    if (op.op === "remove_keyframe") {
+    if (ops.length === 0) return;
+    applyMany(ops);
+    if (ops[0]?.op === "remove_keyframe") {
       setSelectedKey(null);
       return;
     }
-    setSelectedId(CAMERA_ID);
+    setSelectedIds([CAMERA_ID]);
     setSelectedKey(null);
   };
 
@@ -183,14 +225,36 @@ export function BlockingEditor({
 
   const onTransformEnd = useCallback(
     (id: string, next: ViewportTransform) => {
-      apply(blockingTransformOp(id, next, playheadMs));
+      applyMany([
+        blockingTransformOp(id, next, playheadMs),
+        ...extraTransformOps(
+          docRef.current,
+          id,
+          next,
+          selectedIdsRef.current,
+          playheadMs,
+        ),
+      ]);
     },
-    [apply, playheadMs],
+    [playheadMs],
   );
 
-  const pick = (id: string | null) => {
-    setSelectedId(id);
+  const pick = (
+    id: string | null,
+    additiveOrEvent?: boolean | React.MouseEvent,
+  ) => {
     setSelectedKey(null);
+    const event =
+      typeof additiveOrEvent === "object" ? additiveOrEvent : undefined;
+    const additive =
+      typeof additiveOrEvent === "boolean"
+        ? additiveOrEvent
+        : Boolean(event && (event.shiftKey || event.metaKey || event.ctrlKey));
+    const mode = additive
+      ? selectionMode(event ?? { shiftKey: false, metaKey: true })
+      : "replace";
+    const order = [CAMERA_ID, LOOK_AT_ID, ...docRef.current.objects.map((o) => o.id)];
+    setSelectedIds((cur) => nextSelection(cur, id, mode, order));
   };
 
   const cameraSelected = selectedId === CAMERA_ID || selectedId === LOOK_AT_ID;
@@ -260,7 +324,7 @@ export function BlockingEditor({
   return createPortal(
     <div
       data-blocking-editor=""
-      className="fixed inset-0 z-[80] flex flex-col bg-background text-foreground"
+      className="fixed inset-0 z-[80] flex select-none flex-col bg-background text-foreground"
       onKeyDown={(e) => {
         e.stopPropagation();
       }}
@@ -381,13 +445,19 @@ export function BlockingEditor({
         <BlockingOutliner
           doc={doc}
           selectedId={selectedId}
+          selectedIds={selectedIds}
           onPick={pick}
           onParent={(child, parentId) => {
             apply({ op: "set_parent", id: child, parentId });
           }}
           onDelete={(id) => {
             const result = apply({ op: "remove_object", id });
-            if (!result.error && selectedId === id) pick(CAMERA_ID);
+            if (!result.error) {
+              setSelectedIds((cur) => {
+                const next = cur.filter((x) => x !== id);
+                return next.length > 0 ? next : [CAMERA_ID];
+              });
+            }
           }}
         />
 
@@ -404,9 +474,35 @@ export function BlockingEditor({
           />
         </div>
 
-        <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border/40 p-2 text-[11px]">
-          {selectedKey && selectedKeyframe && selectedKeyWorld ? (
+        <aside className="flex w-60 shrink-0 select-none flex-col gap-2 overflow-y-auto border-l border-border/40 p-2 text-[11px]">
+          {selectedIds.length > 1 ? (
+            <p className="text-muted-foreground">{selectedIds.length} selected</p>
+          ) : null}
+          {selectedKey && selectedKeyframe && selectedKey.channel === "fov" ? (
             <InspectorBlock
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
+              title={`FOV key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
+              rows={[
+                [
+                  "fov",
+                  selectedKeyframe.value[0]!,
+                  (v: number) =>
+                    apply({
+                      op: "set_keyframe",
+                      id: CAMERA_ID,
+                      channel: "fov",
+                      tMs: selectedKey.tMs,
+                      value: fovVec(v),
+                      easing: selectedKeyframe.easing,
+                    }),
+                ],
+              ]}
+            />
+          ) : selectedKey && selectedKeyframe && selectedKeyWorld ? (
+            <InspectorBlock
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
               title={`${selectedKey.label} key @ ${(selectedKey.tMs / 1000).toFixed(2)}s`}
               rows={(["x", "y", "z"] as const).map((axis, i) => [
                 axis,
@@ -427,9 +523,20 @@ export function BlockingEditor({
             />
           ) : cameraSelected ? (
             <InspectorBlock
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
               title={selectedId === LOOK_AT_ID ? "Look at" : "Camera"}
               rows={[
-                ["fov", doc.camera.fov, (v) => apply({ op: "set_camera", fov: v })],
+                [
+                  "fov",
+                  camAt.fov,
+                  (v) =>
+                    apply({
+                      op: "set_camera",
+                      fov: v,
+                      tMs: playheadMs,
+                    }),
+                ],
                 [
                   "pos x",
                   camAt.position[0],
@@ -497,6 +604,8 @@ export function BlockingEditor({
             />
           ) : selected && objAt ? (
             <InspectorBlock
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
               title={selected.name}
               rows={[
                 ...(["x", "y", "z"] as const).map((axis, i) => [
@@ -548,15 +657,16 @@ export function BlockingEditor({
           )}
           <label className="mt-2 flex flex-col gap-1 text-muted-foreground">
             Duration (s)
-            <input
-              type="number"
+            <ScrubNumberInput
               min={0.2}
               max={60}
               step={0.1}
               value={doc.durationMs / 1000}
-              onChange={(e) =>
-                apply({ op: "set_duration", durationMs: Number(e.target.value) * 1000 })
+              onChange={(v) =>
+                apply({ op: "set_duration", durationMs: v * 1000 })
               }
+              onScrubStart={beginScrub}
+              onScrubEnd={endScrub}
               className="h-7 rounded-md border border-border/60 bg-background/40 px-2 text-foreground"
             />
           </label>
@@ -576,9 +686,7 @@ export function BlockingEditor({
         onTogglePlay={() => onPlaying(!playing)}
         onSelectKey={(key) => {
           setSelectedKey(key);
-          setSelectedId(key.channel === "lookAt" ? LOOK_AT_ID : key.id);
-          onPlaying(false);
-          onPlayhead(key.tMs);
+          setSelectedIds([key.channel === "lookAt" ? LOOK_AT_ID : key.id]);
         }}
         onMoveKey={(key, toMs) => {
           const result = apply({
@@ -590,7 +698,6 @@ export function BlockingEditor({
           });
           if (!result.error) {
             setSelectedKey({ ...key, tMs: Math.max(1, toMs) });
-            onPlayhead(Math.max(1, toMs));
           }
         }}
         onSetKey={() => {
@@ -599,6 +706,7 @@ export function BlockingEditor({
               op: "set_camera",
               position: camAt.position,
               lookAt: camAt.lookAt,
+              fov: camAt.fov,
               tMs: playheadMs,
             });
             return;
@@ -651,21 +759,29 @@ export function BlockingEditor({
 function InspectorBlock({
   title,
   rows,
+  onScrubStart,
+  onScrubEnd,
 }: {
   title: string;
   rows: [string, number, (v: number) => void][];
+  onScrubStart?: () => void;
+  onScrubEnd?: () => void;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
       <p className="font-medium text-foreground">{title}</p>
       {rows.map(([label, value, onChange]) => (
-        <label key={label} className="flex items-center gap-2 text-muted-foreground">
-          <span className="w-12 shrink-0">{label}</span>
-          <input
-            type="number"
-            step={0.1}
-            value={Number(value.toFixed(3))}
-            onChange={(e) => onChange(Number(e.target.value))}
+        <label
+          key={label}
+          className="flex items-center gap-2 text-muted-foreground"
+        >
+          <ScrubNumberInput
+            label={label}
+            labelClassName="w-12 shrink-0"
+            value={value}
+            onChange={onChange}
+            onScrubStart={onScrubStart}
+            onScrubEnd={onScrubEnd}
             className="h-6 w-full rounded-md border border-border/60 bg-background/40 px-1 text-foreground"
           />
         </label>

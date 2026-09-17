@@ -30,6 +30,7 @@ export function readScene(
       keys: {
         position: keyTimes(doc.camera.tracks.position),
         lookAt: keyTimes(doc.camera.lookAt),
+        fov: keyTimes(doc.camera.fovKeys),
       },
     },
     objects: snap.objects.map(({ object, transform }) => ({

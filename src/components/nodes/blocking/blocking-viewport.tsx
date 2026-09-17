@@ -45,7 +45,7 @@ export function BlockingViewport({
   playheadMs: number;
   selectedId: string | null;
   gizmoMode: GizmoMode;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, additive?: boolean) => void;
   onTransformEnd: (id: string, next: ViewportTransform) => void;
   /** Look through the playblast camera. */
   shotView?: boolean;
@@ -95,6 +95,8 @@ export function BlockingViewport({
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.display = "block";
+    renderer.domElement.style.userSelect = "none";
+    renderer.domElement.style.webkitUserSelect = "none";
     renderer.domElement.addEventListener("pointerdown", (e) => e.stopPropagation());
     renderer.domElement.addEventListener("wheel", (e) => e.stopPropagation(), {
       passive: true,
@@ -143,6 +145,7 @@ export function BlockingViewport({
     world.scene.add(helper);
 
     const gizmo = new TransformControls(viewCam, renderer.domElement);
+    gizmo.setSize(0.85);
     gizmo.addEventListener("dragging-changed", (e) => {
       draggingRef.current = Boolean(e.value);
       orbit.enabled = !e.value && !shotViewRef.current;
@@ -232,6 +235,7 @@ export function BlockingViewport({
     const pointer = new THREE.Vector2();
     const onClick = (ev: MouseEvent) => {
       if (shotViewRef.current || gizmo.dragging) return;
+      const additive = ev.shiftKey || ev.metaKey || ev.ctrlKey;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
@@ -242,20 +246,23 @@ export function BlockingViewport({
       );
       const hit = hits[0]?.object;
       if (!hit) {
-        onSelectRef.current(null);
+        if (!additive) onSelectRef.current(null);
         return;
       }
       if (isUnder(hit, lookAtHandle)) {
-        onSelectRef.current(LOOK_AT_ID);
+        onSelectRef.current(LOOK_AT_ID, additive);
         return;
       }
       if (isUnder(hit, helper) || isUnder(hit, camBody) || isUnder(hit, world.playblastCamera)) {
-        onSelectRef.current(CAMERA_ID);
+        onSelectRef.current(CAMERA_ID, additive);
         return;
       }
       let cur: THREE.Object3D | null = hit;
       while (cur && !world.nodes.has(cur.name) && cur.parent) cur = cur.parent;
-      onSelectRef.current(cur && world.nodes.has(cur.name) ? cur.name : null);
+      onSelectRef.current(
+        cur && world.nodes.has(cur.name) ? cur.name : null,
+        additive,
+      );
     };
     renderer.domElement.addEventListener("click", onClick);
 
@@ -349,46 +356,53 @@ export function BlockingViewport({
     if (draggingRef.current) return;
     const world = worldRef.current;
     const handle = lookAtRef.current;
-    if (!world) return;
-    void world.sync(doc, playheadMs).then(() => {
-      if (!handle || draggingRef.current) return;
-      const cam = evalCameraAt(doc.camera, playheadMs, doc.objects);
-      handle.position.set(cam.lookAt[0], cam.lookAt[1], cam.lookAt[2]);
-    });
-  }, [doc, playheadMs]);
-
-  useEffect(() => {
     const gizmo = gizmoRef.current;
-    const world = worldRef.current;
-    const handle = lookAtRef.current;
-    if (!gizmo || !world) return;
-    if (shotView) {
-      gizmo.detach();
-      return;
-    }
-    const mode =
-      selectedId === LOOK_AT_ID
-        ? "translate"
-        : selectedId === CAMERA_ID && gizmoMode === "scale"
+    if (!world || !gizmo) return;
+    void world.sync(doc, playheadMs).then(() => {
+      if (draggingRef.current) return;
+      if (handle) {
+        const cam = evalCameraAt(doc.camera, playheadMs, doc.objects);
+        handle.position.set(cam.lookAt[0], cam.lookAt[1], cam.lookAt[2]);
+      }
+      if (shotView) {
+        gizmo.detach();
+        return;
+      }
+      const mode =
+        selectedId === LOOK_AT_ID
           ? "translate"
-          : gizmoMode;
-    gizmo.setMode(mode);
-    if (!selectedId) {
-      gizmo.detach();
-      return;
-    }
-    if (selectedId === CAMERA_ID) {
-      gizmo.attach(world.playblastCamera);
-      return;
-    }
-    if (selectedId === LOOK_AT_ID && handle) {
-      gizmo.attach(handle);
-      return;
-    }
-    const node = world.nodes.get(selectedId);
-    if (node) gizmo.attach(node);
-    else gizmo.detach();
-  }, [selectedId, gizmoMode, doc, playheadMs, shotView]);
+          : selectedId === CAMERA_ID && gizmoMode === "scale"
+            ? "translate"
+            : gizmoMode;
+      gizmo.setMode(mode);
+      if (!selectedId) {
+        gizmo.detach();
+        return;
+      }
+      if (selectedId === CAMERA_ID) {
+        gizmo.attach(world.playblastCamera);
+        gizmo.getHelper().visible = true;
+        return;
+      }
+      if (selectedId === LOOK_AT_ID && handle) {
+        gizmo.attach(handle);
+        gizmo.getHelper().visible = true;
+        return;
+      }
+      const node = world.nodes.get(selectedId);
+      if (node) {
+        gizmo.attach(node);
+        gizmo.getHelper().visible = true;
+      } else {
+        gizmo.detach();
+      }
+    });
+  }, [doc, playheadMs, selectedId, gizmoMode, shotView]);
 
-  return <div ref={hostRef} className="h-full w-full bg-[#16161a]" />;
+  return (
+    <div
+      ref={hostRef}
+      className="h-full w-full select-none bg-[#16161a]"
+    />
+  );
 }

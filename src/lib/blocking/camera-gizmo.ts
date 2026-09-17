@@ -1,5 +1,6 @@
-import { CAMERA_ID, LOOK_AT_ID, type Vec3 } from "@/types/blocking";
+import { CAMERA_ID, LOOK_AT_ID, type BlockingDocument, type Vec3 } from "@/types/blocking";
 
+import { evalObjectAt } from "./evaluate";
 import type { BlockingOp } from "./ops";
 
 export function addVec3(a: Vec3, b: Vec3): Vec3 {
@@ -71,4 +72,50 @@ export function blockingTransformOp(
     scale: next.scale,
     tMs,
   };
+}
+
+/** Same gizmo delta applied to the other selected scene objects. */
+export function extraTransformOps(
+  doc: BlockingDocument,
+  primaryId: string,
+  next: ViewportTransform,
+  selectedIds: readonly string[],
+  tMs: number,
+): BlockingOp[] {
+  const primary = doc.objects.find((o) => o.id === primaryId);
+  if (!primary) return [];
+  const before = evalObjectAt(primary, tMs);
+  const dPos = next.position ? subVec3(next.position, before.position) : null;
+  const dRot = next.rotation ? subVec3(next.rotation, before.rotation) : null;
+  const ops: BlockingOp[] = [];
+  for (const id of selectedIds) {
+    if (
+      id === primaryId ||
+      id === CAMERA_ID ||
+      id === LOOK_AT_ID ||
+      id === "ground"
+    ) {
+      continue;
+    }
+    const obj = doc.objects.find((o) => o.id === id);
+    if (!obj) continue;
+    const at = evalObjectAt(obj, tMs);
+    ops.push({
+      op: "set_transform",
+      id,
+      ...(dPos ? { position: addVec3(at.position, dPos) } : {}),
+      ...(dRot ? { rotation: addVec3(at.rotation, dRot) } : {}),
+      ...(next.scale
+        ? {
+            scale: [
+              at.scale[0] * (before.scale[0] === 0 ? 1 : next.scale[0] / before.scale[0]),
+              at.scale[1] * (before.scale[1] === 0 ? 1 : next.scale[1] / before.scale[1]),
+              at.scale[2] * (before.scale[2] === 0 ? 1 : next.scale[2] / before.scale[2]),
+            ],
+          }
+        : {}),
+      tMs,
+    });
+  }
+  return ops;
 }

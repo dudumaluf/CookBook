@@ -98,7 +98,7 @@ export function evalCameraAt(
   return {
     position: toWorldPoint(objects, cam, "position", localPos, tMs),
     lookAt: toWorldPoint(objects, cam, "lookAt", localLook, tMs),
-    fov: cam.fov,
+    fov: evalTrack(cam.fovKeys ?? [], tMs, [cam.fov, 0, 0])[0]!,
     near: cam.near,
     far: cam.far,
   };

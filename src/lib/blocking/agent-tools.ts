@@ -121,12 +121,12 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "set_keyframe",
       description:
-        "Upsert a key on position|rotation|scale|lookAt. lookAt / id='lookAt' changes only the aim point. Use this to edit motion on objects that already exist.",
+        "Upsert a key on position|rotation|scale|lookAt|fov. lookAt / id='lookAt' changes only the aim point. fov is camera-only; value[0] is degrees (or pass a number).",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string" },
-          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt"] },
+          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt", "fov"] },
           tMs: { type: "number" },
           value: vec3,
           easing: { type: "string", enum: ["linear", "easeIn", "easeOut", "easeInOut"] },
@@ -144,7 +144,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
         type: "object",
         properties: {
           id: { type: "string" },
-          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt"] },
+          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt", "fov"] },
           tMs: { type: "number" },
         },
         required: ["id", "channel", "tMs"],
@@ -161,7 +161,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
         type: "object",
         properties: {
           id: { type: "string" },
-          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt"] },
+          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt", "fov"] },
           fromMs: { type: "number" },
           toMs: { type: "number" },
         },
@@ -178,7 +178,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
         type: "object",
         properties: {
           id: { type: "string" },
-          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt"] },
+          channel: { type: "string", enum: ["position", "rotation", "scale", "lookAt", "fov"] },
         },
         required: ["id"],
       },
@@ -189,7 +189,7 @@ export const BLOCKING_AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "set_camera",
       description:
-        "Camera controls. position and lookAt are independent: pass only lookAt to change where it aims (camera stays); pass only position to move the camera (aim stays). fov optional. Keyframes when tMs is set.",
+        "Camera controls. position and lookAt are independent. fov is keyframed when tMs is set (zoom in/out over time). Pass only lookAt to change aim; only position to move; only fov to change zoom.",
       parameters: {
         type: "object",
         properties: {
@@ -292,7 +292,8 @@ Camera vs lookAt (independent):
 - Camera id is always "camera". Aim id is "lookAt" (or set_camera with only lookAt).
 - "look at X" / "aponta para" / change where it looks → set_camera({ lookAt }) or set_keyframe id=camera channel=lookAt. Do NOT move camera position unless they asked.
 - "move the camera" / dolly / truck → set_camera({ position }) and leave lookAt alone unless they asked to reframe.
-- You can keyframe them separately.
+- Zoom / FOV / "abre o lente" → set_camera({ fov, tMs }) or set_keyframe id=camera channel=fov. Do not move the camera unless they asked.
+- You can keyframe position, lookAt, and fov separately.
 - set_parent id=camera|lookAt onto an existing object to make them follow it (dolly with a character, aim stuck on a prop). parentId=null to unparent. Do not add a new object just to parent.
 
 Conventions:

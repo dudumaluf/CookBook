@@ -8,7 +8,7 @@ import {
 
 import type { BlockingOp } from "./ops";
 
-const CHANNELS = new Set<string>(["position", "rotation", "scale", "lookAt"]);
+const CHANNELS = new Set<string>(["position", "rotation", "scale", "lookAt", "fov"]);
 const EASINGS = new Set<string>(["linear", "easeIn", "easeOut", "easeInOut"]);
 
 function asVec3(raw: unknown): Vec3 | undefined {
@@ -77,7 +77,14 @@ export function parseBlockingOp(name: string, raw: unknown): BlockingOp | { erro
     }
     case "set_keyframe": {
       const channel = asChannel(a.channel);
-      const value = asVec3(a.value);
+      const value =
+        channel === "fov"
+          ? typeof a.value === "number"
+            ? ([a.value, 0, 0] as Vec3)
+            : asVec3(a.value)
+              ? ([asVec3(a.value)![0], 0, 0] as Vec3)
+              : undefined
+          : asVec3(a.value);
       if (typeof a.id !== "string" || !channel || !value || typeof a.tMs !== "number") {
         return { error: "set_keyframe needs id, channel, tMs, value[x,y,z]." };
       }

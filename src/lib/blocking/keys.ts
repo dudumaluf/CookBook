@@ -46,6 +46,7 @@ export function moveKeyframeTime(
 export function trackFallback(channel: CameraChannel): Vec3 {
   if (channel === "scale") return VEC3_ONE;
   if (channel === "lookAt") return [0, 1, 0];
+  if (channel === "fov") return [40, 0, 0];
   return VEC3_ZERO;
 }
 
@@ -57,12 +58,19 @@ export function sceneTrack(
   if (id === LOOK_AT_ID || (id === CAMERA_ID && channel === "lookAt")) {
     return doc.camera.lookAt;
   }
+  if (id === CAMERA_ID && channel === "fov") {
+    return doc.camera.fovKeys;
+  }
   if (id === CAMERA_ID) {
     if (channel === "lookAt") return doc.camera.lookAt;
+    if (channel === "fov") return doc.camera.fovKeys;
     return doc.camera.tracks[channel];
   }
   if (channel === "lookAt") {
     return { error: "lookAt is only valid on the camera." };
+  }
+  if (channel === "fov") {
+    return { error: "fov is only valid on the camera." };
   }
   const obj = doc.objects.find((o) => o.id === id);
   if (!obj) return { error: `No object "${id}".` };
@@ -78,6 +86,9 @@ export function writeSceneTrack(
   if (id === LOOK_AT_ID || (id === CAMERA_ID && channel === "lookAt")) {
     return { ...doc, camera: { ...doc.camera, lookAt: keys } };
   }
+  if (id === CAMERA_ID && channel === "fov") {
+    return { ...doc, camera: { ...doc.camera, fovKeys: keys } };
+  }
   if (id === CAMERA_ID) {
     return {
       ...doc,
@@ -87,6 +98,7 @@ export function writeSceneTrack(
       },
     };
   }
+  if (channel === "lookAt" || channel === "fov") return doc;
   return {
     ...doc,
     objects: doc.objects.map((o) =>

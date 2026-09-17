@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyBlockingOp, applyBlockingOps } from "@/lib/blocking/ops";
-import { evalObjectAt } from "@/lib/blocking/evaluate";
+import { evalCameraAt, evalObjectAt } from "@/lib/blocking/evaluate";
 import { readScene, sampleAt } from "@/lib/blocking/query";
 import {
   CAMERA_ID,
@@ -72,7 +72,21 @@ describe("blocking ops", () => {
       tMs: 0,
     });
     expect(doc.camera.fov).toBe(55);
+    expect(doc.camera.fovKeys[0]?.value[0]).toBe(55);
     expect(doc.camera.lookAt[0]?.value).toEqual([1, 1, 0]);
+  });
+
+  it("keyframes camera fov and interpolates", () => {
+    const { doc } = applyBlockingOps(createDefaultDocument(), [
+      { op: "set_camera", fov: 40, tMs: 0 },
+      { op: "set_camera", fov: 80, tMs: 1000 },
+    ]);
+    expect(doc.camera.fovKeys).toHaveLength(2);
+    expect(evalCameraAt(doc.camera, 500, doc.objects).fov).toBeCloseTo(60);
+
+    const legacy = sanitizeBlockingDocument({ camera: { fov: 55 } });
+    expect(legacy.camera.fov).toBe(55);
+    expect(legacy.camera.fovKeys[0]?.value[0]).toBe(55);
   });
 
   it("import_mesh + play_clip", () => {
